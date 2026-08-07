@@ -58,6 +58,28 @@ export class PhysicsWorld {
     world.step();
   }
 
+  /**
+   * Brings spatial queries up to date with colliders created since the last
+   * step.
+   *
+   * Rapier's scene queries — raycasts, shape casts, intersection tests — run
+   * against acceleration structures that are only rebuilt inside `step()`. A
+   * collider created after the last step is therefore invisible to every query
+   * until the next one. That is silent and easy to miss: the navgrid built
+   * during init saw an *empty world*, marked the entire park walkable, and bots
+   * happily pathed through the fountain.
+   *
+   * Anything that queries the world before the loop starts must call this first.
+   */
+  refreshQueries(): void {
+    const previous = this.w.timestep;
+    // A negligible timestep: we want the query structures rebuilt, not the
+    // simulation advanced.
+    this.w.timestep = 1e-6;
+    this.w.step();
+    this.w.timestep = previous;
+  }
+
   /** Static trimesh collider, used for terrain and baked map geometry. */
   createTrimesh(vertices: Float32Array, indices: Uint32Array): RapierNS.Collider {
     const body = this.w.createRigidBody(this.api.RigidBodyDesc.fixed());

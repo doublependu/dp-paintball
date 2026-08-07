@@ -1,7 +1,7 @@
 import './style.css';
 import { Vector3 } from 'three';
 import { CharacterRegistry } from './character/CharacterRegistry';
-import { CharactersSystem, type DummySpec } from './character/CharactersSystem';
+import { CharactersSystem, type BotSpec } from './character/CharactersSystem';
 import { Game } from './core/Game';
 import { BallisticsSystem } from './gameplay/Ballistics';
 import { CameraRig } from './gameplay/CameraRig';
@@ -43,18 +43,27 @@ const characterRegistry = new CharacterRegistry();
 // Ballistics consults the registry at impact, so it must exist first.
 const ballistics = new BallisticsSystem(characterRegistry);
 
-// Standing targets on the plaza. They exercise character paint and hit routing
-// now, and phase 6 gives them brains.
-const dummies: DummySpec[] = useTestCourse
-  ? [{ id: 'dummy-a', position: new Vector3(0, 0, -6), yaw: 0, colorIndex: 1 }]
+// The opposition. Spawns are snapped to walkable ground at init, so these are
+// hints rather than exact positions. One of each personality, spread across the
+// park's distinct areas.
+// None on the test course: it is a controlled fixture that the movement,
+// ballistics and paint suites assert against by exact coordinate, and a bot
+// firing into it makes every one of those measurements non-deterministic.
+const bots: BotSpec[] = useTestCourse
+  ? []
   : [
-      // Clear of the fountain, whose basin has a 6m radius and would otherwise
-      // eat every shot aimed at them.
-      { id: 'dummy-a', position: new Vector3(-13, 0, 2), yaw: 1.6, colorIndex: 1 },
-      { id: 'dummy-b', position: new Vector3(13, 0, 4), yaw: -1.6, colorIndex: 2 },
-      { id: 'dummy-c', position: new Vector3(2, 0, 20), yaw: 0.2, colorIndex: 3 },
+      { id: 'bot-a', position: new Vector3(-16, 0, 4), colorIndex: 1, personality: 0 },
+      { id: 'bot-b', position: new Vector3(16, 0, 6), colorIndex: 2, personality: 1 },
+      { id: 'bot-c', position: new Vector3(4, 0, 34), colorIndex: 3, personality: 2 },
+      { id: 'bot-d', position: new Vector3(-30, 0, -44), colorIndex: 5, personality: 3 },
+      { id: 'bot-e', position: new Vector3(34, 0, -8), colorIndex: 6, personality: 2 },
     ];
-const charactersSystem = new CharactersSystem(playerState, characterRegistry, dummies);
+const charactersSystem = new CharactersSystem(
+  playerState,
+  characterRegistry,
+  ballistics,
+  bots,
+);
 
 // Registration order is execution order, and it matters:
 //   player writes renderPosition -> camera reads it and writes avatarOpacity
@@ -75,6 +84,7 @@ interface ImpactRecord {
   color: number;
   speed: number;
   colliderHandle: number;
+  shooterId: string;
 }
 
 // Test hook. The headless movement tests and the phase 9 visual critic drive
@@ -99,7 +109,7 @@ game.events.on('shot:fired', ({ shooterId }) => {
   if (shooterId === 'player') charactersSystem.onPlayerShot();
 });
 
-game.events.on('hit:world', ({ point, color, impactSpeed, colliderHandle }) => {
+game.events.on('hit:world', ({ point, color, impactSpeed, colliderHandle, shooterId }) => {
   impacts.push({
     x: point.x,
     y: point.y,
@@ -107,6 +117,7 @@ game.events.on('hit:world', ({ point, color, impactSpeed, colliderHandle }) => {
     color,
     speed: impactSpeed,
     colliderHandle,
+    shooterId,
   });
   if (impacts.length > 512) impacts.shift();
 });

@@ -87,7 +87,10 @@ async function fireFor(seconds, settleSeconds = 1.4) {
   await waitSim(seconds);
   await page.mouse.up();
   await waitSim(settleSeconds);
-  return page.evaluate(() => window.__paintball.impacts.slice());
+  // Only our own shots: anything else in the world firing would otherwise be
+  // folded into the grouping measurement.
+  return page.evaluate(() =>
+    window.__paintball.impacts.filter((i) => i.shooterId === 'player'));
 }
 
 // --- Shots are produced and land ------------------------------------------

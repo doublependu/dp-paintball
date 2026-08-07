@@ -1,18 +1,22 @@
-import type * as RapierNS from '@dimforge/rapier3d-compat';
 import { Vector3 } from 'three';
 import { player as playerConfig } from '../core/Config';
 import type { GameContext, System } from '../core/System';
+import { Bot, type BotTarget } from '../ai/Bot';
+import { NavGrid } from '../ai/NavGrid';
+import { PERSONALITIES } from '../ai/Personality';
+import type { BallisticsSystem } from '../gameplay/Ballistics';
 import type { PlayerState } from '../gameplay/PlayerState';
 import { SplatAtlas } from '../paint/SplatAtlas';
 import { Character } from './Character';
 import type { CharacterRegistry } from './CharacterRegistry';
 import type { AnimationInput } from './CharacterAnimator';
 
-export interface DummySpec {
+export interface BotSpec {
   id: string;
   position: Vector3;
-  yaw: number;
   colorIndex: number;
+  /** Index into PERSONALITIES. */
+  personality: number;
 }
 
 /**
@@ -26,23 +30,13 @@ export class CharactersSystem implements System {
   readonly name = 'characters';
 
   private player?: Character;
-  private dummies: Character[] = [];
+  private bots: Bot[] = [];
   private splatAtlas?: SplatAtlas;
-  private dummyBodies: RapierNS.RigidBody[] = [];
+  private nav?: NavGrid;
+  /** Rebuilt each step; bots read it to find someone to shoot at. */
+  private targets: BotTarget[] = [];
 
   private readonly input: AnimationInput = {
-    speed: 0,
-    runSpeed: playerConfig.sprintSpeed,
-    grounded: true,
-    crouching: false,
-    aiming: false,
-    verticalVelocity: 0,
-    moveLocalX: 0,
-    moveLocalY: 0,
-    aimPitch: 0,
-  };
-
-  private readonly idleInput: AnimationInput = {
     speed: 0,
     runSpeed: playerConfig.sprintSpeed,
     grounded: true,
@@ -57,7 +51,8 @@ export class CharactersSystem implements System {
   constructor(
     private readonly state: PlayerState,
     private readonly characters: CharacterRegistry,
-    private readonly dummySpecs: DummySpec[] = [],
+    private readonly ballistics: BallisticsSystem,
+    private readonly botSpecs: BotSpec[] = [],
   ) {}
 
   init(ctx: GameContext): void {
@@ -77,31 +72,32 @@ export class CharactersSystem implements System {
       this.characters.register(this.state.collider.handle, 'player');
     }
 
-    for (const spec of this.dummySpecs) {
-      const dummy = new Character(
+    // Built after the arena, so every prop collider is already in the world.
+    // Existing is not enough, though: scene queries only see colliders that
+    // were present at the last step, so the world must be stepped first or the
+    // grid is computed against an empty park.
+    ctx.physics.refreshQueries();
+    this.nav = new NavGrid(ctx.physics);
+    // Seeded from the player spawn, so "walkable" means "reachable from where
+    // the player starts" — which is the only definition that helps a bot.
+    this.nav.pruneUnreachable(this.state.position.x, this.state.position.z);
+
+    for (const spec of this.botSpecs) {
+      const character = new Character(
         { id: spec.id, colorIndex: spec.colorIndex, paintSize: 256 },
         ctx,
         this.splatAtlas,
       );
-      dummy.setTransform(spec.position, spec.yaw);
+      // Drop the spawn onto the ground, and onto a cell that is actually
+      // walkable — a bot spawned inside the fountain would never path anywhere.
+      const grounded =
+        this.nav.nearestWalkable(spec.position.x, spec.position.z) ??
+        new Vector3(spec.position.x, this.nav.groundAt(spec.position.x, spec.position.z), spec.position.z);
 
-      // A static capsule matching the rig, so paintballs can hit it.
-      const half = playerConfig.height / 2 - playerConfig.radius;
-      const body = ctx.physics.w.createRigidBody(
-        ctx.physics.api.RigidBodyDesc.fixed().setTranslation(
-          spec.position.x,
-          spec.position.y + playerConfig.height / 2,
-          spec.position.z,
-        ),
-      );
-      const collider = ctx.physics.w.createCollider(
-        ctx.physics.api.ColliderDesc.capsule(half, playerConfig.radius),
-        body,
-      );
-      dummy.attachCollider(collider);
-      this.characters.register(collider.handle, spec.id);
-      this.dummyBodies.push(body);
-      this.dummies.push(dummy);
+      const bot = new Bot(spec.id, PERSONALITIES[spec.personality % PERSONALITIES.length]!,
+                          character, grounded, ctx);
+      this.characters.register(bot.collider.handle, spec.id);
+      this.bots.push(bot);
     }
 
     ctx.events.on('hit:character', (event) => this.onHit(event, ctx));
@@ -126,6 +122,10 @@ export class CharactersSystem implements System {
     const shooter = this.find(event.shooterId);
     if (shooter && shooter !== target) shooter.hitsGiven++;
 
+    // Reactions: the target scurries, the shooter may celebrate.
+    this.bots.find((b) => b.id === event.targetId)?.onHit(ctx.rng);
+    this.bots.find((b) => b.id === event.shooterId)?.onScored(ctx.rng);
+
     ctx.events.emit('score:changed', {
       characterId: target.id,
       hitsTaken: target.hitsTaken,
@@ -135,7 +135,7 @@ export class CharactersSystem implements System {
 
   private find(id: string): Character | undefined {
     if (id === 'player') return this.player;
-    return this.dummies.find((d) => d.id === id);
+    return this.bots.find((b) => b.id === id)?.character;
   }
 
   fixedUpdate(dt: number, ctx: GameContext): void {
@@ -144,7 +144,28 @@ export class CharactersSystem implements System {
 
     // Grace windows tick in simulation time.
     this.player?.tickGameplay(dt);
-    for (const dummy of this.dummies) dummy.tickGameplay(dt);
+    for (const bot of this.bots) bot.character.tickGameplay(dt);
+
+    if (!this.nav) return;
+
+    // One shared candidate list per step, rather than each bot rebuilding it.
+    this.targets.length = 0;
+    this.targets.push({
+      id: 'player',
+      position: PLAYER_CHEST.set(
+        this.state.position.x,
+        this.state.position.y + 1.25,
+        this.state.position.z,
+      ),
+      collider: this.state.collider ?? undefined,
+    });
+    for (const bot of this.bots) {
+      this.targets.push({ id: bot.id, position: bot.chest.clone(), collider: bot.collider });
+    }
+
+    for (const bot of this.bots) {
+      bot.fixedUpdate(dt, ctx, this.nav, this.targets, this.bots, this.ballistics);
+    }
   }
 
   update(dt: number, _alpha: number, ctx: GameContext): void {
@@ -177,8 +198,8 @@ export class CharactersSystem implements System {
 
     player.update(dt, this.input);
 
-    for (const dummy of this.dummies) {
-      dummy.update(dt, this.idleInput);
+    for (const bot of this.bots) {
+      bot.character.update(dt, bot.animationInput);
     }
 
     void ctx;
@@ -194,14 +215,24 @@ export class CharactersSystem implements System {
   }
 
   get allCharacters(): Character[] {
-    return this.player ? [this.player, ...this.dummies] : [...this.dummies];
+    const bots = this.bots.map((b) => b.character);
+    return this.player ? [this.player, ...bots] : bots;
+  }
+
+  get allBots(): Bot[] {
+    return this.bots;
+  }
+
+  get navGrid(): NavGrid | undefined {
+    return this.nav;
   }
 
   dispose(): void {
     this.player?.dispose();
-    for (const dummy of this.dummies) dummy.dispose();
-    this.dummies = [];
-    this.dummyBodies = [];
+    for (const bot of this.bots) bot.character.dispose();
+    this.bots = [];
     this.splatAtlas?.dispose();
   }
 }
+
+const PLAYER_CHEST = new Vector3();
