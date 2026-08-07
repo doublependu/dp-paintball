@@ -61,22 +61,37 @@ async function place(x, y, z, yaw, pitch = 0) {
     },
     { x, y, z, yaw, pitch },
   );
-  await page.waitForTimeout(300);
+  await waitSim(0.3);
 }
 
-/** Fires for `ms` by holding the left mouse button, then waits for flight. */
-async function fireFor(ms, settleMs = 1400) {
+/**
+ * Waits for `seconds` of *simulated* time. Wall clock is unusable here: when
+ * frames are slow the loop caps catch-up at MAX_SUB_STEPS and drops the
+ * backlog, so the game advances in slow motion and any millisecond-phrased
+ * assertion silently becomes wrong.
+ */
+async function waitSim(seconds) {
+  const start = await page.evaluate(() => window.__paintball.simTime());
+  await page.waitForFunction(
+    ({ start, seconds }) => window.__paintball.simTime() - start >= seconds,
+    { start, seconds },
+    { timeout: 120_000, polling: 30 },
+  );
+}
+
+/** Fires for a span of simulated time, then waits for rounds to land. */
+async function fireFor(seconds, settleSeconds = 1.4) {
   await page.mouse.down();
-  await page.waitForTimeout(ms);
+  await waitSim(seconds);
   await page.mouse.up();
-  await page.waitForTimeout(settleMs);
+  await waitSim(settleSeconds);
   return page.evaluate(() => window.__paintball.impacts.slice());
 }
 
 // --- Shots are produced and land ------------------------------------------
 // Stand in the open facing the corridor wall at x=-13.2.
 await place(-11.0, 1, 14, Math.PI / 2);
-const impacts = await fireFor(700);
+const impacts = await fireFor(0.7);
 check('firing produces impacts', impacts.length >= 3, `${impacts.length} impacts`);
 
 // --- Fire rate ------------------------------------------------------------
@@ -84,7 +99,7 @@ check('firing produces impacts', impacts.length >= 3, `${impacts.length} impacts
 check(
   'fire rate near config (0.14s)',
   impacts.length >= 3 && impacts.length <= 8,
-  `${impacts.length} shots in 0.7s`,
+  `${impacts.length} shots in 0.7s of sim`,
 );
 
 // --- Convergent aiming ----------------------------------------------------
@@ -117,7 +132,7 @@ if (impacts.length > 0) {
 // of ground to land on. Firing off the edge of the 100m plane just produces
 // projectiles that expire in mid-air with nothing to report.
 await place(30, 1, 45, 0, 0);
-const longShots = await fireFor(200, 2500);
+const longShots = await fireFor(0.2, 2.5);
 if (longShots.length > 0) {
   const far = longShots[0];
   const travelled = Math.hypot(far.x - 30, far.z - 45);
@@ -133,10 +148,10 @@ if (longShots.length > 0) {
 // --- Projectiles are recycled, not leaked ---------------------------------
 await place(0, 1, 20, 0);
 await page.mouse.down();
-await page.waitForTimeout(1500);
+await waitSim(1.5);
 const midBurst = await page.evaluate(() => window.__paintball.ballistics.activeCount);
 await page.mouse.up();
-await page.waitForTimeout(4200);
+await waitSim(4.2);
 const afterSettle = await page.evaluate(() => window.__paintball.ballistics.activeCount);
 check('projectiles are in flight while firing', midBurst > 0, `${midBurst} active`);
 check('projectiles expire after firing stops', afterSettle === 0, `${afterSettle} active`);

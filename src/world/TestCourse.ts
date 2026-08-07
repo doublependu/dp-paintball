@@ -1,12 +1,10 @@
 import {
   BoxGeometry,
-  Color,
   DirectionalLight,
   Euler,
   Fog,
   HemisphereLight,
   Mesh,
-  MeshLambertMaterial,
   Quaternion,
   Vector3,
 } from 'three';
@@ -14,6 +12,8 @@ import { DEG2RAD } from '../core/MathUtils';
 import { palette, player as playerConfig, render as renderConfig } from '../core/Config';
 import type { GameContext, System } from '../core/System';
 import type { SurfaceRegistry } from '../paint/SurfaceRegistry';
+import { createCelMaterial } from '../render/CelMaterial';
+import { Sky } from '../render/Sky';
 
 /**
  * A gym for movement, not a level. Every piece here exists to falsify a
@@ -30,16 +30,19 @@ export class TestCourseSystem implements System {
   readonly name = 'test-course';
 
   private disposables: Array<{ dispose(): void }> = [];
+  private sky?: Sky;
 
   constructor(private readonly surfaces: SurfaceRegistry) {}
 
   init(ctx: GameContext): void {
     const { scene } = ctx;
 
-    scene.background = new Color(palette.skyHorizon);
     // Aerial perspective: distant geometry drifts toward the sky colour. Ghibli
     // leans on this hard for depth.
-    scene.fog = new Fog(palette.fogNear, 40, 190);
+    scene.fog = new Fog(palette.fogNear, 45, 200);
+
+    this.sky = new Sky(SUN_DIRECTION);
+    scene.add(this.sky.mesh);
 
     this.addLights(scene);
     this.addGround(ctx);
@@ -51,11 +54,15 @@ export class TestCourseSystem implements System {
   }
 
   private addLights(scene: GameContext['scene']): void {
-    const hemi = new HemisphereLight(palette.skyZenith, palette.grassShade, 1.15);
+    // This pairing is what produces warm light and cool shadows, with no shader
+    // involvement: a shadowed surface receives only the hemisphere fill, whose
+    // sky half is blue-violet. Up-facing surfaces cool off, down-facing ones
+    // pick up the warm ground bounce — which is also just true of daylight.
+    const hemi = new HemisphereLight(0x8fb4e8, 0xc7a878, 1.05);
     scene.add(hemi);
 
-    const sun = new DirectionalLight(palette.sunWarm, 2.2);
-    sun.position.set(30, 42, 20);
+    const sun = new DirectionalLight(palette.sunWarm, 2.4);
+    sun.position.copy(SUN_DIRECTION).multiplyScalar(60);
     sun.castShadow = true;
     sun.shadow.mapSize.setScalar(renderConfig.shadowMapSize);
     sun.shadow.camera.near = 1;
@@ -176,7 +183,7 @@ export class TestCourseSystem implements System {
     rotation?: Euler,
   ): void {
     const geometry = new BoxGeometry(size.x, size.y, size.z);
-    const material = new MeshLambertMaterial({ color });
+    const material = createCelMaterial({ color });
     const mesh = new Mesh(geometry, material);
     mesh.position.copy(position);
     mesh.castShadow = true;
@@ -200,8 +207,18 @@ export class TestCourseSystem implements System {
     this.disposables.push(geometry, material);
   }
 
+  update(_dt: number, _alpha: number, ctx: GameContext): void {
+    // The dome rides with the camera so it can never be walked out of.
+    this.sky?.update(ctx.camera, ctx.elapsed);
+  }
+
   dispose(): void {
+    this.sky?.mesh.removeFromParent();
+    this.sky?.dispose();
     for (const item of this.disposables) item.dispose();
     this.disposables = [];
   }
 }
+
+/** Mid-afternoon, low enough to throw long shadows across the course. */
+const SUN_DIRECTION = new Vector3(0.45, 0.62, 0.34).normalize();

@@ -1,6 +1,7 @@
-import { BoxGeometry, Group, Mesh, MeshLambertMaterial } from 'three';
+import { BoxGeometry, Group, Mesh, type MeshToonMaterial } from 'three';
 import { player as playerConfig } from '../core/Config';
 import { dampAngle } from '../core/MathUtils';
+import { createCelMaterial } from '../render/CelMaterial';
 import type { GameContext, System } from '../core/System';
 import type { PlayerState } from './PlayerState';
 
@@ -16,7 +17,7 @@ export class PlayerAvatarSystem implements System {
   readonly name = 'player-avatar';
 
   private group = new Group();
-  private materials: MeshLambertMaterial[] = [];
+  private materials: MeshToonMaterial[] = [];
   private geometries: BoxGeometry[] = [];
   private renderYaw = 0;
 
@@ -63,8 +64,10 @@ export class PlayerAvatarSystem implements System {
     }
   }
 
-  private material(color: number): MeshLambertMaterial {
-    const material = new MeshLambertMaterial({ color });
+  private material(color: number): MeshToonMaterial {
+    // A stronger rim than world geometry: characters need to pop off the
+    // background, which is exactly what a painted highlight does.
+    const material = createCelMaterial({ color, rimStrength: 0.42 });
     this.materials.push(material);
     return material;
   }
@@ -76,7 +79,7 @@ export class PlayerAvatarSystem implements System {
     x: number,
     y: number,
     z: number,
-    material: MeshLambertMaterial,
+    material: MeshToonMaterial,
   ): void {
     const geometry = new BoxGeometry(width, height, depth);
     this.geometries.push(geometry);

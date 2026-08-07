@@ -26,6 +26,15 @@ export class Loop {
 
   /** Wall-clock seconds since start(), excluding paused time. */
   elapsed = 0;
+  /**
+   * Simulated seconds since start() — advanced only by completed fixed steps.
+   *
+   * This diverges from `elapsed` whenever the frame rate is low enough to hit
+   * MAX_SUB_STEPS: the backlog is dropped rather than paid off, so the game
+   * runs in slow motion instead of destabilising physics. Gameplay timing and
+   * anything asserting on simulation behaviour must use this, not wall clock.
+   */
+  simElapsed = 0;
   /** Fixed steps taken in the most recent frame — surfaced to the perf HUD. */
   lastStepCount = 0;
 
@@ -64,6 +73,7 @@ export class Loop {
     while (this.accumulator >= FIXED_DT && steps < MAX_SUB_STEPS) {
       this.callbacks.fixedUpdate(FIXED_DT);
       this.accumulator -= FIXED_DT;
+      this.simElapsed += FIXED_DT;
       steps++;
     }
     this.lastStepCount = steps;

@@ -57,6 +57,7 @@ declare global {
       ballistics: BallisticsSystem;
       paint: PaintSystem;
       camera: () => { x: number; y: number; z: number };
+      simTime: () => number;
       impacts: ImpactRecord[];
     };
   }
@@ -81,6 +82,7 @@ window.__paintball = {
   ballistics,
   paint,
   camera: () => game.render.camera.position.clone(),
+  simTime: () => game.simElapsed,
   impacts,
 };
 

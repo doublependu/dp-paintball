@@ -55,6 +55,11 @@ export class Game {
     };
   }
 
+  /** Simulated seconds elapsed — see Loop.simElapsed. */
+  get simElapsed(): number {
+    return this.loop.simElapsed;
+  }
+
   /** Registers a system. Must be called before boot(). */
   add(system: System): this {
     if (this.booted) {
@@ -107,7 +112,7 @@ export class Game {
       system.update?.(dt, alpha, this.context);
     }
 
-    this.render.render();
+    this.render.render(this.loop.elapsed);
     this.perfHud.update(dt, this.render.renderer, this.loop.lastStepCount);
 
     // Must be last: systems read edge-triggered input during update.

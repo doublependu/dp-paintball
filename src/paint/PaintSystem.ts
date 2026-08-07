@@ -4,7 +4,7 @@ import {
   Color,
   Euler,
   Mesh,
-  MeshLambertMaterial,
+  MeshToonMaterial,
   Quaternion,
   Vector3,
 } from 'three';
@@ -12,6 +12,7 @@ import { DecalGeometry } from 'three/examples/jsm/geometries/DecalGeometry.js';
 import { paint as paintConfig } from '../core/Config';
 import { clamp, remap } from '../core/MathUtils';
 import type { GameContext, System } from '../core/System';
+import { getCelGradient } from '../render/CelMaterial';
 import { SplatAtlas } from './SplatAtlas';
 import type { SurfaceRegistry } from './SurfaceRegistry';
 
@@ -63,7 +64,7 @@ export class PaintSystem implements System {
   private atlas?: SplatAtlas;
   private geometry?: BufferGeometry;
   private mesh?: Mesh;
-  private material?: MeshLambertMaterial;
+  private material?: MeshToonMaterial;
 
   private positions!: Float32Array;
   private normals!: Float32Array;
@@ -246,12 +247,13 @@ export class PaintSystem implements System {
   }
 
   /**
-   * Lambert, with the splat atlas driving coverage and a per-vertex tint.
+   * Toon-shaded, with the splat atlas driving coverage and a per-vertex tint.
    * Patched rather than written from scratch so paint keeps receiving the same
    * scene lighting as the surface underneath it.
    */
-  private createMaterial(): MeshLambertMaterial {
-    const material = new MeshLambertMaterial({
+  private createMaterial(): MeshToonMaterial {
+    const material = new MeshToonMaterial({
+      gradientMap: getCelGradient(),
       transparent: false,
       polygonOffset: true,
       polygonOffsetFactor: -4,

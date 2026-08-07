@@ -2,13 +2,14 @@ import type * as RapierNS from '@dimforge/rapier3d-compat';
 import {
   Color,
   InstancedMesh,
-  MeshLambertMaterial,
+  type MeshToonMaterial,
   Matrix4,
   Quaternion,
   SphereGeometry,
   Vector3,
 } from 'three';
 import { ballistics as config, physics as physicsConfig } from '../core/Config';
+import { createCelMaterial } from '../render/CelMaterial';
 import type { GameContext, System } from '../core/System';
 
 interface Projectile {
@@ -69,7 +70,8 @@ export class BallisticsSystem implements System {
 
     // One instanced draw call for every paintball in flight.
     const geometry = new SphereGeometry(config.radius, 8, 6);
-    const material = new MeshLambertMaterial({ color: 0xffffff });
+    // Paintballs in flight get a hot rim so they read against foliage.
+    const material = createCelMaterial({ color: 0xffffff, rimStrength: 0.55, rimPower: 2.0 });
     this.mesh = new InstancedMesh(geometry, material, config.maxActive);
     this.mesh.count = 0;
     this.mesh.frustumCulled = false;
@@ -231,7 +233,7 @@ export class BallisticsSystem implements System {
     if (this.mesh) {
       this.mesh.removeFromParent();
       this.mesh.geometry.dispose();
-      (this.mesh.material as MeshLambertMaterial).dispose();
+      (this.mesh.material as MeshToonMaterial).dispose();
       this.mesh.dispose();
     }
     this.pool = [];

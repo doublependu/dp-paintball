@@ -66,20 +66,35 @@ async function place(x, y, z, yaw, pitch = 0) {
     },
     { x, y, z, yaw, pitch },
   );
-  await page.waitForTimeout(350);
+  await waitSim(0.35);
 }
 
-async function fireFor(ms, settleMs = 1200) {
+/**
+ * Waits for `seconds` of *simulated* time. Wall clock is unusable here: when
+ * frames are slow the loop caps catch-up at MAX_SUB_STEPS and drops the
+ * backlog, so the game advances in slow motion and any millisecond-phrased
+ * assertion silently becomes wrong.
+ */
+async function waitSim(seconds) {
+  const start = await page.evaluate(() => window.__paintball.simTime());
+  await page.waitForFunction(
+    ({ start, seconds }) => window.__paintball.simTime() - start >= seconds,
+    { start, seconds },
+    { timeout: 120_000, polling: 30 },
+  );
+}
+
+async function fireFor(seconds, settleSeconds = 1.2) {
   await page.mouse.down();
-  await page.waitForTimeout(ms);
+  await waitSim(seconds);
   await page.mouse.up();
-  await page.waitForTimeout(settleMs);
+  await waitSim(settleSeconds);
 }
 
 // --- Accumulation ---------------------------------------------------------
 await place(6, 1, 30, 0, -0.3);
 const before = await stats();
-await fireFor(900);
+await fireFor(0.9);
 const after = await stats();
 check(
   'firing places splats',
@@ -93,7 +108,7 @@ check(
 );
 
 // --- Persistence ----------------------------------------------------------
-await page.waitForTimeout(1200);
+await waitSim(1.2);
 const idle = await stats();
 check('paint persists when not firing', idle.splats === after.splats, `${idle.splats} splats`);
 
@@ -102,7 +117,7 @@ check('paint persists when not firing', idle.splats === after.splats, `${idle.sp
 // transform, not its local axes.
 const beforeRamp = await stats();
 await place(-24, 1, -18, Math.PI, -0.15);
-await fireFor(700);
+await fireFor(0.7);
 const afterRamp = await stats();
 check(
   'paints onto rotated geometry (45 degree ramp)',
@@ -122,7 +137,7 @@ check(
 // Fire once at open ground to learn which collider the ground is, then flood
 // the buffer through the same event path a real impact takes.
 await place(6, 1, 30, 0, -0.5);
-await fireFor(300, 800);
+await fireFor(0.3, 0.8);
 
 const evictionResult = await page.evaluate(() => {
   const { game, paint, state, impacts } = window.__paintball;

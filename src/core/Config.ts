@@ -144,7 +144,7 @@ export const render = {
   maxPixelRatio: 2,
   shadowMapSize: 2048,
   /** Outline width in pixels, held roughly constant across distance. */
-  outlineWidthPx: 2.2,
+  outlineWidthPx: 3.0,
   /** Cel ramp band count. */
   celBands: 3,
 } as const;
