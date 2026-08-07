@@ -1,4 +1,4 @@
-import type * as RapierNS from '@dimforge/rapier3d-compat';
+import type * as RapierNS from '@dimforge/rapier3d';
 import { BufferAttribute, BufferGeometry, Mesh, type MeshToonMaterial } from 'three';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
 import { createCelMaterial } from '../render/CelMaterial';

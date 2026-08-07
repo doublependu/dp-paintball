@@ -92,10 +92,18 @@ export class PaintSystem implements System {
   /** Splats placed since load, including any since evicted. */
   private totalPlaced = 0;
 
-  constructor(private readonly surfaces: SurfaceRegistry) {}
+  /**
+   * The splat atlas is shared, not owned. Generating it costs ~50ms and it is
+   * needed by world paint, character paint and the lens splash — three
+   * independent copies was 150ms of identical work at boot.
+   */
+  constructor(
+    private readonly surfaces: SurfaceRegistry,
+    private readonly sharedAtlas: SplatAtlas,
+  ) {}
 
   init(ctx: GameContext): void {
-    this.atlas = new SplatAtlas();
+    this.atlas = this.sharedAtlas;
 
     this.positions = new Float32Array(MAX_VERTS * 3);
     this.normals = new Float32Array(MAX_VERTS * 3);
@@ -326,7 +334,7 @@ export class PaintSystem implements System {
     this.mesh?.removeFromParent();
     this.geometry?.dispose();
     this.material?.dispose();
-    this.atlas?.dispose();
+    // The atlas is shared; its owner disposes it.
     this.records = [];
   }
 }

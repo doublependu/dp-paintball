@@ -1,4 +1,4 @@
-import type * as RapierNS from '@dimforge/rapier3d-compat';
+import type * as RapierNS from '@dimforge/rapier3d';
 import { Vector3 } from 'three';
 import { player as playerConfig } from '../core/Config';
 

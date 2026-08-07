@@ -1,4 +1,4 @@
-import type * as RapierNS from '@dimforge/rapier3d-compat';
+import type * as RapierNS from '@dimforge/rapier3d';
 import { Color, Matrix4, Mesh, Vector3 } from 'three';
 import { paint as paintConfig, paintColors, player as playerConfig } from '../core/Config';
 import { clamp, remap } from '../core/MathUtils';

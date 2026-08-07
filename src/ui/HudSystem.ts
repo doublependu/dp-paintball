@@ -29,13 +29,14 @@ export class HudSystem implements System {
   constructor(
     private readonly container: HTMLElement,
     private readonly characters: CharactersSystem,
+    private readonly sharedAtlas: SplatAtlas,
   ) {}
 
   init(ctx: GameContext): void {
     this.hud = new Hud(this.container);
     // The splash reuses the same generated splat shapes as world and character
     // paint, so what lands on the lens matches what's on the wall.
-    this.atlas = new SplatAtlas();
+    this.atlas = this.sharedAtlas;
     this.splash = new SplashOverlay(this.container, this.atlas);
 
     ctx.events.on('hit:character', ({ targetId, shooterId, color }) => {
@@ -95,6 +96,5 @@ export class HudSystem implements System {
   dispose(): void {
     this.hud?.dispose();
     this.splash?.dispose();
-    this.atlas?.dispose();
   }
 }

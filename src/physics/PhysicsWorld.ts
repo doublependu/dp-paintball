@@ -1,4 +1,4 @@
-import type * as RapierNS from '@dimforge/rapier3d-compat';
+import type * as RapierNS from '@dimforge/rapier3d';
 import type { Vector3 } from 'three';
 import { DEG2RAD } from '../core/MathUtils';
 import { physics as physicsConfig, player as playerConfig } from '../core/Config';
@@ -15,9 +15,15 @@ export interface RaycastHit {
 /**
  * Wraps the Rapier world.
  *
- * Rapier ships as ~500KB of WASM, which is the single largest thing we load. It
- * is imported dynamically so the shell can paint and the loading card can show
- * before it arrives — see the load budget in PLAN.md.
+ * Rapier's WebAssembly is the single largest thing this game loads. It is
+ * imported dynamically so the shell can paint and the loading card can show
+ * before it arrives.
+ *
+ * This uses the non-compat package deliberately. `rapier3d-compat` embeds the
+ * same wasm as base64 inside a JS module, which gzips to 842 KB against 570 KB
+ * for the raw binary — base64 wastes a third of its bytes and compresses
+ * poorly on top of that. The real `.wasm` also goes through the browser's
+ * streaming compiler rather than being decoded from a string at runtime.
  */
 export class PhysicsWorld {
   private rapier?: Rapier;
@@ -25,9 +31,10 @@ export class PhysicsWorld {
 
   async init(onProgress?: (progress: number) => void): Promise<void> {
     onProgress?.(0);
-    const RAPIER = await import('@dimforge/rapier3d-compat');
-    onProgress?.(0.5);
-    await RAPIER.init();
+    // No explicit init() call: the non-compat package instantiates its wasm as
+    // part of the module's own top-level await.
+    const RAPIER = await import('@dimforge/rapier3d');
+    onProgress?.(0.6);
     this.rapier = RAPIER;
     this.world = new RAPIER.World({ x: 0, y: physicsConfig.gravity, z: 0 });
     onProgress?.(1);

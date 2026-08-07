@@ -98,6 +98,11 @@ export class RenderSystem {
     this.resizeObserver.observe(container);
   }
 
+  /** The NPR pipeline, exposed for profiling. */
+  get nprPipeline(): NprPipeline | undefined {
+    return this.pipeline;
+  }
+
   render(elapsed: number): void {
     this.renderer.info.reset();
     if (this.pipeline) {

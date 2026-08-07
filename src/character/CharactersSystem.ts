@@ -52,13 +52,15 @@ export class CharactersSystem implements System {
     private readonly state: PlayerState,
     private readonly characters: CharacterRegistry,
     private readonly ballistics: BallisticsSystem,
+    private readonly sharedAtlas: SplatAtlas,
     private readonly botSpecs: BotSpec[] = [],
   ) {}
 
   init(ctx: GameContext): void {
-    // One atlas shared by every character's paint stamper — the splat shapes
-    // are identical, only the tint differs.
-    this.splatAtlas = new SplatAtlas();
+    // One atlas shared by every character's paint stamper, and with world
+    // paint and the lens splash too — the splat shapes are identical, only the
+    // tint differs.
+    this.splatAtlas = this.sharedAtlas;
 
     this.player = new Character(
       { id: 'player', colorIndex: 0, paintSize: 512 },
@@ -231,7 +233,6 @@ export class CharactersSystem implements System {
     this.player?.dispose();
     for (const bot of this.bots) bot.character.dispose();
     this.bots = [];
-    this.splatAtlas?.dispose();
   }
 }
 

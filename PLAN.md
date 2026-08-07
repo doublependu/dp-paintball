@@ -19,7 +19,7 @@ Derived from [PROMPT.md](./PROMPT.md).
 | Concern | Choice | Why |
 |---|---|---|
 | Renderer | **Three.js** (WebGL2, custom NPR pipeline) | Required by prompt; full shader control for the hand-drawn look |
-| Physics | **Rapier3D** (`@dimforge/rapier3d-compat`, WASM) | Fast, has a proper kinematic character controller; ~500 KB, lazy-loadable |
+| Physics | **Rapier3D** (`@dimforge/rapier3d`, WASM) | Fast, has a proper kinematic character controller; 592 KB gzipped, lazy-loaded. The `-compat` build inlines the same wasm as base64 and cost 842 KB — swapped in phase 8 |
 | Ballistics | **Custom** integrator + swept sphere-cast into Rapier | Paintballs are slow, arcing and numerous — rigidbody-per-pellet is wasteful and tunnels. Custom gives the lob arc *and* correct hits |
 | Language | **TypeScript** | Codebase will hit ~8–10k lines; types pay for themselves here |
 | Build | Vite (already scaffolded) | Existing setup |
@@ -51,8 +51,9 @@ inked). The synthesis: **Borderlands linework, Ghibli color and light.**
 A real constraint that shapes everything else. Target **~3.5 MB gzipped, first
 playable frame under ~1.2 s**:
 
-- Three.js ~170 KB gz + game code ~120 KB → interactive shell immediately.
-- Rapier WASM (~500 KB) streams in behind a hand-drawn loading card.
+- Three.js + game code ~195 KB gz → interactive shell immediately.
+- Rapier WASM (592 KB gzipped) streams in behind a hand-drawn loading card,
+  compiled by the browser's streaming compiler rather than decoded from base64.
 - **Characters are procedural** — a Minecraft-style rig is boxes; generate in
   code, zero bytes downloaded. Animations are keyframed joint rotations in code
   rather than shipped skinned GLB clips.
@@ -146,7 +147,7 @@ taunting, sitting down on a bench) so it reads as relaxing rather than tense.
    (idle/walk/run/strafe/crouch/jump/shoot/flinch/taunt), body paint
 6. **NPCs** — navmesh, steering, personalities
 7. **Audio + UI** — hand-drawn HUD, scoreboard, splat-styled menus
-8. **Perf pass** — KTX2, Draco, instancing, streaming; verify the 2 s target
+8. **Perf pass** — bundle, boot cost, draw calls; verify the 2 s target
 9. **Visual polish loop**
 
 ## 9. Two deliberate departures from PROMPT.md

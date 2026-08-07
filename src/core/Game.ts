@@ -28,6 +28,9 @@ export class Game {
   private readonly context: GameContext;
   private booted = false;
 
+  /** Wall-clock cost of each boot phase, for the performance pass. */
+  readonly bootTimings: Array<{ phase: string; ms: number }> = [];
+
   constructor(container: HTMLElement) {
     this.render = new RenderSystem(container);
     this.input = new Input(this.render.canvas, this.events);
@@ -73,10 +76,19 @@ export class Game {
     if (this.booted) return;
     this.booted = true;
 
+    const bootStart = performance.now();
+    let mark = bootStart;
+    const record = (phase: string) => {
+      const now = performance.now();
+      this.bootTimings.push({ phase, ms: now - mark });
+      mark = now;
+    };
+
     this.events.emit('load:progress', { phase: 'physics', progress: 0 });
     await this.physics.init((progress) => {
       this.events.emit('load:progress', { phase: 'physics', progress: progress * 0.4 });
     });
+    record('physics');
 
     this.input.attach();
     // Clicking the canvas is the user gesture that grants pointer lock; browsers
@@ -88,11 +100,13 @@ export class Game {
     for (let i = 0; i < this.systems.length; i++) {
       const system = this.systems[i]!;
       await system.init?.(this.context);
+      record(system.name);
       this.events.emit('load:progress', {
         phase: system.name,
         progress: 0.4 + (0.6 * (i + 1)) / this.systems.length,
       });
     }
+    this.bootTimings.push({ phase: 'TOTAL', ms: performance.now() - bootStart });
 
     this.events.emit('game:ready', {});
     this.loop.start();

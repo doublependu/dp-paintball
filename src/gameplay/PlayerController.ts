@@ -1,4 +1,4 @@
-import type * as RapierNS from '@dimforge/rapier3d-compat';
+import type * as RapierNS from '@dimforge/rapier3d';
 import { Vector3 } from 'three';
 import { physics as physicsConfig, player as playerConfig } from '../core/Config';
 import { damp, dampAngle } from '../core/MathUtils';

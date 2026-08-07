@@ -10,6 +10,7 @@ import { PlayerController } from './gameplay/PlayerController';
 import { createPlayerState } from './gameplay/PlayerState';
 import { WeaponSystem } from './gameplay/Weapon';
 import { PaintSystem } from './paint/PaintSystem';
+import { SplatAtlas } from './paint/SplatAtlas';
 import { SurfaceRegistry } from './paint/SurfaceRegistry';
 import { HudSystem } from './ui/HudSystem';
 import { ParkArenaSystem } from './world/ParkArena';
@@ -40,7 +41,10 @@ const playerState = createPlayerState(
 );
 const player = new PlayerController(playerState);
 const surfaces = new SurfaceRegistry();
-const paint = new PaintSystem(surfaces);
+// Generated once and shared: world paint, character paint and the lens splash
+// all stamp the same shapes.
+const splatAtlas = new SplatAtlas();
+const paint = new PaintSystem(surfaces, splatAtlas);
 const characterRegistry = new CharacterRegistry();
 // Ballistics consults the registry at impact, so it must exist first.
 const ballistics = new BallisticsSystem(characterRegistry);
@@ -64,10 +68,11 @@ const charactersSystem = new CharactersSystem(
   playerState,
   characterRegistry,
   ballistics,
+  splatAtlas,
   bots,
 );
 const audio = new AudioSystem(playerState);
-const hud = new HudSystem(container, charactersSystem);
+const hud = new HudSystem(container, charactersSystem, splatAtlas);
 
 // Registration order is execution order, and it matters:
 //   player writes renderPosition -> camera reads it and writes avatarOpacity
@@ -110,6 +115,7 @@ declare global {
       hud: HudSystem;
       camera: () => { x: number; y: number; z: number };
       simTime: () => number;
+      bootTimings: () => Array<{ phase: string; ms: number }>;
       impacts: ImpactRecord[];
     };
   }
@@ -143,6 +149,7 @@ window.__paintball = {
   hud,
   camera: () => game.render.camera.position.clone(),
   simTime: () => game.simElapsed,
+  bootTimings: () => game.bootTimings,
   impacts,
 };
 

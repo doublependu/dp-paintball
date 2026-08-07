@@ -127,8 +127,12 @@ const OutlineShader = {
       // Scale the sampling radius with distance so occlusion stays the same
       // size in world terms rather than shrinking as objects recede.
       float aoScale = uAoRadius / ( 1.0 + d0 * 90.0 );
-      for ( int i = 0; i < 8; i++ ) {
-        float a = float( i ) * 0.7853981634;
+      // Six taps rather than eight. This pass already costs ten texture fetches
+      // per pixel for edge detection; at 1080p each extra AO tap is another two
+      // million fetches, and the occlusion term is soft enough that the two
+      // dropped directions are not visible.
+      for ( int i = 0; i < 6; i++ ) {
+        float a = float( i ) * 1.0471975512;
         vec2 offset = vec2( cos( a ), sin( a ) ) * aoScale / uResolution;
         float sampleDepth = linearDepth( vUv + offset );
         // Positive when the neighbour is nearer the camera, i.e. occluding.
@@ -137,7 +141,7 @@ const OutlineShader = {
         // near object is not occlusion, it's a different surface entirely.
         ao += smoothstep( 0.0, 0.0008, diff ) * ( 1.0 - smoothstep( 0.0025, 0.006, diff ) );
       }
-      ao = clamp( ao / 8.0, 0.0, 1.0 ) * uAoStrength;
+      ao = clamp( ao / 6.0, 0.0, 1.0 ) * uAoStrength;
 
       vec4 color = texture2D( tDiffuse, vUv );
       // Occlusion is tinted rather than neutral: shadow in this game is
@@ -256,7 +260,17 @@ export class NprPipeline {
 
     // Gentle and wide: this is for the glow around saturated paint, not for
     // making the whole scene hazy.
-    this.bloomPass = new UnrealBloomPass(new Vector2(width, height), 0.26, 0.7, 0.95);
+    //
+    // Run at half resolution. UnrealBloomPass builds a five-level mip chain,
+    // so its cost scales with the resolution it starts at — and a bloom this
+    // soft is indistinguishable at half res, because every tap is a blur of a
+    // blur anyway.
+    this.bloomPass = new UnrealBloomPass(
+      new Vector2(Math.max(1, width >> 1), Math.max(1, height >> 1)),
+      0.26,
+      0.7,
+      0.95,
+    );
     this.composer.addPass(this.bloomPass);
 
     this.gradePass = new ShaderPass(GradeShader);
@@ -282,12 +296,28 @@ export class NprPipeline {
     this.gradePass.uniforms.uResolution!.value.copy(this.resolution);
   }
 
+  /**
+   * Enables or disables an individual pass at runtime.
+   *
+   * Exists for profiling: the only reliable way to attribute frame time to a
+   * pass is to remove it and re-measure, and rebuilding the bundle between
+   * every measurement makes that intolerable.
+   */
+  setPassEnabled(pass: 'outline' | 'bloom' | 'grade' | 'prepass', enabled: boolean): void {
+    if (pass === 'outline') this.outlinePass.enabled = enabled;
+    else if (pass === 'bloom') this.bloomPass.enabled = enabled;
+    else if (pass === 'grade') this.gradePass.enabled = enabled;
+    else this.prepassEnabled = enabled;
+  }
+
+  private prepassEnabled = true;
+
   render(elapsed: number): void {
     this.gradePass.uniforms.uTime!.value = elapsed;
     this.outlinePass.uniforms.uCameraNear!.value = this.camera.near;
     this.outlinePass.uniforms.uCameraFar!.value = this.camera.far;
 
-    this.renderNormalPrepass();
+    if (this.prepassEnabled) this.renderNormalPrepass();
     this.composer.render();
   }
 
