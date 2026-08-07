@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Voxel rig preview</title>
+    <style>
+      body { margin: 0; background: #cfe9f2; overflow: hidden; }
+      canvas { display: block; }
+      #hud {
+        position: fixed; top: 8px; left: 8px;
+        font: 12px ui-monospace, monospace; color: #2a2438;
+        background: rgba(255,255,255,0.75); padding: 6px 9px; border-radius: 6px;
+        white-space: pre;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud">loading…</div>
+    <script type="module">
+      import * as THREE from 'three';
+      import { VoxelRig } from '/src/character/VoxelRig.ts';
+      import { CharacterAnimator } from '/src/character/CharacterAnimator.ts';
+      import { createRigMaterial } from '/src/character/RigMaterial.ts';
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      document.body.append(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xcfe9f2);
+      scene.add(new THREE.HemisphereLight(0x8fb4e8, 0xc7a878, 1.0));
+      const sun = new THREE.DirectionalLight(0xfff2d0, 2.2);
+      sun.position.set(4, 8, 6);
+      scene.add(sun);
+
+      const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(40, 40),
+        new THREE.MeshBasicMaterial({ color: 0x8fbf5a }),
+      );
+      ground.rotation.x = -Math.PI / 2;
+      scene.add(ground);
+
+      // A blank paint texture: this page is about the rig, not about paint.
+      const blank = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat);
+      blank.needsUpdate = true;
+
+      // Four figures, each locked to a different pose, viewed side by side.
+      const POSES = [
+        { label: 'idle', speed: 0, crouching: false, aiming: false, grounded: true },
+        { label: 'walk', speed: 4.4, crouching: false, aiming: false, grounded: true },
+        { label: 'run + aim', speed: 7.2, crouching: false, aiming: true, grounded: true },
+        { label: 'crouch', speed: 1.6, crouching: true, aiming: false, grounded: true },
+      ];
+
+      const figures = POSES.map((pose, i) => {
+        const rig = new VoxelRig();
+        const handle = createRigMaterial(blank);
+        const mesh = new THREE.Mesh(rig.geometry, handle.material);
+        rig.root.add(mesh);
+        rig.root.position.set((i - 1.5) * 1.7, 0, 0);
+        // Forward is -Z, so PI turns them to face the camera at +Z.
+        rig.root.rotation.y = Math.PI + 0.5;
+        scene.add(rig.root);
+        return { rig, handle, animator: new CharacterAnimator(), pose };
+      });
+
+      const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);
+      camera.position.set(0, 1.5, 7.2);
+      camera.lookAt(0, 0.95, 0);
+
+      let last = performance.now();
+      let frames = 0;
+      function frame(now) {
+        const dt = Math.min((now - last) / 1000, 0.05);
+        last = now;
+
+        for (const f of figures) {
+          f.animator.update(dt, {
+            speed: f.pose.speed,
+            runSpeed: 7.2,
+            grounded: f.pose.grounded,
+            crouching: f.pose.crouching,
+            aiming: f.pose.aiming,
+            verticalVelocity: 0,
+            moveLocalX: 0,
+            moveLocalY: 1,
+            aimPitch: f.pose.aiming ? -0.15 : 0,
+          }, f.rig);
+          f.handle.setJoints(f.rig.jointMatrices);
+        }
+
+        renderer.render(scene, camera);
+        if (++frames === 30) {
+          const r = figures[0].rig;
+          document.getElementById('hud').textContent = [
+            POSES.map((p) => p.label).join('   |   '),
+            `parts=${r.geometry.getAttribute('position').count / 24}` +
+              `  verts=${r.geometry.getAttribute('position').count}` +
+              `  tris=${r.geometry.getIndex().count / 3}`,
+            `draw calls=${renderer.info.render.calls}`,
+          ].join('\n');
+          window.__rigReady = true;
+        }
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+    </script>
+  </body>
+</html>

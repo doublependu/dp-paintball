@@ -1,9 +1,10 @@
 import './style.css';
 import { Vector3 } from 'three';
+import { CharacterRegistry } from './character/CharacterRegistry';
+import { CharactersSystem, type DummySpec } from './character/CharactersSystem';
 import { Game } from './core/Game';
 import { BallisticsSystem } from './gameplay/Ballistics';
 import { CameraRig } from './gameplay/CameraRig';
-import { PlayerAvatarSystem } from './gameplay/PlayerAvatar';
 import { PlayerController } from './gameplay/PlayerController';
 import { createPlayerState } from './gameplay/PlayerState';
 import { WeaponSystem } from './gameplay/Weapon';
@@ -36,9 +37,24 @@ const playerState = createPlayerState(
   useTestCourse ? new Vector3(0, 2, 6) : new Vector3(0, 1.5, 10),
 );
 const player = new PlayerController(playerState);
-const ballistics = new BallisticsSystem();
 const surfaces = new SurfaceRegistry();
 const paint = new PaintSystem(surfaces);
+const characterRegistry = new CharacterRegistry();
+// Ballistics consults the registry at impact, so it must exist first.
+const ballistics = new BallisticsSystem(characterRegistry);
+
+// Standing targets on the plaza. They exercise character paint and hit routing
+// now, and phase 6 gives them brains.
+const dummies: DummySpec[] = useTestCourse
+  ? [{ id: 'dummy-a', position: new Vector3(0, 0, -6), yaw: 0, colorIndex: 1 }]
+  : [
+      // Clear of the fountain, whose basin has a 6m radius and would otherwise
+      // eat every shot aimed at them.
+      { id: 'dummy-a', position: new Vector3(-13, 0, 2), yaw: 1.6, colorIndex: 1 },
+      { id: 'dummy-b', position: new Vector3(13, 0, 4), yaw: -1.6, colorIndex: 2 },
+      { id: 'dummy-c', position: new Vector3(2, 0, 20), yaw: 0.2, colorIndex: 3 },
+    ];
+const charactersSystem = new CharactersSystem(playerState, characterRegistry, dummies);
 
 // Registration order is execution order, and it matters:
 //   player writes renderPosition -> camera reads it and writes avatarOpacity
@@ -50,7 +66,7 @@ game
   .add(ballistics)
   .add(new WeaponSystem(playerState, ballistics))
   .add(paint)
-  .add(new PlayerAvatarSystem(playerState));
+  .add(charactersSystem);
 
 interface ImpactRecord {
   x: number;
@@ -71,6 +87,7 @@ declare global {
       player: PlayerController;
       ballistics: BallisticsSystem;
       paint: PaintSystem;
+      characters: CharactersSystem;
       camera: () => { x: number; y: number; z: number };
       simTime: () => number;
       impacts: ImpactRecord[];
@@ -78,6 +95,10 @@ declare global {
   }
 }
 const impacts: ImpactRecord[] = [];
+game.events.on('shot:fired', ({ shooterId }) => {
+  if (shooterId === 'player') charactersSystem.onPlayerShot();
+});
+
 game.events.on('hit:world', ({ point, color, impactSpeed, colliderHandle }) => {
   impacts.push({
     x: point.x,
@@ -96,6 +117,7 @@ window.__paintball = {
   player,
   ballistics,
   paint,
+  characters: charactersSystem,
   camera: () => game.render.camera.position.clone(),
   simTime: () => game.simElapsed,
   impacts,

@@ -96,8 +96,15 @@ export const paint = {
   /** Number of procedurally generated splat shapes in the variant atlas. */
   splatVariants: 16,
   splatAtlasSize: 1024,
-  /** World-space radius of a splat at nominal impact speed. */
+  /** World-space radius of a splat on world geometry, at nominal impact speed. */
   baseSplatRadius: 0.34,
+  /**
+   * Radius for splats on a character, much smaller than for world surfaces.
+   * A torso face is only 0.44m across, so the world radius produced a splat
+   * wider than the body part — scissored to the face, that renders as a solid
+   * rectangle of colour rather than as a splat.
+   */
+  characterSplatRadius: 0.1,
   /** Splats scale up with impact speed, within these bounds. */
   minSplatScale: 0.7,
   maxSplatScale: 1.5,

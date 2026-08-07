@@ -9,6 +9,7 @@ import {
   Vector3,
 } from 'three';
 import { ballistics as config, physics as physicsConfig } from '../core/Config';
+import type { CharacterRegistry } from '../character/CharacterRegistry';
 import { createCelMaterial } from '../render/CelMaterial';
 import type { GameContext, System } from '../core/System';
 
@@ -38,6 +39,13 @@ interface Projectile {
  */
 export class BallisticsSystem implements System {
   readonly name = 'ballistics';
+
+  /**
+   * Optional: without it every impact is treated as world geometry. With it,
+   * hits on a registered character collider are routed to hit:character
+   * instead, which is what separates painting a person from painting a wall.
+   */
+  constructor(private readonly characters?: CharacterRegistry) {}
 
   private pool: Projectile[] = [];
   private mesh?: InstancedMesh;
@@ -198,12 +206,27 @@ export class BallisticsSystem implements System {
     const speed = projectile.velocity.length();
     const incidence = Math.abs(this.direction.dot(this.hitNormal));
 
+    const impactSpeed = speed * (0.4 + 0.6 * incidence);
+    const targetId = this.characters?.getId(hit.collider.handle);
+
+    if (targetId !== undefined) {
+      events.emit('hit:character', {
+        targetId,
+        shooterId: projectile.shooterId,
+        color: projectile.color,
+        point: this.hitPoint.clone(),
+        normal: this.hitNormal.clone(),
+        impactSpeed,
+      });
+      return;
+    }
+
     events.emit('hit:world', {
       shooterId: projectile.shooterId,
       color: projectile.color,
       point: this.hitPoint.clone(),
       normal: this.hitNormal.clone(),
-      impactSpeed: speed * (0.4 + 0.6 * incidence),
+      impactSpeed,
       colliderHandle: hit.collider.handle,
     });
   }
