@@ -2,6 +2,7 @@ import './style.css';
 import { Vector3 } from 'three';
 import { CharacterRegistry } from './character/CharacterRegistry';
 import { CharactersSystem, type BotSpec } from './character/CharactersSystem';
+import { AudioSystem } from './audio/AudioSystem';
 import { Game } from './core/Game';
 import { BallisticsSystem } from './gameplay/Ballistics';
 import { CameraRig } from './gameplay/CameraRig';
@@ -10,6 +11,7 @@ import { createPlayerState } from './gameplay/PlayerState';
 import { WeaponSystem } from './gameplay/Weapon';
 import { PaintSystem } from './paint/PaintSystem';
 import { SurfaceRegistry } from './paint/SurfaceRegistry';
+import { HudSystem } from './ui/HudSystem';
 import { ParkArenaSystem } from './world/ParkArena';
 import { TestCourseSystem } from './world/TestCourse';
 
@@ -64,6 +66,8 @@ const charactersSystem = new CharactersSystem(
   ballistics,
   bots,
 );
+const audio = new AudioSystem(playerState);
+const hud = new HudSystem(container, charactersSystem);
 
 // Registration order is execution order, and it matters:
 //   player writes renderPosition -> camera reads it and writes avatarOpacity
@@ -75,7 +79,11 @@ game
   .add(ballistics)
   .add(new WeaponSystem(playerState, ballistics))
   .add(paint)
-  .add(charactersSystem);
+  .add(charactersSystem)
+  // After characters: the HUD reads their scores, and audio positions sounds
+  // relative to the player's interpolated transform.
+  .add(audio)
+  .add(hud);
 
 interface ImpactRecord {
   x: number;
@@ -98,6 +106,8 @@ declare global {
       ballistics: BallisticsSystem;
       paint: PaintSystem;
       characters: CharactersSystem;
+      audio: AudioSystem;
+      hud: HudSystem;
       camera: () => { x: number; y: number; z: number };
       simTime: () => number;
       impacts: ImpactRecord[];
@@ -129,6 +139,8 @@ window.__paintball = {
   ballistics,
   paint,
   characters: charactersSystem,
+  audio,
+  hud,
   camera: () => game.render.camera.position.clone(),
   simTime: () => game.simElapsed,
   impacts,

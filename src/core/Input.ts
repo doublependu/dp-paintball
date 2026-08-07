@@ -13,6 +13,8 @@ export type Action =
   | 'aim'
   | 'reload'
   | 'taunt'
+  | 'scoreboard'
+  | 'mute'
   | 'togglePerf';
 
 const KEY_BINDINGS: Record<string, Action> = {
@@ -30,6 +32,8 @@ const KEY_BINDINGS: Record<string, Action> = {
   ShiftLeft: 'sprint',
   KeyR: 'reload',
   KeyT: 'taunt',
+  Tab: 'scoreboard',
+  KeyM: 'mute',
   F3: 'togglePerf',
 };
 
@@ -66,8 +70,9 @@ export class Input {
     const onKeyDown = (e: KeyboardEvent) => {
       const action = KEY_BINDINGS[e.code];
       if (!action) return;
-      // F3 is a browser shortcut on some platforms; claim it.
-      if (action === 'togglePerf') e.preventDefault();
+      // F3 and Tab are browser shortcuts; claim them. Without this, Tab moves
+      // focus out of the canvas and the game silently stops receiving input.
+      if (action === 'togglePerf' || action === 'scoreboard') e.preventDefault();
       if (e.repeat) return;
       this.held.add(action);
       this.pressedThisFrame.add(action);
@@ -76,6 +81,7 @@ export class Input {
     const onKeyUp = (e: KeyboardEvent) => {
       const action = KEY_BINDINGS[e.code];
       if (!action) return;
+      if (action === 'scoreboard') e.preventDefault();
       this.held.delete(action);
       this.releasedThisFrame.add(action);
     };

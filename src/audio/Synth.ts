@@ -1,0 +1,235 @@
+import type { AudioEngine, Bus } from './AudioEngine';
+
+/**
+ * The game's sound set, synthesised on demand.
+ *
+ * Each sound is a handful of oscillators and filtered noise with tight
+ * envelopes. Paintball sounds suit this unusually well — a CO2 puff, a wet
+ * slap, a footfall are all short broadband transients, which is exactly what
+ * noise through a swept filter produces.
+ */
+export class Synth {
+  constructor(private readonly engine: AudioEngine) {}
+
+  /**
+   * Firing: a compressed-gas puff plus a hollow body thump.
+   * Deliberately soft — this is a park, not a warzone.
+   */
+  shoot(gain = 1, pan = 0): void {
+    const ctx = this.engine.ctx;
+    const voice = this.engine.createVoice('sfx', gain * 0.5, pan);
+    if (!ctx || !voice) return;
+    const t = ctx.currentTime;
+
+    // The gas escape.
+    const noise = this.engine.createNoiseSource();
+    if (noise) {
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(2400, t);
+      filter.frequency.exponentialRampToValueAtTime(700, t + 0.09);
+      filter.Q.value = 1.2;
+
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0001, t);
+      env.gain.exponentialRampToValueAtTime(0.9, t + 0.004);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
+
+      noise.connect(filter);
+      filter.connect(env);
+      env.connect(voice.input);
+      noise.start(t);
+      noise.stop(t + 0.12);
+    }
+
+    // The barrel's body: a fast downward chirp.
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(320, t);
+    osc.frequency.exponentialRampToValueAtTime(90, t + 0.07);
+    const oscEnv = ctx.createGain();
+    oscEnv.gain.setValueAtTime(0.5, t);
+    oscEnv.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+    osc.connect(oscEnv);
+    oscEnv.connect(voice.input);
+    osc.start(t);
+    osc.stop(t + 0.1);
+  }
+
+  /**
+   * Paint impact: the wet slap. A short noise burst through a rapidly closing
+   * lowpass, plus a low thud for the mass behind it.
+   */
+  splat(gain = 1, pan = 0, pitch = 1): void {
+    const ctx = this.engine.ctx;
+    const voice = this.engine.createVoice('sfx', gain * 0.75, pan);
+    if (!ctx || !voice) return;
+    const t = ctx.currentTime;
+
+    const noise = this.engine.createNoiseSource();
+    if (noise) {
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      // The downward sweep is what makes it read as wet rather than as a click.
+      filter.frequency.setValueAtTime(5200 * pitch, t);
+      filter.frequency.exponentialRampToValueAtTime(420 * pitch, t + 0.12);
+      filter.Q.value = 2.2;
+
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0001, t);
+      env.gain.exponentialRampToValueAtTime(1.0, t + 0.003);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+
+      noise.connect(filter);
+      filter.connect(env);
+      env.connect(voice.input);
+      noise.start(t);
+      noise.stop(t + 0.18);
+    }
+
+    const thud = ctx.createOscillator();
+    thud.type = 'sine';
+    thud.frequency.setValueAtTime(180 * pitch, t);
+    thud.frequency.exponentialRampToValueAtTime(58 * pitch, t + 0.1);
+    const thudEnv = ctx.createGain();
+    thudEnv.gain.setValueAtTime(0.6, t);
+    thudEnv.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+    thud.connect(thudEnv);
+    thudEnv.connect(voice.input);
+    thud.start(t);
+    thud.stop(t + 0.15);
+  }
+
+  /** Footfall: a brief damped noise tap, pitched by surface. */
+  footstep(gain = 1, pan = 0, pitch = 1): void {
+    const ctx = this.engine.ctx;
+    const voice = this.engine.createVoice('sfx', gain * 0.28, pan);
+    if (!ctx || !voice) return;
+    const t = ctx.currentTime;
+
+    const noise = this.engine.createNoiseSource();
+    if (!noise) return;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 620 * pitch;
+    filter.Q.value = 0.8;
+
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(0.7, t + 0.005);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+
+    noise.connect(filter);
+    filter.connect(env);
+    env.connect(voice.input);
+    noise.start(t);
+    noise.stop(t + 0.09);
+  }
+
+  /**
+   * Getting tagged: a soft descending "oof", so being hit reads as comic
+   * rather than punishing.
+   */
+  tagged(gain = 1): void {
+    const ctx = this.engine.ctx;
+    const voice = this.engine.createVoice('sfx', gain * 0.5, 0);
+    if (!ctx || !voice) return;
+    const t = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(420, t);
+    osc.frequency.exponentialRampToValueAtTime(190, t + 0.22);
+
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(0.55, t + 0.02);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+
+    osc.connect(env);
+    env.connect(voice.input);
+    osc.start(t);
+    osc.stop(t + 0.32);
+  }
+
+  /** A rising three-note blip for landing a hit on someone else. */
+  scored(gain = 1): void {
+    const ctx = this.engine.ctx;
+    const voice = this.engine.createVoice('sfx', gain * 0.32, 0);
+    if (!ctx || !voice) return;
+    const t = ctx.currentTime;
+    const notes = [660, 880, 1180];
+
+    notes.forEach((frequency, i) => {
+      const start = t + i * 0.055;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = frequency;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0001, start);
+      env.gain.exponentialRampToValueAtTime(0.5, start + 0.008);
+      env.gain.exponentialRampToValueAtTime(0.0001, start + 0.1);
+      osc.connect(env);
+      env.connect(voice.input);
+      osc.start(start);
+      osc.stop(start + 0.12);
+    });
+  }
+
+  /**
+   * A bird call: two or three chirps, each a fast frequency sweep.
+   * Real birdsong is mostly rapid glissandi, which a single ramped oscillator
+   * captures surprisingly convincingly.
+   */
+  birdCall(gain: number, pan: number, seedPitch: number, bus: Bus = 'ambient'): void {
+    const ctx = this.engine.ctx;
+    const voice = this.engine.createVoice(bus, gain, pan);
+    if (!ctx || !voice) return;
+    const t = ctx.currentTime;
+    const chirps = 2 + Math.floor(Math.random() * 3);
+
+    for (let i = 0; i < chirps; i++) {
+      const start = t + i * (0.07 + Math.random() * 0.06);
+      const base = seedPitch * (0.92 + Math.random() * 0.2);
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(base, start);
+      osc.frequency.exponentialRampToValueAtTime(base * (1.25 + Math.random() * 0.6), start + 0.03);
+      osc.frequency.exponentialRampToValueAtTime(base * 0.85, start + 0.06);
+
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0001, start);
+      env.gain.exponentialRampToValueAtTime(0.5, start + 0.006);
+      env.gain.exponentialRampToValueAtTime(0.0001, start + 0.07);
+
+      osc.connect(env);
+      env.connect(voice.input);
+      osc.start(start);
+      osc.stop(start + 0.09);
+    }
+  }
+
+  /** A single soft bell tone, used by the sparse ambient music. */
+  bell(frequency: number, gain: number, duration = 2.4): void {
+    const ctx = this.engine.ctx;
+    const voice = this.engine.createVoice('music', gain, (Math.random() - 0.5) * 0.5);
+    if (!ctx || !voice) return;
+    const t = ctx.currentTime;
+
+    // Fundamental plus a quiet fifth: enough partials to read as an
+    // instrument, few enough to stay soft.
+    for (const [ratio, level] of [[1, 1], [1.5, 0.28], [2, 0.16]] as const) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = frequency * ratio;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0001, t);
+      env.gain.exponentialRampToValueAtTime(0.4 * level, t + 0.04);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+      osc.connect(env);
+      env.connect(voice.input);
+      osc.start(t);
+      osc.stop(t + duration + 0.1);
+    }
+  }
+}

@@ -45,3 +45,206 @@ body {
   margin-top: 5px;
   white-space: pre;
 }
+
+/* ---------------------------------------------------------------------------
+   HUD
+
+   Hand-drawn in feel: rounded type, ink-dark strokes rather than boxes, paint
+   colours borrowed straight from the game palette. Nothing here is
+   interactive, so the whole layer is pointer-transparent — the canvas
+   underneath must keep receiving clicks for pointer lock.
+   --------------------------------------------------------------------------- */
+
+.splash-overlay,
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.splash-overlay {
+  z-index: 30;
+  width: 100%;
+  height: 100%;
+}
+
+.hud {
+  z-index: 25;
+  font-family: ui-rounded, "Segoe UI Rounded", "Hiragino Maru Gothic ProN",
+    system-ui, -apple-system, sans-serif;
+  color: #2a2438;
+}
+
+/* A ring, not a cross: paint arcs, so a precise cross would be a lie. */
+.hud__crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  margin: -6.5px 0 0 -6.5px;
+  border: 2px solid rgba(42, 36, 56, 0.62);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.4);
+}
+
+.hud__counters {
+  position: absolute;
+  left: 26px;
+  bottom: 22px;
+  display: flex;
+  gap: 22px;
+  align-items: flex-end;
+}
+
+.hud__counter {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
+.hud__value {
+  font-size: 42px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  /* An ink outline, so the number reads over grass or sky alike. */
+  -webkit-text-stroke: 2.5px #2a2438;
+  paint-order: stroke fill;
+  transition: transform 0.12s ease;
+}
+
+.hud__counter--given .hud__value { color: #a8e337; }
+.hud__counter--taken .hud__value { color: #ff3d81; }
+
+.hud__value.is-bumped {
+  animation: hud-bump 0.32s cubic-bezier(0.34, 1.8, 0.64, 1);
+}
+
+@keyframes hud-bump {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.28) rotate(-3deg); }
+  100% { transform: scale(1); }
+}
+
+.hud__label {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: rgba(42, 36, 56, 0.72);
+}
+
+.hud__toast {
+  position: absolute;
+  left: 50%;
+  top: 26%;
+  transform: translate(-50%, 8px) scale(0.9);
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  -webkit-text-stroke: 3px #2a2438;
+  paint-order: stroke fill;
+  opacity: 0;
+  transition: opacity 0.18s ease, transform 0.28s cubic-bezier(0.34, 1.7, 0.64, 1);
+}
+
+.hud__toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1) rotate(-2deg);
+}
+
+.hud__hint {
+  position: absolute;
+  left: 50%;
+  bottom: 30px;
+  transform: translateX(-50%);
+  padding: 9px 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 2px solid #2a2438;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: lowercase;
+  white-space: nowrap;
+  transition: opacity 0.3s ease;
+}
+
+.hud__hint.is-hidden { opacity: 0; }
+
+.hud__scoreboard {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  min-width: 380px;
+  padding: 20px 24px 18px;
+  border-radius: 16px;
+  border: 3px solid #2a2438;
+  background: rgba(252, 250, 245, 0.95);
+  box-shadow: 0 14px 40px rgba(42, 36, 56, 0.28);
+  opacity: 0;
+  transition: opacity 0.14s ease, transform 0.18s ease;
+}
+
+.hud__scoreboard.is-visible {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.hud__scoreboard-title {
+  margin-bottom: 14px;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.hud__scoreboard-head,
+.hud__score-row {
+  display: grid;
+  grid-template-columns: 1fr 92px 66px;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud__scoreboard-head {
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 2px solid rgba(42, 36, 56, 0.18);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(42, 36, 56, 0.55);
+}
+
+.hud__scoreboard-head span:not(:first-child),
+.hud__score-row span:not(:first-child) { text-align: right; }
+
+.hud__score-row {
+  padding: 5px 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.hud__score-row.is-player {
+  color: #b3246a;
+}
+
+.hud__score-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  border: 2px solid #2a2438;
+}
+
+.hud__score-given { color: #4e7a1f; }
+.hud__score-taken { color: #b3246a; }
