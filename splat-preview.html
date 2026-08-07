@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Splat atlas preview</title>
+    <style>
+      body {
+        margin: 0;
+        background: #23202c;
+        color: #e8e4f0;
+        font: 13px ui-monospace, monospace;
+        display: grid;
+        place-items: center;
+        gap: 12px;
+        padding: 16px;
+      }
+      /* Checkerboard so coverage and antialiasing are actually visible. */
+      canvas {
+        background-image: linear-gradient(45deg, #3a3547 25%, transparent 25%),
+          linear-gradient(-45deg, #3a3547 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, #3a3547 75%),
+          linear-gradient(-45deg, transparent 75%, #3a3547 75%);
+        background-size: 16px 16px;
+        background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+      }
+      #stats {
+        white-space: pre;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stats">generating…</div>
+    <canvas id="out"></canvas>
+    <script type="module">
+      import { SplatAtlas } from '/src/paint/SplatAtlas.ts';
+
+      const atlas = new SplatAtlas();
+      const size = atlas.texture.image.width;
+      const data = atlas.texture.image.data;
+
+      const canvas = document.getElementById('out');
+      canvas.width = size;
+      canvas.height = size;
+      canvas.style.width = '640px';
+      const ctx = canvas.getContext('2d');
+
+      // Tint by variant index so neighbouring tiles are easy to tell apart, and
+      // so this doubles as a check that colour multiplies cleanly over coverage.
+      const colors = [
+        [255, 61, 129], [0, 212, 232], [168, 227, 55], [255, 140, 43],
+        [155, 93, 229], [255, 210, 63], [255, 87, 87], [63, 201, 138],
+      ];
+      const image = ctx.createImageData(size, size);
+      const tile = size / atlas.tilesPerRow;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const i = (y * size + x) * 4;
+          const variant =
+            Math.floor(y / tile) * atlas.tilesPerRow + Math.floor(x / tile);
+          const [r, g, b] = colors[variant % colors.length];
+          const alpha = data[i + 3] / 255;
+          const field = data[i] / 255;
+          const noise = data[i + 1] / 255;
+          // Darken toward the rim and vary the interior, as the paint shader will.
+          const shade = 0.72 + 0.28 * field + 0.08 * (noise - 0.5);
+          image.data[i] = r * shade;
+          image.data[i + 1] = g * shade;
+          image.data[i + 2] = b * shade;
+          image.data[i + 3] = alpha * 255;
+        }
+      }
+      ctx.putImageData(image, 0, 0);
+
+      let covered = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 8) covered++;
+
+      // Splats must be fully opaque in the interior — anything less and paint
+      // renders translucent in game. Sample the middle of tile 0.
+      let minCoreAlpha = 255;
+      const half = tile / 2;
+      for (let y = half - 10; y < half + 10; y++) {
+        for (let x = half - 10; x < half + 10; x++) {
+          minCoreAlpha = Math.min(minCoreAlpha, data[(y * size + x) * 4 + 3]);
+        }
+      }
+
+      document.getElementById('stats').textContent = [
+        `${atlas.variants} variants in ${size}x${size} (${tile}px tiles)`,
+        `generated in ${atlas.generationMs.toFixed(1)}ms`,
+        `coverage ${((covered / (size * size)) * 100).toFixed(1)}% of atlas`,
+        `min alpha in core: ${minCoreAlpha} (want 255)`,
+      ].join('\n');
+      window.__splatReady = true;
+    </script>
+  </body>
+</html>

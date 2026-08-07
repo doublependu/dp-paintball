@@ -90,18 +90,37 @@ and massing. Geometry is hand-built — no copyrighted photos baked into texture
 
 ## 6. Paint system
 
-**Texture-space paint accumulation**, not stacked decals. Every static surface
-gets a second UV set into a shared paint mask atlas; a hit renders a splat quad
-into that atlas at the impact UV. Result: unlimited permanent splats, zero
-draw-call growth, splats that wrap corners correctly.
+> **Revised during Phase 2.** This section originally specified texture-space
+> accumulation for world paint. The arithmetic killed it — see below.
 
-Characters carry a small 256² paint RT each. Since this is third-person, paint on
-your own body is a headline feature — splats should be visible on your own back.
+**Batched decals for world paint.** Each impact projects a clipped decal onto
+the receiving geometry; all decals merge into one vertex buffer with per-vertex
+tint and atlas-tile attributes, so every splat in the world is a single draw
+call.
 
-Splat art: procedurally generated metaball blobs with directional drip tails
-(impact-velocity-aligned), ~16 baked variants, animated drips via a second
-channel. On impact — particle burst, squash-stretch pop ring, bloom pulse, wet
-*thock*.
+*Why not texture-space:* the original plan unwrapped every surface into a shared
+4096² paint atlas and stamped splats at the impact UV. But the arena is 130×130m.
+Packing that into a 4096² atlas leaves roughly 5 texels per metre, so a 34cm
+splat lands on under two texels. Texture-space accumulation is the right
+technique for a corridor shooter, not an open park. Decals make resolution
+independent of world size, moving the cost from texture memory to vertex count —
+which is cheap and bounded.
+
+*What that costs:* paint is capped rather than unlimited, and the oldest splats
+are evicted. Measured capacity is ~9,100 splats within a 150k vertex budget,
+at ~17 verts per splat. That is a long match.
+
+**Characters carry a per-character paint render target** — decals are baked
+against static geometry and would need reprojecting every frame on an animated
+mesh. Implemented in phase 5 alongside the real rig, not in phase 2. Since this
+is third-person, paint on your own body is a headline feature: splats should be
+visible on your own back.
+
+Splat art: procedurally generated metaball blobs with drip tails, 16 variants
+baked into a 1024² atlas at boot (~45ms, zero download). Wyvill (1-t²)³ kernel
+with finite support — the textbook r²/d² kernel merges every lobe into a smooth
+disc and draws circles instead of splats. On impact — particle burst,
+squash-stretch pop ring, bloom pulse, wet *thock*.
 
 ## 7. Game rules
 

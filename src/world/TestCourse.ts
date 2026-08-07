@@ -13,6 +13,7 @@ import {
 import { DEG2RAD } from '../core/MathUtils';
 import { palette, player as playerConfig, render as renderConfig } from '../core/Config';
 import type { GameContext, System } from '../core/System';
+import type { SurfaceRegistry } from '../paint/SurfaceRegistry';
 
 /**
  * A gym for movement, not a level. Every piece here exists to falsify a
@@ -29,6 +30,8 @@ export class TestCourseSystem implements System {
   readonly name = 'test-course';
 
   private disposables: Array<{ dispose(): void }> = [];
+
+  constructor(private readonly surfaces: SurfaceRegistry) {}
 
   init(ctx: GameContext): void {
     const { scene } = ctx;
@@ -186,11 +189,13 @@ export class TestCourseSystem implements System {
     }
 
     ctx.scene.add(mesh);
-    ctx.physics.createStaticBox(
+    const collider = ctx.physics.createStaticBox(
       position,
       { x: size.x / 2, y: size.y / 2, z: size.z / 2 },
       rotation ? quaternion : undefined,
     );
+    // Lets the paint system find this mesh when a paintball hits its collider.
+    this.surfaces.register(collider.handle, mesh);
 
     this.disposables.push(geometry, material);
   }

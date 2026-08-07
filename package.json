@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "shoot": "node tools/shoot.mjs",
-    "test:movement": "node tools/movement-test.mjs"
+    "test:movement": "node tools/movement-test.mjs",
+    "test:ballistics": "node tools/ballistics-test.mjs",
+    "test:paint": "node tools/paint-test.mjs",
+    "test": "node tools/movement-test.mjs && node tools/ballistics-test.mjs && node tools/paint-test.mjs"
   },
   "devDependencies": {
     "@types/three": "^0.185.4",

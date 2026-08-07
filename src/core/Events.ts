@@ -22,6 +22,8 @@ export interface GameEventMap {
     point: Vector3;
     normal: Vector3;
     impactSpeed: number;
+    /** Rapier collider handle, so the paint system can find the receiving mesh. */
+    colliderHandle: number;
   };
   /** A paintball was fired. */
   'shot:fired': { shooterId: string; color: number; origin: Vector3; direction: Vector3 };
