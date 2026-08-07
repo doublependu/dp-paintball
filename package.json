@@ -5,10 +5,20 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "shoot": "node tools/shoot.mjs",
+    "test:movement": "node tools/movement-test.mjs"
   },
   "devDependencies": {
+    "@types/three": "^0.185.4",
+    "playwright-core": "^1.62.1",
+    "typescript": "^7.0.2",
     "vite": "^8.2.0"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3",
+    "three": "^0.185.1"
   }
 }

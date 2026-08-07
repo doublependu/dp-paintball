@@ -4,10 +4,92 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>dp-paintball</title>
+    <meta name="theme-color" content="#cfe9f2" />
+    <meta
+      name="description"
+      content="A hand-drawn paintball game in Central Park. Nobody dies. Everyone gets messy."
+    />
+    <title>Central Park Paintball</title>
+    <!--
+      The loading card is inlined so it paints on the first pass, before any
+      module is fetched. Everything here is deliberately styleable without a
+      stylesheet request — see the load budget in PLAN.md.
+    -->
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #cfe9f2;
+        font-family: ui-rounded, "Segoe UI Rounded", "Hiragino Maru Gothic ProN",
+          system-ui, -apple-system, sans-serif;
+      }
+      #loader {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 1.25rem;
+        background: linear-gradient(170deg, #eaf6fb 0%, #cfe9f2 45%, #b9dcc6 100%);
+        color: #2a2438;
+        transition: opacity 0.5s ease;
+      }
+      #loader.is-done {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #loader h1 {
+        margin: 0;
+        font-size: clamp(1.75rem, 5vw, 3rem);
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        text-align: center;
+      }
+      #loader p {
+        margin: -0.5rem 0 0;
+        opacity: 0.7;
+        font-size: 0.95rem;
+        text-align: center;
+      }
+      #loader-track {
+        width: min(320px, 70vw);
+        height: 10px;
+        border: 2px solid #2a2438;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(255, 255, 255, 0.5);
+      }
+      #loader-bar {
+        width: 0%;
+        height: 100%;
+        background: linear-gradient(90deg, #ff3d81, #ffd23f, #00d4e8);
+        transition: width 0.3s ease;
+      }
+      #loader-label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        opacity: 0.55;
+        min-height: 1em;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/main.js"></script>
+
+    <div id="loader">
+      <h1>Central Park Paintball</h1>
+      <p>Nobody dies. Everyone gets messy.</p>
+      <div id="loader-track"><div id="loader-bar"></div></div>
+      <div id="loader-label">starting</div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
