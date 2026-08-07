@@ -10,7 +10,9 @@
 import { chromium } from 'playwright-core';
 import { existsSync } from 'node:fs';
 
-const url = process.argv[2] ?? 'http://localhost:4173/';
+// The test course, not the park: every coordinate below is a fixture of
+// that geometry.
+const url = process.argv[2] ?? 'http://localhost:4173/?scene=course';
 const EXECUTABLE =
   process.env.CHROME_PATH ??
   ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find(existsSync);

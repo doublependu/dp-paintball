@@ -81,6 +81,13 @@ export class PaintSystem implements System {
   private readonly rollQuaternion = new Quaternion();
   private readonly decalSize = new Vector3();
   private readonly color = new Color();
+  /**
+   * Stand-in receiver handed to DecalGeometry, which only ever reads
+   * `geometry` and `matrixWorld`. Using a proxy lets instanced props be painted
+   * per-instance, since an InstancedMesh has a single matrixWorld for the batch.
+   * Never added to the scene, so nothing recomputes its transform.
+   */
+  private readonly proxy = new Mesh();
 
   /** Splats placed since load, including any since evicted. */
   private totalPlaced = 0;
@@ -145,6 +152,9 @@ export class PaintSystem implements System {
     const receiver = this.surfaces.get(impact.colliderHandle);
     if (!receiver || !this.atlas) return;
 
+    this.proxy.geometry = receiver.geometry;
+    this.proxy.matrixWorld.copy(receiver.matrixWorld);
+
     // Faster hits splash wider.
     const speedScale = clamp(
       remap(impact.impactSpeed, 12, 42, paintConfig.minSplatScale, paintConfig.maxSplatScale),
@@ -163,7 +173,7 @@ export class PaintSystem implements System {
     this.decalSize.set(radius * 2, radius * 2, PROJECTION_DEPTH);
 
     const decal = new DecalGeometry(
-      receiver,
+      this.proxy,
       impact.point,
       this.orientation,
       this.decalSize,

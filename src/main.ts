@@ -9,6 +9,7 @@ import { createPlayerState } from './gameplay/PlayerState';
 import { WeaponSystem } from './gameplay/Weapon';
 import { PaintSystem } from './paint/PaintSystem';
 import { SurfaceRegistry } from './paint/SurfaceRegistry';
+import { ParkArenaSystem } from './world/ParkArena';
 import { TestCourseSystem } from './world/TestCourse';
 
 const container = document.querySelector<HTMLDivElement>('#app');
@@ -18,8 +19,22 @@ const loader = document.querySelector<HTMLDivElement>('#loader');
 const loaderBar = document.querySelector<HTMLDivElement>('#loader-bar');
 const loaderLabel = document.querySelector<HTMLDivElement>('#loader-label');
 
+/**
+ * The park is the game; the test course is a purpose-built movement gym whose
+ * geometry the movement, ballistics and paint suites assert against by exact
+ * coordinate. Keeping both, selected by `?scene=course`, means those suites stay
+ * meaningful instead of being rewritten every time the map changes.
+ */
+const scene = new URLSearchParams(location.search).get('scene');
+const useTestCourse = scene === 'course';
+
 const game = new Game(container);
-const playerState = createPlayerState(new Vector3(0, 2, 6));
+// Park: south edge of the plaza, clear of the fountain basin (radius 6), and
+// far enough north that the trailing camera doesn't sit inside the arcade
+// undercroft at z=16. Course: the old open-ground spawn.
+const playerState = createPlayerState(
+  useTestCourse ? new Vector3(0, 2, 6) : new Vector3(0, 1.5, 10),
+);
 const player = new PlayerController(playerState);
 const ballistics = new BallisticsSystem();
 const surfaces = new SurfaceRegistry();
@@ -29,7 +44,7 @@ const paint = new PaintSystem(surfaces);
 //   player writes renderPosition -> camera reads it and writes avatarOpacity
 //   -> avatar reads both.
 game
-  .add(new TestCourseSystem(surfaces))
+  .add(useTestCourse ? new TestCourseSystem(surfaces) : new ParkArenaSystem(surfaces))
   .add(player)
   .add(new CameraRig(playerState))
   .add(ballistics)

@@ -65,6 +65,32 @@ export class PhysicsWorld {
     return this.w.createCollider(desc, body);
   }
 
+  /**
+   * Static trimesh placed by body transform rather than by baking the transform
+   * into the vertices — so many instances of one prop share a single vertex
+   * buffer instead of each carrying its own transformed copy.
+   */
+  createTrimeshAt(
+    vertices: Float32Array,
+    indices: Uint32Array,
+    position: { x: number; y: number; z: number },
+    rotation: { x: number; y: number; z: number; w: number },
+    scale = 1,
+  ): RapierNS.Collider {
+    const body = this.w.createRigidBody(
+      this.api.RigidBodyDesc.fixed()
+        .setTranslation(position.x, position.y, position.z)
+        .setRotation(rotation),
+    );
+    let verts = vertices;
+    if (scale !== 1) {
+      verts = new Float32Array(vertices.length);
+      for (let i = 0; i < vertices.length; i++) verts[i] = vertices[i]! * scale;
+    }
+    const desc = this.api.ColliderDesc.trimesh(verts, indices);
+    return this.w.createCollider(desc, body);
+  }
+
   /** Static box collider. `halfExtents` are half-widths, per Rapier convention. */
   createStaticBox(
     position: { x: number; y: number; z: number },

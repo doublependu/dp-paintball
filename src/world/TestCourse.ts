@@ -202,7 +202,7 @@ export class TestCourseSystem implements System {
       rotation ? quaternion : undefined,
     );
     // Lets the paint system find this mesh when a paintball hits its collider.
-    this.surfaces.register(collider.handle, mesh);
+    this.surfaces.registerMesh(collider.handle, mesh);
 
     this.disposables.push(geometry, material);
   }
