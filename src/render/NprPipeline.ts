@@ -38,6 +38,9 @@ const OutlineShader = {
     uDepthThreshold: { value: 0.9 },
     uCameraNear: { value: 0.1 },
     uCameraFar: { value: 400 },
+    uAoStrength: { value: 0.55 },
+    uAoRadius: { value: 26.0 },
+    uAoTint: { value: new Color(0x5a6fa8) },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -65,6 +68,9 @@ const OutlineShader = {
     uniform float uDepthThreshold;
     uniform float uCameraNear;
     uniform float uCameraFar;
+    uniform float uAoStrength;
+    uniform float uAoRadius;
+    uniform vec3 uAoTint;
     varying vec2 vUv;
 
     float linearDepth( vec2 uv ) {
@@ -109,7 +115,35 @@ const OutlineShader = {
 
       float edge = clamp( max( normalEdge, depthEdge ), 0.0, 1.0 );
 
+      // --- ambient occlusion ---------------------------------------------
+      // Computed here rather than in its own pass: this shader already has the
+      // normal and depth buffers bound, and a separate SSAO pass would mean a
+      // second full-screen read of both for no additional information.
+      //
+      // Screen-space depth differences rather than a hemisphere kernel — for a
+      // cel-shaded scene the job is contact darkening in creases, not a
+      // physically plausible occlusion term, and eight taps get there.
+      float ao = 0.0;
+      // Scale the sampling radius with distance so occlusion stays the same
+      // size in world terms rather than shrinking as objects recede.
+      float aoScale = uAoRadius / ( 1.0 + d0 * 90.0 );
+      for ( int i = 0; i < 8; i++ ) {
+        float a = float( i ) * 0.7853981634;
+        vec2 offset = vec2( cos( a ), sin( a ) ) * aoScale / uResolution;
+        float sampleDepth = linearDepth( vUv + offset );
+        // Positive when the neighbour is nearer the camera, i.e. occluding.
+        float diff = d0 - sampleDepth;
+        // The upper bound rejects silhouettes: a distant background behind a
+        // near object is not occlusion, it's a different surface entirely.
+        ao += smoothstep( 0.0, 0.0008, diff ) * ( 1.0 - smoothstep( 0.0025, 0.006, diff ) );
+      }
+      ao = clamp( ao / 8.0, 0.0, 1.0 ) * uAoStrength;
+
       vec4 color = texture2D( tDiffuse, vUv );
+      // Occlusion is tinted rather than neutral: shadow in this game is
+      // ambient sky light, which is blue-violet, so a grey multiply would fight
+      // every other shadow on screen.
+      color.rgb = mix( color.rgb, color.rgb * uAoTint * 1.5, ao );
       // Tint the ink toward the surface underneath rather than stamping black,
       // which is what keeps it reading as drawn rather than as an outline filter.
       vec3 ink = mix( uInkColor, uInkColor * 0.45 + color.rgb * 0.55, 0.22 );

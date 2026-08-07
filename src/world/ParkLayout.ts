@@ -134,9 +134,12 @@ export function slopeAt(x: number, z: number, eps = 1.0): number {
 }
 
 const SCRATCH = new Color();
-const GRASS_LIT = new Color(0x7fae4e);
-const GRASS_DEEP = new Color(0x4d7a44);
-const GRASS_DRY = new Color(0xa8b45c);
+// Widened deliberately. The previous three greens sat within a few percent of
+// each other, so the two-scale noise had nothing to interpolate between and the
+// lawns rendered as a single flat fill at any distance.
+const GRASS_LIT = new Color(0x93c357);
+const GRASS_DEEP = new Color(0x3b6838);
+const GRASS_DRY = new Color(0xc0c268);
 const ROCK = new Color(0x9a927f);
 const SAND = new Color(0xcbbd93);
 const LAKEBED = new Color(0x6b7a63);
@@ -156,18 +159,28 @@ export function groundColorAt(x: number, z: number, height: number, slope: numbe
 
   // Two-scale variation so the grass never reads as one flat fill — the thing
   // that made the phase 3 test course look like a tech demo.
-  const broad = fbm2D(x * 0.018, z * 0.018, 3, 7);
-  const fine = fbm2D(x * 0.11, z * 0.11, 2, 23);
+  // Three scales, not two: broad drifts of tone, mid-scale patchiness, and a
+  // fine break-up that keeps close ground from looking laminated.
+  const broad = fbm2D(x * 0.014, z * 0.014, 3, 7);
+  const mid = fbm2D(x * 0.055, z * 0.055, 3, 41);
+  const fine = fbm2D(x * 0.15, z * 0.15, 2, 23);
 
-  SCRATCH.copy(GRASS_DEEP).lerp(GRASS_LIT, clamp(broad * 1.25, 0, 1));
-  SCRATCH.lerp(GRASS_DRY, clamp((fine - 0.55) * 1.4, 0, 1) * 0.55);
+  SCRATCH.copy(GRASS_DEEP).lerp(GRASS_LIT, clamp((broad - 0.28) * 1.9, 0, 1));
+  SCRATCH.lerp(GRASS_DEEP, clamp((0.46 - mid) * 1.5, 0, 1) * 0.55);
+  SCRATCH.lerp(GRASS_DRY, clamp((fine - 0.58) * 1.7, 0, 1) * 0.42);
 
   // Exposed rock on anything steep — schist breaking through, as in the Ramble.
   SCRATCH.lerp(ROCK, smoothstep(0.22, 0.55, slope));
 
-  // Shoreline sand, then lake bed below the waterline.
-  SCRATCH.lerp(SAND, smoothstep(0.35, 0.02, Math.abs(height - WATER_Y)) * 0.85);
-  SCRATCH.lerp(LAKEBED, smoothstep(WATER_Y - 0.2, WATER_Y - 1.6, height));
+  // Shoreline sand, gated on *proximity to the lake* rather than on height
+  // difference from the waterline. Height alone is the wrong measure: on gently
+  // shelving ground a one-metre band covers the whole near-shore lawn, which
+  // turned every field beside the water to khaki.
+  const lake = lakeMask(x, z);
+  const shoreBand = smoothstep(0.03, 0.3, lake) * (1 - smoothstep(0.5, 0.85, lake));
+  const shoreNoise = fbm2D(x * 0.09, z * 0.09, 2, 88);
+  SCRATCH.lerp(SAND, shoreBand * (0.65 + shoreNoise * 0.35));
+  SCRATCH.lerp(LAKEBED, smoothstep(WATER_Y - 0.35, WATER_Y - 2.0, height) * 0.8);
 
   // Built surfaces last: they are not weathered by any of the above.
   SCRATCH.lerp(GRAVEL, path * 0.9);

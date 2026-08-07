@@ -407,9 +407,14 @@ export class ParkArenaSystem implements System {
       trees.push({
         position: new Vector3(x, y, z),
         radius,
-        // Sits just below the top of the 9.95m trunk prop, so the canopy reads
-        // as growing out of the limbs rather than hovering above them.
-        crownHeight: 8.3 * scale,
+        // Sits over the compact 8.09m trunk, low enough that the crown
+        // swallows the limbs but high enough that the cards clear the ground.
+        //
+        // The relationship matters: crown height is 1.38*radius while a card's
+        // half-height reaches 0.98*radius, leaving 0.4*radius of trunk visible
+        // beneath. Dropping the crown to 1.16*radius put card bottoms at ground
+        // level and swallowed the camera whole.
+        crownHeight: 7.6 * scale,
         kind,
       });
     };
@@ -457,6 +462,11 @@ export class ParkArenaSystem implements System {
       const z = rng.range(-10, 60);
       if (lakeMask(x, z) > 0.05 || plazaMask(x, z) > 0.05) continue;
       if (Math.abs(x) < 13 && z > 24) continue; // keep the allée clear
+      // Keep clear of the terrace: a canopy planted at ground level beside it
+      // engulfs anyone standing on the slab 4.2m up.
+      if (Math.abs(x) < TERRACE.halfWidth + 6 && z > TERRACE.northZ - 8 && z < TERRACE.southZ + 8) {
+        continue;
+      }
       addTree(x, z, rng.range(4.2, 6.8), rng.bool(0.4) ? 0 : 1);
     }
 
@@ -473,7 +483,29 @@ export class ParkArenaSystem implements System {
       });
     }
 
-    this.placeInstanced(ctx, 'elm_trunk', trunks, 0x8a7259);
+    // A dense hedge along the containment wall. The wall itself is a flat 6m
+    // slab, and its perfectly straight top edge read as an arena boundary
+    // rather than a park edge; overgrowing it with low foliage breaks that line
+    // without giving up the flat vertical surface containment depends on.
+    const hedgeStep = 3.4;
+    for (let along = -ARENA_HALF + 3; along <= ARENA_HALF - 3; along += hedgeStep) {
+      for (const [hx, hz] of [
+        [along, -ARENA_HALF + 3.2],
+        [along, ARENA_HALF - 3.2],
+        [-ARENA_HALF + 3.2, along],
+        [ARENA_HALF - 3.2, along],
+      ] as const) {
+        if (lakeMask(hx, hz) > 0.05) continue;
+        trees.push({
+          position: new Vector3(hx, heightAt(hx, hz), hz),
+          radius: rng.range(2.4, 3.4),
+          crownHeight: rng.range(3.2, 4.6),
+          kind: 1,
+        });
+      }
+    }
+
+    this.placeInstanced(ctx, 'elm_trunk', trunks, 0x6f5c46);
     for (let v = 0; v < 3; v++) {
       this.placeInstanced(ctx, `rock_${v}`, rocks[v]!, 0x9a927f);
     }

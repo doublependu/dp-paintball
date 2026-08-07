@@ -66,7 +66,14 @@ void main() {
   float foam = 1.0 - smoothstep( 0.0, 0.55 + shoreWave, vDepth );
   color = mix( color, uFoam, foam * 0.6 );
 
-  gl_FragColor = vec4( color, 1.0 );
+  // Transparent in the shallows so the sandy bed reads through, opaque out in
+  // the deep. Fully opaque water met the shore as a hard cut — a blue mat laid
+  // on the grass — because the only transition was the discard at depth zero.
+  float alpha = mix( 0.18, 0.96, smoothstep( 0.0, 1.3, vDepth ) );
+  // Foam sits on top of the water rather than behind it.
+  alpha = max( alpha, foam * 0.85 );
+
+  gl_FragColor = vec4( color, alpha );
   #include <colorspace_fragment>
 }
 `;
@@ -126,6 +133,10 @@ export class Water {
       vertexShader: VERTEX,
       fragmentShader: FRAGMENT,
       side: DoubleSide,
+      transparent: true,
+      // No depth write: the surface is a single plane, so nothing needs to sort
+      // against it, and writing depth would clip the shore geometry beneath.
+      depthWrite: false,
       uniforms: {
         uTime: { value: 0 },
         uDeep: { value: new Color(palette.waterDeep) },
@@ -139,6 +150,8 @@ export class Water {
     // the shore would otherwise be inked, and painted water has no outline.
     this.mesh.layers.set(NO_OUTLINE_LAYER);
     this.mesh.receiveShadow = false;
+    // Drawn after the terrain it is blended over.
+    this.mesh.renderOrder = 2;
   }
 
   update(elapsed: number): void {

@@ -16,7 +16,8 @@
     "test:arena": "node tools/arena-test.mjs",
     "test:character": "node tools/character-test.mjs",
     "test:bots": "node tools/bot-test.mjs",
-    "test:ui": "node tools/ui-test.mjs"
+    "test:ui": "node tools/ui-test.mjs",
+    "capture": "node tools/capture.mjs"
   },
   "devDependencies": {
     "@types/three": "^0.185.4",
