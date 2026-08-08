@@ -33,7 +33,12 @@ import {
 import { Terrain } from './Terrain';
 import { Water } from './Water';
 
-const MODEL_URL = '/models/park-props.glb';
+/**
+ * Built from `BASE_URL` rather than written as a root-absolute path: on GitHub
+ * Pages the app lives under `/dp-paintball/`, where a bare `/models/...` would
+ * miss the deployment entirely. `BASE_URL` always carries a trailing slash.
+ */
+const MODEL_URL = `${import.meta.env.BASE_URL}models/park-props.glb`;
 
 /** Mid-afternoon sun, low enough for long shadows down the Mall. */
 const SUN_DIRECTION = new Vector3(0.42, 0.58, 0.36).normalize();
