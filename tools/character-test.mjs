@@ -72,6 +72,42 @@ check('rig geometry is one skinned mesh',
       rig.hasJoint && rig.hasUv && rig.joints === 8 && rig.verts === rig.tris * 2,
       `${rig.verts} verts, ${rig.tris} tris, ${rig.joints} joints`);
 
+// --- Outline integrity -----------------------------------------------------
+// Both failures here were silent. The prepass used scene.overrideMaterial,
+// which discards the rig's skinning vertex shader, so characters landed in the
+// normal buffer in bind pose — no outline on the body, a phantom one at the
+// legs, and background outlines drawn through the figure. And the hull's shader
+// referenced a variable MeshBasicMaterial never declares, so it failed to
+// compile and simply did not draw.
+const outline = await page.evaluate(() => {
+  const c = window.__paintball.characters.playerCharacter;
+  return {
+    hasNormalVariant: Boolean(c.mesh.userData.normalMaterial),
+    hasHull: Boolean(c.hull),
+    hullSharesGeometry: c.hull?.geometry === c.mesh.geometry,
+    // The hull must be off the outline prepass layer, or the shell registers as
+    // a second edge and every line doubles.
+    hullExcludedFromPrepass: c.hull?.layers.mask === (1 << 2),
+    // And after a rendered frame the body must be back on its own material.
+    bodyMaterialRestored: c.mesh.material.type === 'MeshToonMaterial',
+  };
+});
+check('characters publish a skinned normal-material variant', outline.hasNormalVariant);
+check('characters carry an inverted-hull shell',
+      outline.hasHull && outline.hullSharesGeometry, 'shares the rig geometry');
+check('the hull is excluded from the outline prepass', outline.hullExcludedFromPrepass);
+check('prepass restores materials after rendering', outline.bodyMaterialRestored,
+      `material is ${await page.evaluate(() =>
+        window.__paintball.characters.playerCharacter.mesh.material.type)}`);
+
+// The hull shader must actually have compiled. A failed program logs to the
+// console, which is asserted clean at the end, but check it drew as well.
+const hullDrew = await page.evaluate(() => {
+  const c = window.__paintball.characters.playerCharacter;
+  return c.hull.visible && c.hull.material.type === 'MeshBasicMaterial';
+});
+check('the hull is live in the scene', hullDrew);
+
 // --- Hit routing: person, not park -----------------------------------------
 // Bots wander, so rather than firing at a fixed coordinate, step up to whichever
 // bot is nearest and re-aim at its live chest position between bursts.

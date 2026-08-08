@@ -2,6 +2,8 @@ import {
   Color,
   DepthFormat,
   DepthTexture,
+  type Material,
+  type Mesh,
   MeshNormalMaterial,
   NearestFilter,
   type PerspectiveCamera,
@@ -222,6 +224,8 @@ export class NprPipeline {
   private composer: EffectComposer;
   private normalTarget: WebGLRenderTarget;
   private normalMaterial = new MeshNormalMaterial();
+  /** Materials displaced during the prepass, restored immediately after. */
+  private readonly swapped: Array<[Mesh, Material | Material[]]> = [];
   private outlinePass: ShaderPass;
   private gradePass: ShaderPass;
   private bloomPass: UnrealBloomPass;
@@ -324,24 +328,40 @@ export class NprPipeline {
   /**
    * Renders view-space normals and depth for the edge detector.
    *
-   * Costs a second scene traversal, which also buys the depth buffer any future
-   * AO or fog-of-depth work would need.
+   * Materials are swapped per mesh rather than via `scene.overrideMaterial`.
+   * An override replaces the *whole* program, vertex stage included, so any
+   * geometry that moves in its vertex shader lands in the normal buffer at its
+   * undisplaced rest position. For a skinned character that means every limb
+   * collapsed around the feet: no outline on the body, a phantom outline near
+   * the legs, and scenery outlines drawn through the figure because the buffer
+   * holds the background's depth where the character actually is.
+   *
+   * A mesh may publish `userData.normalMaterial` to supply a variant that
+   * reproduces its displacement; anything else gets the plain normal material.
    */
   private renderNormalPrepass(): void {
-    const previousOverride = this.scene.overrideMaterial;
     const previousTarget = this.renderer.getRenderTarget();
 
     // Skip the sky: it is infinitely far away and would put a hard ink line
     // along the entire horizon.
     this.camera.layers.disable(NO_OUTLINE_LAYER);
-    this.scene.overrideMaterial = this.normalMaterial;
+
+    this.scene.traverse((object) => {
+      const mesh = object as Mesh;
+      if (!mesh.isMesh || !mesh.visible) return;
+      this.swapped.push([mesh, mesh.material]);
+      mesh.material =
+        (mesh.userData.normalMaterial as Material | undefined) ?? this.normalMaterial;
+    });
 
     this.renderer.setRenderTarget(this.normalTarget);
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
 
+    for (const [mesh, material] of this.swapped) mesh.material = material;
+    this.swapped.length = 0;
+
     this.renderer.setRenderTarget(previousTarget);
-    this.scene.overrideMaterial = previousOverride;
     this.camera.layers.enable(NO_OUTLINE_LAYER);
   }
 

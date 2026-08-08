@@ -152,6 +152,8 @@ export const render = {
   shadowMapSize: 2048,
   /** Outline width in pixels, held roughly constant across distance. */
   outlineWidthPx: 3.0,
+  /** Inverted-hull ink width on characters, in roughly screen pixels. */
+  characterHullPx: 2.6,
   /** Cel ramp band count. */
   celBands: 3,
 } as const;

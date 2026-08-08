@@ -8,6 +8,7 @@ import type { SplatAtlas } from '../paint/SplatAtlas';
 import { CharacterAnimator, type AnimationInput } from './CharacterAnimator';
 import { CharacterPaint } from './CharacterPaint';
 import { createRigMaterial, type RigMaterialHandle } from './RigMaterial';
+import { NO_OUTLINE_LAYER } from '../render/NprPipeline';
 import { HUMAN_PARTS, VoxelRig, type RigPart } from './VoxelRig';
 
 export interface CharacterOptions {
@@ -29,6 +30,8 @@ export class Character {
   readonly id: string;
   readonly rig: VoxelRig;
   readonly mesh: Mesh;
+  /** Inverted-hull shell drawn behind the body to give it a confident ink line. */
+  readonly hull: Mesh;
   readonly animator = new CharacterAnimator();
   readonly paint: CharacterPaint;
   readonly color: number;
@@ -77,6 +80,22 @@ export class Character {
     this.mesh = new Mesh(this.rig.geometry, this.material.material);
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
+    // Picked up by the outline prepass in place of the generic normal material,
+    // so the character appears in the normal buffer in its animated pose.
+    this.mesh.userData.normalMaterial = this.material.normalMaterial;
+
+    // The hull shares the rig's geometry — same vertices, expanded in its own
+    // vertex shader. Excluded from the outline prepass, because a shell sitting
+    // slightly proud of the body would otherwise register as a second edge and
+    // double every line.
+    this.hull = new Mesh(this.rig.geometry, this.material.hullMaterial);
+    this.hull.castShadow = false;
+    this.hull.receiveShadow = false;
+    this.hull.layers.set(NO_OUTLINE_LAYER);
+    // Drawn before the body so the body covers the shell's interior.
+    this.hull.renderOrder = -1;
+
+    this.rig.root.add(this.hull);
     this.rig.root.add(this.mesh);
     ctx.scene.add(this.rig.root);
   }
@@ -100,7 +119,9 @@ export class Character {
   }
 
   setOpacity(opacity: number): void {
-    this.mesh.visible = opacity > 0.01;
+    const visible = opacity > 0.01;
+    this.mesh.visible = visible;
+    this.hull.visible = visible;
     this.material.setOpacity(opacity);
   }
 
