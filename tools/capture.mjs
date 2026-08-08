@@ -23,7 +23,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const outDir = process.argv[2] ?? 'captures';
-const url = process.argv[3] ?? 'http://localhost:4173/';
+const url = process.argv[3] ?? 'http://localhost:4173/dp-paintball/';
 const EXECUTABLE =
   process.env.CHROME_PATH ??
   ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find(existsSync);

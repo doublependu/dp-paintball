@@ -151,7 +151,8 @@ export function createRigMaterial(paintTexture: Texture): RigMaterialHandle {
         `#include <common>
          attribute float aJoint;
          uniform mat4 uJoints[ ${JOINT_COUNT} ];
-         uniform float uOutlineWidth;`,
+         uniform float uOutlineWidth;
+         vec3 vHullNormal;`,
       )
       .replace(
         '#include <begin_vertex>',
@@ -167,11 +168,17 @@ export function createRigMaterial(paintTexture: Texture): RigMaterialHandle {
          // variable is created by beginnormal_vertex, which MeshBasicMaterial
          // never includes, so referencing it fails to compile and the hull
          // silently does not draw at all.
-         vec3 hullNormal = normalize( mat3( rigJoint ) * normal );
-         vec4 hullView = modelViewMatrix * vec4( transformed, 1.0 );
-         vec3 hullViewNormal = normalize( normalMatrix * hullNormal );
-         hullView.xyz += hullViewNormal * uOutlineWidth * 0.0016 * max( -hullView.z, 1.0 );
-         transformed = ( inverse( modelViewMatrix ) * hullView ).xyz;`,
+         vHullNormal = normalize( mat3( rigJoint ) * normal );`,
+      )
+      .replace(
+        '#include <project_vertex>',
+        // Expand in view space and project directly, rather than displacing and
+        // round-tripping through inverse(modelViewMatrix). inverse() is a
+        // GLSL ES 3 built-in computed per vertex, and none of it was needed.
+        `vec4 hullView = modelViewMatrix * vec4( transformed, 1.0 );
+         hullView.xyz += normalize( normalMatrix * vHullNormal )
+                       * uOutlineWidth * 0.0016 * max( -hullView.z, 1.0 );
+         gl_Position = projectionMatrix * hullView;`,
       );
   };
   hullMaterial.customProgramCacheKey = () => 'voxel-rig-hull-v1';

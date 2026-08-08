@@ -104,7 +104,7 @@ export const paint = {
    * wider than the body part — scissored to the face, that renders as a solid
    * rectangle of colour rather than as a splat.
    */
-  characterSplatRadius: 0.1,
+  characterSplatRadius: 0.13,
   /** Splats scale up with impact speed, within these bounds. */
   minSplatScale: 0.7,
   maxSplatScale: 1.5,

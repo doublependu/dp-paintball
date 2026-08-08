@@ -113,6 +113,8 @@ export interface PaintHitUv {
   faceIndex: number;
   /** UV units per world metre on this face, for sizing the splat. */
   uvPerMeter: number;
+  /** 1 for the struck face, less for faces the splat wraps onto. */
+  weight: number;
 }
 
 /**
@@ -160,6 +162,87 @@ export class VoxelRig {
     for (let i = 0; i < JOINT_COUNT; i++) {
       this.jointMatrices[i]!.multiplyMatrices(this.rootInverse, this.joints[i]!.matrixWorld);
     }
+  }
+
+  /**
+   * Resolves an impact into every nearby face of the part it struck.
+   *
+   * A paintball does not stop at a box edge, and neither should its splat. More
+   * practically: bots face you when they shoot, so hits land on a character's
+   * front — which in third person is the side you never see. Without wrapping,
+   * a player gets tagged repeatedly and sees no paint at all, which reads as
+   * the feature being broken.
+   *
+   * Faces are weighted by how close the impact is to each, so a square hit
+   * paints one face strongly and a corner hit paints two or three.
+   */
+  resolvePaintFaces(
+    worldPoint: Vector3,
+    worldMatrix: Matrix4,
+    maxFaces = 3,
+  ): PaintHitUv[] {
+    const primary = this.resolvePaintUv(worldPoint, worldMatrix);
+    if (!primary) return [];
+
+    const part = this.parts[primary.partIndex]!;
+    const half = [part.size[0] / 2, part.size[1] / 2, part.size[2] / 2];
+
+    // The impact in the part's own frame — recomputed rather than cached,
+    // because resolvePaintUv works through shared scratch vectors.
+    const local = SCRATCH_V.copy(worldPoint).applyMatrix4(
+      SCRATCH_M.copy(worldMatrix).invert(),
+    );
+    const inPart = SCRATCH_V2.copy(local).applyMatrix4(
+      SCRATCH_M2.copy(this.jointMatrices[part.joint]!).invert(),
+    );
+    inPart.x -= part.offset[0];
+    inPart.y -= part.offset[1];
+    inPart.z -= part.offset[2];
+
+    // Distance from the impact to each face plane, as a fraction of the part's
+    // size along that axis, so faces of very different sizes compare fairly.
+    const scored = FACE_AXES.map((face, index) => {
+      const h = half[face.axis]!;
+      const distance = Math.abs(face.sign * h - inPart.getComponent(face.axis)) / (2 * h);
+      return { index, distance };
+    }).sort((a, b) => a.distance - b.distance);
+
+    const results: PaintHitUv[] = [];
+    for (const { index, distance } of scored.slice(0, maxFaces)) {
+      // Only faces the impact is genuinely near; beyond a third of the part's
+      // depth, paint on that face would look like it teleported there.
+      if (results.length > 0 && distance > 0.34) break;
+      const uv = this.faceUvFor(primary.partIndex, index, inPart, half);
+      if (!uv) continue;
+      // Wrapped faces get a smaller splat, tapering with distance.
+      uv.weight = results.length === 0 ? 1 : Math.max(0.35, 1 - distance * 2.2);
+      results.push(uv);
+    }
+    return results;
+  }
+
+  /** UV on a specific face of a part, for a point already in the part's frame. */
+  private faceUvFor(
+    partIndex: number,
+    faceIndex: number,
+    inPart: Vector3,
+    half: number[],
+  ): PaintHitUv | null {
+    const { axis } = FACE_AXES[faceIndex]!;
+    const uAxis = axis === 0 ? 2 : 0;
+    const vAxis = axis === 1 ? 2 : 1;
+    const uLocal = (inPart.getComponent(uAxis) / half[uAxis]! + 1) / 2;
+    const vLocal = (inPart.getComponent(vAxis) / half[vAxis]! + 1) / 2;
+
+    const rect = faceUvRect(partIndex, faceIndex);
+    return {
+      u: rect.u0 + (rect.u1 - rect.u0) * Math.min(Math.max(uLocal, 0), 1),
+      v: rect.v0 + (rect.v1 - rect.v0) * Math.min(Math.max(vLocal, 0), 1),
+      partIndex,
+      faceIndex,
+      uvPerMeter: (rect.u1 - rect.u0) / (2 * half[uAxis]!),
+      weight: 1,
+    };
   }
 
   /**
@@ -235,6 +318,7 @@ export class VoxelRig {
       partIndex: bestPart,
       faceIndex: bestFace,
       uvPerMeter,
+      weight: 1,
     };
   }
 

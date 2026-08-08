@@ -159,23 +159,29 @@ export class Character {
     this.rig.root.updateMatrixWorld(true);
     this.worldMatrix.copy(this.rig.root.matrixWorld);
 
-    const hit = this.rig.resolvePaintUv(point, this.worldMatrix);
-    if (hit) {
-      const speedScale = clamp(
-        remap(impactSpeed, 12, 42, paintConfig.minSplatScale, paintConfig.maxSplatScale),
-        paintConfig.minSplatScale,
-        paintConfig.maxSplatScale,
-      );
-      const worldRadius = paintConfig.characterSplatRadius * speedScale;
+    const speedScale = clamp(
+      remap(impactSpeed, 12, 42, paintConfig.minSplatScale, paintConfig.maxSplatScale),
+      paintConfig.minSplatScale,
+      paintConfig.maxSplatScale,
+    );
+    const worldRadius = paintConfig.characterSplatRadius * speedScale;
+
+    // Every face the impact is near, not just the one it struck. A hit near a
+    // corner wraps onto both, and — the reason this matters — a shot to the
+    // chest leaves something visible from behind, which is the only angle a
+    // third-person player ever sees themselves from.
+    const variant = rng.int(0, splatVariants);
+    const rotation = rng.range(0, Math.PI * 2);
+    for (const hit of this.rig.resolvePaintFaces(point, this.worldMatrix)) {
       this.paint.stamp(
         hit.u,
         hit.v,
         hit.partIndex,
         hit.faceIndex,
-        worldRadius * hit.uvPerMeter,
+        worldRadius * hit.uvPerMeter * hit.weight,
         color,
-        rng.int(0, splatVariants),
-        rng.range(0, Math.PI * 2),
+        variant,
+        rotation,
       );
     }
     return true;

@@ -10,7 +10,7 @@
 import { chromium } from 'playwright-core';
 import { existsSync, writeFileSync } from 'node:fs';
 
-const url = process.argv[2] ?? 'http://localhost:4173/';
+const url = process.argv[2] ?? 'http://localhost:4173/dp-paintball/';
 const out = process.argv[3] ?? 'shot.png';
 const waitSeconds = Number(process.argv[4] ?? 6);
 
