@@ -3,6 +3,7 @@
 # Visual
 
  1. "Character paint" is not rendered reliably. After a hit is registered by the scoring system, I often don't see paint at all on myself or an NPC.
+    - When the scene crosshair lands on a player, a paint ball is fired and it's not dodged, then the score should change and there needs to be a paint splash on that player.
  2. Branches of trees look like they are upside down. 
 
 # Gameplay
