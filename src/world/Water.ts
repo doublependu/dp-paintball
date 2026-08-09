@@ -8,9 +8,18 @@ import {
 } from 'three';
 import { palette } from '../core/Config';
 import { NO_OUTLINE_LAYER } from '../render/NprPipeline';
-import { ARENA_HALF, ARENA_SIZE, WATER_Y, heightAt } from './ParkLayout';
+import { LAKE_BOUNDS, WATER_Y, heightAt } from './ParkLayout';
 
-const CELLS = 72;
+/**
+ * Cells across the lake's bounding box.
+ *
+ * The plane used to span the whole arena, which was affordable when the arena
+ * was 130m and the lake filled a third of it. On a 336m map that wastes almost
+ * every vertex on dry land, and the shoreline — the one part of this mesh
+ * anyone looks at closely, because it carries the foam band — gets coarser the
+ * bigger the map grows. Bounding it to the water fixes both.
+ */
+const CELLS = 96;
 
 const VERTEX = /* glsl */ `
 attribute float aDepth;
@@ -44,13 +53,23 @@ varying vec2 vWorld;
 uniform float uTime;
 uniform vec3 uDeep;
 uniform vec3 uShallow;
+uniform vec3 uAlgae;
 uniform vec3 uFoam;
 
 void main() {
   // Everything above the waterline is land; there is no water to draw there.
   if ( vDepth <= 0.0 ) discard;
 
-  vec3 color = mix( uShallow, uDeep, smoothstep( 0.15, 2.2, vDepth ) );
+  // Three bands, not two. Photographs of The Lake show a hard split: open
+  // water takes its colour from the sky and goes blue, while the whole margin
+  // under the treeline reflects leaves and goes olive-green. A single
+  // shallow-to-deep ramp between two blues cannot produce that, and the result
+  // reads as a swimming pool laid into the grass.
+  // Thresholds are in metres and the lake is only 2.6m deep at the bed, so
+  // they have to sit inside that: bands tuned for a 4m body never leave the
+  // first colour and the whole lake comes out one flat green.
+  vec3 color = mix( uAlgae, uShallow, smoothstep( 0.15, 0.8, vDepth ) );
+  color = mix( color, uDeep, smoothstep( 0.9, 2.2, vDepth ) );
 
   // Highlight streaks: banded, so they read as drawn strokes rather than as a
   // specular gradient.
@@ -98,8 +117,8 @@ export class Water {
     for (let iz = 0; iz <= CELLS; iz++) {
       for (let ix = 0; ix <= CELLS; ix++) {
         const i = iz * verts + ix;
-        const x = -ARENA_HALF + (ix / CELLS) * ARENA_SIZE;
-        const z = -ARENA_HALF + (iz / CELLS) * ARENA_SIZE;
+        const x = LAKE_BOUNDS.minX + (ix / CELLS) * (LAKE_BOUNDS.maxX - LAKE_BOUNDS.minX);
+        const z = LAKE_BOUNDS.minZ + (iz / CELLS) * (LAKE_BOUNDS.maxZ - LAKE_BOUNDS.minZ);
         positions[i * 3] = x;
         positions[i * 3 + 1] = WATER_Y;
         positions[i * 3 + 2] = z;
@@ -141,6 +160,7 @@ export class Water {
         uTime: { value: 0 },
         uDeep: { value: new Color(palette.waterDeep) },
         uShallow: { value: new Color(palette.waterShallow) },
+        uAlgae: { value: new Color(palette.waterAlgae) },
         uFoam: { value: new Color(0xeef6f4) },
       },
     });

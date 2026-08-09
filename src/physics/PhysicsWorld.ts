@@ -142,6 +142,26 @@ export class PhysicsWorld {
   }
 
   /**
+   * Static upright cylinder, centred on `position`.
+   *
+   * Used for tree trunks. A trimesh of the branch geometry would be exact, but
+   * the woodland belt holds well over a thousand trees and a trimesh apiece
+   * means a thousand BVHs to build at load and to query on every shot. What a
+   * trunk owes the game is "you cannot walk through this and paintballs stop
+   * here", and a cylinder at bole radius delivers that for one shape.
+   */
+  createStaticCylinder(
+    position: { x: number; y: number; z: number },
+    halfHeight: number,
+    radius: number,
+  ): RapierNS.Collider {
+    const body = this.w.createRigidBody(
+      this.api.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z),
+    );
+    return this.w.createCollider(this.api.ColliderDesc.cylinder(halfHeight, radius), body);
+  }
+
+  /**
    * Kinematic character controller, configured from Config.player.
    * Phase 1 drives this; created here so physics setup stays in one place.
    */

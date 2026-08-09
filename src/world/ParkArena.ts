@@ -8,6 +8,7 @@ import {
   InstancedMesh,
   Matrix4,
   Mesh,
+  Object3D,
   Quaternion,
   Vector3,
 } from 'three';
@@ -17,20 +18,27 @@ import type { Rng } from '../core/Random';
 import type { GameContext, System } from '../core/System';
 import type { SurfaceRegistry } from '../paint/SurfaceRegistry';
 import { createCelMaterial } from '../render/CelMaterial';
+import { NO_OUTLINE_LAYER } from '../render/NprPipeline';
 import { Sky } from '../render/Sky';
+import { Cityscape } from './Cityscape';
 import { Foliage, type TreeSpec } from './Foliage';
 import {
   ARCADE,
-  ARENA_HALF,
   BRIDGE,
   BRIDGE_APPROACH_Y,
+  ISLAND,
+  PARK_HALF,
   TERRACE,
   heightAt,
   lakeMask,
+  meadowMask,
   plazaMask,
   rambleMask,
+  walkMask,
+  woodlandDensity,
 } from './ParkLayout';
 import { Terrain } from './Terrain';
+import { TrunkLibrary, type Species } from './TreeGeometry';
 import { Water } from './Water';
 
 /**
@@ -43,8 +51,20 @@ const MODEL_URL = `${import.meta.env.BASE_URL}models/park-props.glb`;
 /** Mid-afternoon sun, low enough for long shadows down the Mall. */
 const SUN_DIRECTION = new Vector3(0.42, 0.58, 0.36).normalize();
 
-/** Perimeter wall height. Flat and vertical — the only reliable containment. */
-const WALL_HEIGHT = 6;
+/**
+ * Half-extent of the shadow camera, in metres.
+ *
+ * Fixed and player-centred rather than sized to the map. The arena used to fit
+ * inside one shadow frustum; at 336m across it no longer does, and stretching
+ * the frustum to cover the whole park would spread 2048 texels over 336m — six
+ * per metre, which turns the ink-crisp shadow of a balustrade into a grey
+ * smear. Following the player keeps the density at 23 texels per metre where
+ * anyone can see it, and nothing outside 88m casts a shadow that reads anyway.
+ */
+const SHADOW_EXTENT = 88;
+
+/** Perimeter wall: stone base plus railing. Enough that nobody jumps it. */
+const WALL_HEIGHT = 3.4;
 
 interface Placement {
   position: Vector3;
@@ -52,12 +72,27 @@ interface Placement {
   scale: number;
 }
 
+/** A tree, before it is split into trunk instance and canopy cards. */
+interface TreePlan {
+  x: number;
+  z: number;
+  /** Overall height in metres, from root flare to the top of the crown. */
+  height: number;
+  species: Species;
+  canopyRadius: number;
+  cards: number;
+  hue: number;
+  lightness: number;
+  /** Woodland-belt trees use the cheap trunk build and cast no shadow. */
+  far: boolean;
+}
+
 /**
  * The Central Park arena.
  *
- * Assembles the ground, the lake, the Blender prop set and the foliage into a
- * playable map, and registers every collider with the paint system so anything
- * you can shoot, you can paint.
+ * Assembles the ground, the lake, the Blender prop set, the foliage, the
+ * woodland belt and the city ring into a playable map, and registers every
+ * collider with the paint system so anything you can shoot, you can paint.
  *
  * Props authored in Blender are placed here rather than baked into a single
  * scene file, so layout is data in one readable place and repeated props can be
@@ -70,6 +105,10 @@ export class ParkArenaSystem implements System {
   private water?: Water;
   private foliage?: Foliage;
   private sky?: Sky;
+  private city?: Cityscape;
+  private readonly trunkLibraries: TrunkLibrary[] = [];
+  private sun?: DirectionalLight;
+  private sunTarget?: Object3D;
 
   private readonly disposables: Array<{ dispose(): void }> = [];
   private readonly group = new Group();
@@ -82,7 +121,10 @@ export class ParkArenaSystem implements System {
   async init(ctx: GameContext): Promise<void> {
     const { scene, rng } = ctx;
 
-    scene.fog = new Fog(palette.fogNear, 55, 240);
+    // Aerial perspective across a map this deep does most of the work of
+    // separating the lawns from the treeline from the skyline. The near bound
+    // sits beyond the play area so nothing you are actually fighting is hazed.
+    scene.fog = new Fog(palette.fogNear, 110, 620);
     this.sky = new Sky(SUN_DIRECTION);
     scene.add(this.sky.mesh);
     this.addLights(ctx);
@@ -93,6 +135,9 @@ export class ParkArenaSystem implements System {
 
     this.water = new Water();
     scene.add(this.water.mesh);
+
+    this.city = new Cityscape(rng);
+    scene.add(this.city.group);
 
     await this.loadProps(ctx);
 
@@ -106,24 +151,40 @@ export class ParkArenaSystem implements System {
   private addLights(ctx: GameContext): void {
     // Warm key, cool fill — the pairing that produces warm light and
     // blue-violet shadow without any shader involvement.
-    const hemi = new HemisphereLight(0x8fb4e8, 0xc7a878, 1.0);
+    //
+    // The sky colour is what every upward-facing surface gets in shadow, which
+    // on a map that is mostly ground means it sets the colour of every shaded
+    // lawn. Pushed a little off full saturation for that reason: at 0x8fb4e8
+    // the shade under the allée came out blue-grey rather than deep green.
+    // Lifted from 1.0 when the map grew a closed woodland canopy. Ambient is
+    // the only light reaching ground under the allée and inside the belt, and
+    // at 1.0 both read as near-black teal instead of the bright dappled green
+    // every photograph of the Mall shows.
+    const hemi = new HemisphereLight(0x9dc2e4, 0xc9ad84, 1.28);
     ctx.scene.add(hemi);
 
     const sun = new DirectionalLight(palette.sunWarm, 2.4);
-    sun.position.copy(SUN_DIRECTION).multiplyScalar(110);
     sun.castShadow = true;
     sun.shadow.mapSize.setScalar(renderConfig.shadowMapSize);
     sun.shadow.camera.near = 10;
-    sun.shadow.camera.far = 260;
-    // Sized to the arena; any larger and shadow texels get too coarse to read.
-    const extent = ARENA_HALF + 10;
-    sun.shadow.camera.left = -extent;
-    sun.shadow.camera.right = extent;
-    sun.shadow.camera.top = extent;
-    sun.shadow.camera.bottom = -extent;
+    sun.shadow.camera.far = 420;
+    sun.shadow.camera.left = -SHADOW_EXTENT;
+    sun.shadow.camera.right = SHADOW_EXTENT;
+    sun.shadow.camera.top = SHADOW_EXTENT;
+    sun.shadow.camera.bottom = -SHADOW_EXTENT;
     sun.shadow.bias = -0.0012;
     sun.shadow.normalBias = 0.03;
+
+    // A directional light points at its target, and the target has to be in the
+    // scene for its world matrix to be updated. Moving the pair together each
+    // frame is what lets the shadow frustum follow the player.
+    this.sunTarget = new Object3D();
+    ctx.scene.add(this.sunTarget);
+    sun.target = this.sunTarget;
+    sun.position.copy(SUN_DIRECTION).multiplyScalar(190);
+
     ctx.scene.add(sun);
+    this.sun = sun;
     this.disposables.push(sun);
   }
 
@@ -145,9 +206,14 @@ export class ParkArenaSystem implements System {
       }
     });
 
+    // `elm_trunk` is deliberately absent from this list. The asset is still in
+    // the GLB but nothing places it any more: its limbs were built converging
+    // toward the trunk axis as they rose, over a bole that flared toward the
+    // crown, so every tree in the park stood on its head. Trunks are generated
+    // now — see TreeGeometry.
     const missing = [
       'arcade_bay', 'balustrade', 'bethesda_fountain', 'bow_bridge',
-      'elm_trunk', 'lamp_post', 'park_bench', 'rock_0', 'rock_1', 'rock_2',
+      'lamp_post', 'park_bench', 'rock_0', 'rock_1', 'rock_2',
       'stair_flight',
     ].filter((n) => !this.props.has(n));
     if (missing.length > 0) {
@@ -353,7 +419,7 @@ export class ParkArenaSystem implements System {
     const lamps: Placement[] = [];
 
     // Down both sides of the Mall, facing the path.
-    for (let z = 30; z <= 58; z += 7) {
+    for (let z = 30; z <= 82; z += 7) {
       for (const side of [-1, 1]) {
         const x = side * 8.5;
         benches.push({
@@ -362,7 +428,7 @@ export class ParkArenaSystem implements System {
           scale: 1,
         });
       }
-      const lx = 11.5;
+      const lx = 15.0;
       lamps.push({ position: new Vector3(-lx, heightAt(-lx, z), z), rotationY: 0, scale: 1 });
       lamps.push({ position: new Vector3(lx, heightAt(lx, z), z), rotationY: 0, scale: 1 });
     }
@@ -386,8 +452,12 @@ export class ParkArenaSystem implements System {
       });
     }
 
-    // A couple looking out over the water.
-    for (const [x, z] of [[-14, -14], [18, -16], [-46, -14]] as const) {
+    // Benches along the made walks, facing whatever the walk looks out at.
+    for (const [x, z] of [
+      [-14, -14], [18, -16], [-52, -14], [30, -13], [-30, 26], [-28, 46],
+      [36, 30], [36, 52], [-64, 30], [-70, 52], [-46, 74], [8, -76],
+    ] as const) {
+      if (lakeMask(x, z) > 0.05) continue;
       benches.push({
         position: new Vector3(x, heightAt(x, z), z),
         rotationY: Math.atan2(x, z) + Math.PI,
@@ -395,154 +465,332 @@ export class ParkArenaSystem implements System {
       });
     }
 
+    // Lamps down the made walks. The park's cast-iron posts are its other
+    // signature after the benches, and a walk without them reads as a dirt
+    // track rather than something maintained.
+    for (const [x, z] of [
+      [-24, 10], [-30, 28], [-27, 44], [-32, 62], [-41, 74],
+      [26, 12], [36, 28], [38, 46], [35, 62], [42, 78],
+      [12, -15], [-16, -16], [-36, -16], [-44, -22], [-44, -40],
+    ] as const) {
+      lamps.push({ position: new Vector3(x, heightAt(x, z), z), rotationY: 0, scale: 1 });
+    }
+
     void rng;
     this.placeInstanced(ctx, 'park_bench', benches, 0x7d6a4f);
     this.placeInstanced(ctx, 'lamp_post', lamps, 0x3c3b46);
   }
 
+  // --- trees ---------------------------------------------------------------
+
+  /**
+   * Whether a tree may stand here.
+   *
+   * One predicate rather than a condition repeated at every scatter site: they
+   * all want the same thing (not in the water, not on the paving, not across a
+   * walk), and the previous per-site copies had already drifted apart.
+   */
+  private canPlant(x: number, z: number): boolean {
+    if (lakeMask(x, z) > 0.05) return false;
+    if (plazaMask(x, z) > 0.05) return false;
+    if (walkMask(x, z) > 0.15) return false;
+    // Sheep Meadow is kept clear on purpose: it is the map's one long sightline.
+    if (meadowMask(x, z) > 0.35) return false;
+    // Keep clear of the terrace — a canopy planted at ground level beside it
+    // engulfs anyone standing on the slab 4.2m up.
+    if (Math.abs(x) < TERRACE.halfWidth + 6 && z > TERRACE.northZ - 8 && z < TERRACE.southZ + 8) {
+      return false;
+    }
+    return true;
+  }
+
   private placeNature(ctx: GameContext, rng: Rng): void {
-    const trunks: Placement[] = [];
-    const trees: TreeSpec[] = [];
+    const plans: TreePlan[] = [];
     const rocks: Placement[][] = [[], [], []];
 
-    const addTree = (x: number, z: number, radius: number, kind: number) => {
-      const y = heightAt(x, z);
-      const scale = radius / 5.5;
-      trunks.push({ position: new Vector3(x, y, z), rotationY: rng.range(0, Math.PI * 2), scale });
-      trees.push({
-        position: new Vector3(x, y, z),
-        radius,
-        // Sits over the compact 8.09m trunk, low enough that the crown
-        // swallows the limbs but high enough that the cards clear the ground.
+    const plant = (
+      x: number,
+      z: number,
+      height: number,
+      species: Species,
+      cards = 9,
+      far = false,
+    ): void => {
+      if (!this.canPlant(x, z)) return;
+      plans.push({
+        x,
+        z,
+        height,
+        species,
+        far,
+        // Crown radius tracks height, and has to reach *past* where the limbs
+        // end. Sized to the branch structure rather than picked by eye: an
+        // undersized crown leaves the twigs sticking out through the leaves,
+        // and because every twig is thin enough to be almost entirely ink, the
+        // tree reads as a dead thicket with a few green blobs stuck to it.
         //
-        // The relationship matters: crown height is 1.38*radius while a card's
-        // half-height reaches 0.98*radius, leaving 0.4*radius of trunk visible
-        // beneath. Dropping the crown to 1.16*radius put card bottoms at ground
-        // level and swallowed the camera whole.
-        crownHeight: 7.6 * scale,
-        kind,
+        // Scrub gets the widest ratio of the three. It is short, so a crown
+        // proportional to its height is small in absolute terms, and with only
+        // four cards a small crown leaves a bare Y of branches standing in the
+        // understorey — the belt read as a plantation of dead sticks.
+        canopyRadius: height * (species === 'elm' ? 0.52 : species === 'oak' ? 0.66 : 0.78),
+        cards,
+        // Mixed greens across the stand. Photographs of the park in leaf carry
+        // yellow-greens, blue-greens and the odd copper together in one line.
+        hue: rng.spread(0.045),
+        lightness: rng.spread(0.07),
       });
     };
 
-    // The Mall's elm allée: two formal rows, the park's most photographed line.
-    for (let z = 29; z <= 60; z += 5.2) {
+    // The Mall's elm allée: two formal rows, the park's most photographed line,
+    // running the full length of the extended Mall.
+    //
+    // Set out at 12.5m from the centreline rather than 10.5. Crowns are 9-10m
+    // across, so the narrower spacing closed the vault completely and left the
+    // whole path in unbroken shade — flat, near-black teal, and nothing like
+    // the photographs, which are all about dappled light on the walk. At 12.5
+    // the canopies still meet overhead but leave a gap down the middle.
+    for (let z = 29; z <= 84; z += 5.2) {
       for (const side of [-1, 1]) {
-        addTree(side * 10.5 + rng.spread(0.6), z + rng.spread(0.8), rng.range(5.4, 6.6), 0);
+        plant(side * 12.5 + rng.spread(0.6), z + rng.spread(0.8), rng.range(16, 20), 'elm');
       }
     }
 
-    // The Ramble: dense, irregular, wooded.
-    for (let i = 0; i < 54; i++) {
-      const x = rng.range(-62, -16);
-      const z = rng.range(-62, -34);
-      if (rambleMask(x, z) < 0.25 || lakeMask(x, z) > 0.05) continue;
-      addTree(x, z, rng.range(3.6, 6.2), 1);
+    // The Ramble: dense, irregular, wooded, on the rough ground north of the
+    // Lake. The park's cover maze.
+    for (let i = 0; i < 150; i++) {
+      const x = rng.range(-88, 60);
+      const z = rng.range(-92, -50);
+      if (rambleMask(x, z) < 0.3) continue;
+      plant(x, z, rng.range(8, 15), rng.bool(0.45) ? 'oak' : 'scrub');
     }
 
-    // Eastern woods along the boundary.
-    for (let i = 0; i < 40; i++) {
-      const x = rng.range(30, 62);
-      const z = rng.range(-58, 58);
-      if (lakeMask(x, z) > 0.05 || plazaMask(x, z) > 0.05) continue;
-      addTree(x, z, rng.range(4.0, 6.4), 1);
+    // The Lake's island, thick with trees — visible from the whole south shore
+    // and reachable by nobody, which is exactly its job as a backdrop.
+    for (let i = 0; i < 14; i++) {
+      const a = rng.range(0, Math.PI * 2);
+      const r = rng.range(0, ISLAND.radius * 0.7);
+      plant(ISLAND.x + Math.cos(a) * r, ISLAND.z + Math.sin(a) * r, rng.range(9, 14), 'oak');
     }
 
-    // A treeline hugging the boundary, so the containment wall reads as a park
-    // edge rather than as a fence around an arena.
-    for (let i = 0; i < 70; i++) {
-      const along = rng.range(-ARENA_HALF + 4, ARENA_HALF - 4);
-      const inset = rng.range(3, 11);
-      const side = rng.int(0, 4);
-      const x = side === 0 ? along : side === 1 ? along : -ARENA_HALF + inset + 2;
-      const z = side === 0 ? -ARENA_HALF + inset + 2 : side === 1 ? ARENA_HALF - inset - 2 : along;
-      const px = side < 2 ? x : side === 2 ? -ARENA_HALF + inset + 2 : ARENA_HALF - inset - 2;
-      const pz = side < 2 ? z : along;
-      if (lakeMask(px, pz) > 0.05) continue;
-      addTree(px, pz, rng.range(4.0, 6.2), 1);
+    // Eastern woods along the wooded rise.
+    for (let i = 0; i < 90; i++) {
+      const x = rng.range(30, 88);
+      const z = rng.range(-88, 88);
+      plant(x, z, rng.range(10, 17), rng.bool(0.5) ? 'oak' : 'elm');
     }
 
-    // Scattered specimens on the lawns, avoiding paving and water.
-    for (let i = 0; i < 26; i++) {
-      const x = rng.range(-60, 28);
-      const z = rng.range(-10, 60);
-      if (lakeMask(x, z) > 0.05 || plazaMask(x, z) > 0.05) continue;
+    // Specimens scattered on the lawns, and the belt of trees that frames
+    // Sheep Meadow without standing in it.
+    for (let i = 0; i < 110; i++) {
+      const x = rng.range(-88, 40);
+      const z = rng.range(-40, 88);
       if (Math.abs(x) < 13 && z > 24) continue; // keep the allée clear
-      // Keep clear of the terrace: a canopy planted at ground level beside it
-      // engulfs anyone standing on the slab 4.2m up.
-      if (Math.abs(x) < TERRACE.halfWidth + 6 && z > TERRACE.northZ - 8 && z < TERRACE.southZ + 8) {
-        continue;
-      }
-      addTree(x, z, rng.range(4.2, 6.8), rng.bool(0.4) ? 0 : 1);
+      plant(x, z, rng.range(11, 18), rng.bool(0.4) ? 'elm' : 'oak');
     }
 
-    // Ramble outcrops, plus a few boulders on the shoreline.
-    for (let i = 0; i < 22; i++) {
-      const x = rng.range(-62, -14);
-      const z = rng.range(-62, -30);
+    this.scatterWoodland(rng, plant);
+
+    // Ramble outcrops, plus a few boulders on the shoreline. Manhattan schist
+    // breaking through is the one geological fact the park cannot hide.
+    for (let i = 0; i < 46; i++) {
+      const x = rng.range(-88, 50);
+      const z = rng.range(-92, -40);
       if (rambleMask(x, z) < 0.3 || lakeMask(x, z) > 0.2) continue;
       const variant = rng.int(0, 3);
       rocks[variant]!.push({
         position: new Vector3(x, heightAt(x, z) - 0.4, z),
         rotationY: rng.range(0, Math.PI * 2),
-        scale: rng.range(0.7, 1.4),
+        scale: rng.range(0.5, 1.05),
       });
     }
-
-    // A dense hedge along the containment wall. The wall itself is a flat 6m
-    // slab, and its perfectly straight top edge read as an arena boundary
-    // rather than a park edge; overgrowing it with low foliage breaks that line
-    // without giving up the flat vertical surface containment depends on.
-    const hedgeStep = 3.4;
-    for (let along = -ARENA_HALF + 3; along <= ARENA_HALF - 3; along += hedgeStep) {
-      for (const [hx, hz] of [
-        [along, -ARENA_HALF + 3.2],
-        [along, ARENA_HALF - 3.2],
-        [-ARENA_HALF + 3.2, along],
-        [ARENA_HALF - 3.2, along],
-      ] as const) {
-        if (lakeMask(hx, hz) > 0.05) continue;
-        trees.push({
-          position: new Vector3(hx, heightAt(hx, hz), hz),
-          radius: rng.range(2.4, 3.4),
-          crownHeight: rng.range(3.2, 4.6),
-          kind: 1,
-        });
-      }
-    }
-
-    this.placeInstanced(ctx, 'elm_trunk', trunks, 0x6f5c46);
     for (let v = 0; v < 3; v++) {
       this.placeInstanced(ctx, `rock_${v}`, rocks[v]!, 0x9a927f);
     }
 
-    this.foliage = new Foliage(trees, rng);
+    this.buildTrees(ctx, plans, rng);
+  }
+
+  /**
+   * The woodland belt beyond the play area.
+   *
+   * Density is driven by noise rather than being uniform, which is what
+   * produces glades: a forest at constant spacing reads as an orchard, and an
+   * orchard you can see through is not somewhere anyone wants to explore. The
+   * clearings are also the only thing that makes the belt navigable on foot.
+   */
+  private scatterWoodland(
+    rng: Rng,
+    plant: (
+      x: number, z: number, height: number, species: Species, cards?: number, far?: boolean,
+    ) => void,
+  ): void {
+    // Sampled on a jittered lattice rather than by rejection over the whole
+    // square: the belt is a ring, and uniform rejection sampling would throw
+    // away the 30% of every draw that lands in the play area.
+    const STEP = 8.4;
+    for (let x = -PARK_HALF + 6; x < PARK_HALF - 6; x += STEP) {
+      for (let z = -PARK_HALF + 6; z < PARK_HALF - 6; z += STEP) {
+        const px = x + rng.spread(STEP * 0.48);
+        const pz = z + rng.spread(STEP * 0.48);
+        if (rng.next() > woodlandDensity(px, pz)) continue;
+
+        // Understorey scrub is much more common than canopy trees, and it is
+        // what makes the belt feel thick at eye height rather than at 15m.
+        const species: Species = rng.bool(0.42) ? 'scrub' : rng.bool(0.5) ? 'oak' : 'elm';
+        const height = species === 'scrub' ? rng.range(4.5, 8) : rng.range(11, 19);
+        // Five cards, not nine. At belt distances a crown needs a silhouette,
+        // not a volume, and the belt holds more trees than the park does.
+        plant(px, pz, height, species, species === 'scrub' ? 4 : 5, true);
+      }
+    }
+  }
+
+  /**
+   * Turns tree plans into geometry: one instanced draw call per trunk variant,
+   * one cylinder collider each, and every crown handed to the foliage batch.
+   */
+  private buildTrees(ctx: GameContext, plans: TreePlan[], rng: Rng): void {
+    // Two libraries, two budgets. See TreeGeometry's Detail comment.
+    const near = new TrunkLibrary(0x7ee5, 'near', 4);
+    const far = new TrunkLibrary(0x1eaf, 'far', 3);
+    this.trunkLibraries.push(near, far);
+
+    /** Instances keyed by `${far ? 'f' : 'n'}:${variant}`. */
+    const byVariant = new Map<string, Array<{ matrix: Matrix4; plan: TreePlan }>>();
+    const canopies: TreeSpec[] = [];
+
+    const variantsBySpecies = new Map<string, number[]>();
+    for (const library of [near, far]) {
+      for (const species of ['elm', 'oak', 'scrub'] as const) {
+        variantsBySpecies.set(
+          `${library === far ? 'f' : 'n'}:${species}`,
+          library.indicesOf(species),
+        );
+      }
+    }
+
+    const matrix = new Matrix4();
+    const position = new Vector3();
+    const quaternion = new Quaternion();
+    const scale = new Vector3();
+
+    for (const plan of plans) {
+      const prefix = plan.far ? 'f' : 'n';
+      const options = variantsBySpecies.get(`${prefix}:${plan.species}`)!;
+      const variant = options[rng.int(0, options.length)]!;
+      const y = heightAt(plan.x, plan.z);
+
+      position.set(plan.x, y, plan.z);
+      quaternion.setFromAxisAngle(UP, rng.range(0, Math.PI * 2));
+      scale.setScalar(plan.height);
+      matrix.compose(position, quaternion, scale);
+
+      const key = `${prefix}:${variant}`;
+      let bucket = byVariant.get(key);
+      if (!bucket) byVariant.set(key, (bucket = []));
+      bucket.push({ matrix: matrix.clone(), plan });
+
+      canopies.push({
+        position: new Vector3(plan.x, y, plan.z),
+        radius: plan.canopyRadius,
+        // The crown sits over the crotch, not over the ground: high enough to
+        // clear a player's head, low enough that the limbs disappear into it.
+        crownHeight: plan.height * (plan.species === 'elm' ? 0.8 : plan.species === 'oak' ? 0.66 : 0.58),
+        kind: plan.species === 'elm' ? 0 : 1,
+        cards: plan.cards,
+        hue: plan.hue,
+        lightness: plan.lightness,
+      });
+    }
+
+    for (const [key, instances] of byVariant) {
+      const isFar = key.startsWith('f:');
+      const library = isFar ? far : near;
+      const { geometry, baseRadius } = library.variants[Number(key.slice(2))]!;
+      const material = createCelMaterial({ color: 0xffffff });
+      material.vertexColors = true;
+      const mesh = new InstancedMesh(geometry, material, instances.length);
+      // Belt trunks neither cast shadows nor take an ink line. Both passes are
+      // whole extra draws of a thousand trees, and neither is legible past the
+      // treeline: the canopy above already lays a shadow on the forest floor,
+      // and the crowns themselves carry no outline either (see Foliage).
+      mesh.castShadow = !isFar;
+      mesh.receiveShadow = true;
+      if (isFar) mesh.layers.set(NO_OUTLINE_LAYER);
+      mesh.frustumCulled = false;
+      this.group.add(mesh);
+      this.disposables.push(material);
+
+      instances.forEach(({ matrix: m, plan }, i) => {
+        mesh.setMatrixAt(i, m);
+
+        // Collision as a single upright cylinder over the bole. Sized a little
+        // over the modelled radius: a trunk you can clip the corner of is worse
+        // than one that stops you slightly early.
+        const radius = Math.max(0.22, plan.height * baseRadius * 1.15);
+        const halfHeight = plan.height * 0.32;
+        const collider = ctx.physics.createStaticCylinder(
+          { x: plan.x, y: heightAt(plan.x, plan.z) + halfHeight, z: plan.z },
+          halfHeight,
+          radius,
+        );
+        this.surfaces.registerInstance(collider.handle, geometry, m);
+      });
+
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+
+    // Hedges along the perimeter wall, so it reads as an overgrown park edge
+    // rather than as the side of an arena.
+    for (let along = -PARK_HALF + 4; along <= PARK_HALF - 4; along += 4.2) {
+      for (const [hx, hz] of [
+        [along, -PARK_HALF + 4.5],
+        [along, PARK_HALF - 4.5],
+        [-PARK_HALF + 4.5, along],
+        [PARK_HALF - 4.5, along],
+      ] as const) {
+        canopies.push({
+          position: new Vector3(hx, heightAt(hx, hz), hz),
+          radius: rng.range(2.6, 3.8),
+          crownHeight: rng.range(3.0, 4.4),
+          kind: 1,
+          cards: 4,
+          hue: rng.spread(0.03),
+          lightness: rng.spread(0.05),
+        });
+      }
+    }
+
+    this.foliage = new Foliage(canopies, rng);
     ctx.scene.add(this.foliage.mesh);
   }
 
   /**
    * Perimeter containment.
    *
-   * Flat vertical walls, deliberately. Phase 1 established that the character
-   * capsule can roll over ledges above the autostep height depending on
-   * approach angle, so terrain and stacked geometry are not reliable boundaries
-   * — a flat wall is the only thing that blocks every time.
+   * A low stone retaining wall carrying an iron railing, standing on the park's
+   * perimeter shelf — which is what the real park's boundary is, and reads as a
+   * boundary you are looking *over* rather than a lid you are under. Flat and
+   * vertical, deliberately: phase 1 established that the character capsule can
+   * roll over ledges above the autostep height depending on approach angle, so
+   * terrain is not a reliable boundary and only a wall blocks every time.
+   *
+   * 3.4m is comfortably beyond a 1.15m jump, so nothing here is an invisible
+   * barrier — the collider is exactly as tall as the thing you can see.
    */
   private buildContainment(ctx: GameContext): void {
-    const edge = ARENA_HALF - 2;
+    const edge = PARK_HALF - 2;
     const span = edge * 2 + 4;
-    const hedge = 0x365c41;
+    const base = heightAt(edge, 0);
 
     for (const [sx, sz] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
       const horizontal = sz !== 0;
       const size = horizontal
-        ? new Vector3(span, WALL_HEIGHT, 2)
-        : new Vector3(2, WALL_HEIGHT, span);
-      const position = new Vector3(
-        sx * edge,
-        heightAt(sx * edge, sz * edge) + WALL_HEIGHT / 2 - 1,
-        sz * edge,
-      );
-      this.placeBox(ctx, size, position, hedge);
+        ? new Vector3(span, WALL_HEIGHT, 1.6)
+        : new Vector3(1.6, WALL_HEIGHT, span);
+      const position = new Vector3(sx * edge, base + WALL_HEIGHT / 2 - 1.2, sz * edge);
+      this.placeBox(ctx, size, position, 0xaea48d);
     }
   }
 
@@ -550,6 +798,19 @@ export class ParkArenaSystem implements System {
     this.sky?.update(ctx.camera, ctx.elapsed);
     this.water?.update(ctx.elapsed);
     this.foliage?.update(ctx.elapsed);
+
+    // Keep the shadow frustum over the player. Snapped to whole metres, because
+    // sliding it continuously makes every shadow edge crawl as you walk.
+    if (this.sun && this.sunTarget) {
+      const focusX = Math.round(ctx.camera.position.x);
+      const focusZ = Math.round(ctx.camera.position.z);
+      this.sunTarget.position.set(focusX, 0, focusZ);
+      this.sun.position.set(
+        focusX + SUN_DIRECTION.x * 190,
+        SUN_DIRECTION.y * 190,
+        focusZ + SUN_DIRECTION.z * 190,
+      );
+    }
   }
 
   dispose(): void {
@@ -562,6 +823,9 @@ export class ParkArenaSystem implements System {
     this.foliage?.dispose();
     this.sky?.mesh.removeFromParent();
     this.sky?.dispose();
+    this.city?.dispose();
+    for (const library of this.trunkLibraries) library.dispose();
+    this.sunTarget?.removeFromParent();
     for (const item of this.disposables) item.dispose();
   }
 }

@@ -62,9 +62,12 @@ const bots: BotSpec[] = useTestCourse
   : [
       { id: 'bot-a', position: new Vector3(-16, 0, 4), colorIndex: 1, personality: 0 },
       { id: 'bot-b', position: new Vector3(16, 0, 6), colorIndex: 2, personality: 1 },
-      { id: 'bot-c', position: new Vector3(4, 0, 34), colorIndex: 3, personality: 2 },
-      { id: 'bot-d', position: new Vector3(-30, 0, -44), colorIndex: 5, personality: 3 },
-      { id: 'bot-e', position: new Vector3(34, 0, -8), colorIndex: 6, personality: 2 },
+      { id: 'bot-c', position: new Vector3(4, 0, 42), colorIndex: 3, personality: 2 },
+      // Respread when the map grew: this one used to sit in the Ramble, which
+      // the enlarged Lake now covers.
+      { id: 'bot-d', position: new Vector3(-26, 0, -72), colorIndex: 5, personality: 3 },
+      { id: 'bot-e', position: new Vector3(44, 0, -10), colorIndex: 6, personality: 2 },
+      { id: 'bot-f', position: new Vector3(-34, 0, 40), colorIndex: 7, personality: 1 },
     ];
 const charactersSystem = new CharactersSystem(
   playerState,

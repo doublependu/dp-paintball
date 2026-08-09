@@ -26,6 +26,25 @@ export interface TreeSpec {
   crownHeight: number;
   /** 0 elm (tall, vase-shaped), 1 ramble scrub (low, broad). */
   kind: number;
+  /**
+   * Cards making up this crown. Defaults to `CARDS_PER_TREE`.
+   *
+   * The woodland belt turns this down: a tree seen from 80m through forty other
+   * trees needs a silhouette, not a volume, and the belt holds enough trees
+   * that the difference between five cards and nine is thousands of quads.
+   */
+  cards?: number;
+  /**
+   * Hue rotation applied to this crown's tint, in turns.
+   *
+   * Photographs of the park in leaf are never one green: fresh yellow-greens,
+   * deep blue-greens and the odd copper beech all sit in the same treeline.
+   * Per-card tinting alone can't do that — it varies *within* a crown, which
+   * makes every tree the same average colour.
+   */
+  hue?: number;
+  /** Lightness offset applied to this crown's tint. */
+  lightness?: number;
 }
 
 /** Cards per tree. Enough to read as a volume from any angle without bloating. */
@@ -69,7 +88,8 @@ export class Foliage {
   constructor(trees: TreeSpec[], rng: Rng) {
     this.atlas = new CanopyAtlas();
 
-    const count = trees.length * CARDS_PER_TREE;
+    let count = 0;
+    for (const tree of trees) count += tree.cards ?? CARDS_PER_TREE;
     const geometry = new PlaneGeometry(1, 1);
     this.material = this.createMaterial();
 
@@ -104,12 +124,17 @@ export class Foliage {
 
     let i = 0;
     for (const tree of trees) {
-      for (let c = 0; c < CARDS_PER_TREE; c++) {
+      const cards = tree.cards ?? CARDS_PER_TREE;
+      for (let c = 0; c < cards; c++) {
         // Distribute cards through the crown volume, biased outward so the
-        // silhouette is dense and the interior stays open.
+        // silhouette is dense and the interior stays open. The first card of
+        // every crown is planted dead centre: with the outward bias alone, a
+        // four-card crown could leave a hole straight through the middle, and
+        // the branch structure showing through it is exactly what a canopy is
+        // there to hide.
         const theta = rng.range(0, Math.PI * 2);
         const phi = Math.acos(rng.range(-0.75, 0.95));
-        const r = tree.radius * Math.cbrt(rng.range(0.05, 1)) * 0.46;
+        const r = c === 0 ? 0 : tree.radius * Math.cbrt(rng.range(0.05, 1)) * 0.5;
 
         position.set(
           tree.position.x + Math.sin(phi) * Math.cos(theta) * r,
@@ -122,15 +147,17 @@ export class Foliage {
         euler.set(rng.spread(0.35), rng.range(0, Math.PI * 2), rng.spread(0.28));
         quaternion.setFromEuler(euler);
 
-        const size = tree.radius * rng.range(1.45, 1.95);
+        const size = tree.radius * rng.range(1.6, 2.1);
         scale.set(size, size * rng.range(0.78, 1.0), 1);
 
         matrix.compose(position, quaternion, scale);
         this.mesh.setMatrixAt(i, matrix);
 
-        // Vary each card's tint so the mass has internal depth.
+        // Vary each card's tint so the mass has internal depth, then rotate the
+        // whole crown so the *stand* has variety too.
         tint.copy(shadeColor).lerp(litColor, rng.range(0.5, 1));
         if (tree.kind > 0.5) tint.offsetHSL(0.02, 0.05, -0.04);
+        if (tree.hue || tree.lightness) tint.offsetHSL(tree.hue ?? 0, 0, tree.lightness ?? 0);
         tints[i * 3] = tint.r;
         tints[i * 3 + 1] = tint.g;
         tints[i * 3 + 2] = tint.b;
@@ -262,13 +289,15 @@ export class Foliage {
            // canopy.r is the baked top-lit gradient; it does most of the work
            // of making a flat card look like a volume.
            // Lifted floor: with nine overlapping cards the shaded undersides
-           // stacked up and the whole crown read as near-black.
-           diffuseColor.rgb = vTint * ( 0.74 + 0.5 * canopy.r );
+           // stacked up and the whole crown read as near-black. The span is
+           // wider than the floor is high, so the crown still reads as lit from
+           // above rather than as a flat tint.
+           diffuseColor.rgb = vTint * ( 0.62 + 0.72 * canopy.r );
            diffuseColor.a = 1.0;`,
         );
     };
 
-    material.customProgramCacheKey = () => 'foliage-canopy-v1';
+    material.customProgramCacheKey = () => 'foliage-canopy-v2';
     return material;
   }
 

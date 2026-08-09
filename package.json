@@ -19,7 +19,8 @@
     "test:ui": "node tools/ui-test.mjs",
     "test:crosshair": "node tools/crosshair-test.mjs",
     "capture": "node tools/capture.mjs",
-    "perf": "node tools/perf.mjs"
+    "perf": "node tools/perf.mjs",
+    "perf:attribute": "node tools/perf-attribute.mjs"
   },
   "devDependencies": {
     "@types/three": "^0.185.4",

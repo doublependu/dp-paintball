@@ -40,9 +40,21 @@ const SHOTS = [
   { name: 'terrace-north', x: 0, z: 21, yaw: 0, pitch: -0.15 },
   { name: 'mall-allee', x: 0, z: 46, yaw: Math.PI, pitch: -0.02 },
   { name: 'lake-shore', x: -13, z: -11, yaw: 0.15, pitch: -0.04 },
-  { name: 'bow-bridge', x: -34, z: -12, yaw: Math.PI, pitch: -0.04 },
-  { name: 'ramble', x: -40, z: -46, yaw: 1.2, pitch: 0.0 },
+  // From the west bank, three-quarters onto the span. The bridge moved west
+  // with the enlarged lake; the old viewpoint now looks at open water, and
+  // standing on the approach itself frames nothing but the parapet.
+  { name: 'bow-bridge', x: -58, z: -14, yaw: -0.72, pitch: -0.05 },
+  { name: 'ramble', x: -30, z: -70, yaw: 1.2, pitch: 0.0 },
   { name: 'arcade-undercroft', x: 0, z: 20, yaw: Math.PI, pitch: 0.0 },
+  // Added when the map grew its outer two rings. The first four shots above
+  // are all inside the play area, and every one of them frames a landmark —
+  // so none of them could tell you whether the woodland belt reads as a wood,
+  // whether the skyline reads as Manhattan, or whether the park boundary
+  // reads as a boundary. Those are exactly the three things the expansion is
+  // for, so the rubric has to be able to see them.
+  { name: 'meadow-skyline', x: -50, z: 42, yaw: Math.PI, pitch: 0.06 },
+  { name: 'woodland-belt', x: -120, z: 30, yaw: -Math.PI / 2, pitch: 0.0 },
+  { name: 'park-wall', x: -150, z: 0, yaw: Math.PI / 2, pitch: 0.05 },
 ];
 
 const browser = await chromium.launch({

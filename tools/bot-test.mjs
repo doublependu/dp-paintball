@@ -56,8 +56,12 @@ const nav = await page.evaluate(() => {
     plaza: n.isWalkable(0, 8),
     // Dead centre of the fountain basin is solid geometry.
     fountain: n.isWalkable(0, 0),
-    // Well outside the arena.
-    outside: n.isWalkable(90, 90),
+    // Out in the woodland belt, which is deliberately outside the navgrid —
+    // the belt is somewhere for the player to wander, not for bots.
+    outside: n.isWalkable(150, 150),
+    // Half-extent of the grid in metres, so the bounds check below tracks the
+    // map instead of a number that has to be remembered.
+    half: (n.cols * 2) / 2,
   };
 });
 const walkablePct = (100 * nav.walkable) / (nav.cols * nav.rows);
@@ -118,7 +122,8 @@ for (let i = 0; i < samples; i++) {
     let illegal = 0;
     let offGround = 0;
     for (const b of characters.allBots) {
-      if (Math.abs(b.position.x) > 64 || Math.abs(b.position.z) > 64) illegal++;
+      const half = (n.cols * 2) / 2;
+      if (Math.abs(b.position.x) > half || Math.abs(b.position.z) > half) illegal++;
       else if (!n.isWalkable(b.position.x, b.position.z)) illegal++;
       // Y must track the terrain, since bots are moved kinematically.
       if (Math.abs(b.position.y - n.groundAt(b.position.x, b.position.z)) > 0.2) offGround++;

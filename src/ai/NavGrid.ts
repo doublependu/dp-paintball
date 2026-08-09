@@ -3,7 +3,7 @@ import { player as playerConfig } from '../core/Config';
 import { DEG2RAD } from '../core/MathUtils';
 import type { Rng } from '../core/Random';
 import type { PhysicsWorld } from '../physics/PhysicsWorld';
-import { ARENA_HALF, ARENA_SIZE, WATER_Y, heightAt, slopeAt } from '../world/ParkLayout';
+import { PLAY_HALF, WATER_Y, heightAt, slopeAt } from '../world/ParkLayout';
 
 /** Cell size in metres. 2m is finer than a character is wide. */
 const CELL = 2;
@@ -39,6 +39,13 @@ interface Node {
  * querying the physics world at each cell, which means every collider the arena
  * places — trees, benches, the fountain, the terrace — blocks bots
  * automatically, with no separate obstacle list to keep in sync.
+ *
+ * The grid covers the **play area only**, not the woodland belt. Two reasons.
+ * Cost: the belt more than triples the map's footprint, and each cell costs
+ * five shape queries against a world holding a thousand-odd tree colliders.
+ * And intent: the belt is somewhere for the *player* to wander off to. Bots
+ * that follow them in would turn a quiet corner of the map into the same fight
+ * as the plaza, and bots that got lost in it would simply stop playing.
  */
 export class NavGrid {
   readonly cols: number;
@@ -52,7 +59,7 @@ export class NavGrid {
 
   constructor(physics: PhysicsWorld) {
     const startedAt = performance.now();
-    this.cols = Math.floor(ARENA_SIZE / CELL);
+    this.cols = Math.floor(PLAY_HALF * 2 / CELL);
     this.rows = this.cols;
     this.walkable = new Uint8Array(this.cols * this.rows);
     this.heights = new Float32Array(this.cols * this.rows);
@@ -191,15 +198,15 @@ export class NavGrid {
 
   private cellCenter(col: number, row: number): { x: number; z: number } {
     return {
-      x: -ARENA_HALF + (col + 0.5) * CELL,
-      z: -ARENA_HALF + (row + 0.5) * CELL,
+      x: -PLAY_HALF + (col + 0.5) * CELL,
+      z: -PLAY_HALF + (row + 0.5) * CELL,
     };
   }
 
   private toCell(x: number, z: number): { col: number; row: number } {
     return {
-      col: Math.floor((x + ARENA_HALF) / CELL),
-      row: Math.floor((z + ARENA_HALF) / CELL),
+      col: Math.floor((x + PLAY_HALF) / CELL),
+      row: Math.floor((z + PLAY_HALF) / CELL),
     };
   }
 

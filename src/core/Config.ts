@@ -52,7 +52,14 @@ export const camera = {
   fovSprint: 68,
   fovLambda: 8,
   near: 0.1,
-  far: 400,
+  /**
+   * Far plane.
+   *
+   * Sized by the deepest rank of the city ring seen from the far side of the
+   * park — roughly 600m — with headroom, because the sky dome rides at half
+   * this and has to stay outside everything it is behind.
+   */
+  far: 1500,
 
   /** Third-person spring arm. */
   armLength: 3.6,
@@ -198,8 +205,17 @@ export const palette = {
   foliageShade: 0x3d6b4e,
   stoneLit: 0xd8cdb8,
   stoneShade: 0x8a8397,
-  waterDeep: 0x3f7a91,
-  waterShallow: 0x86c2c6,
+  waterDeep: 0x35688f,
+  waterShallow: 0x7fb6c8,
+  /** The green margin under the treeline, where the water reflects leaves. */
+  waterAlgae: 0x74864e,
+
+  /** Pre-war limestone and brick, the Manhattan wall around the park. */
+  cityStone: 0xbfae96,
+  cityBrick: 0x9c6f5c,
+  cityGlass: 0x6d8296,
+  /** Roadway outside the park wall. */
+  asphalt: 0x585560,
 
   /** Ink is never pure black — it takes a tint from the surface beneath. */
   inkBase: 0x2a2438,

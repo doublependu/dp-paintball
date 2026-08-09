@@ -69,9 +69,13 @@ check('loads within budget', readyMs < 4000, `${readyMs}ms`);
 // ends up far below; anything unreachable never grounds.
 const probes = [
   ['plaza', 0, 8], ['mall', 0, 44], ['terrace', 0, 21],
-  ['lake shore east', 24, -14], ['ramble', -40, -48],
-  ['east woods', 46, 10], ['bridge deck', -34, -26],
-  ['west bank', -52, -12], ['south lawn', 26, 52], ['north shore', -6, -54],
+  ['lake shore east', 34, -16], ['ramble', -30, -70],
+  ['east woods', 60, 10], ['bridge deck', -44, -30],
+  ['west bank', -66, -14], ['south lawn', 26, 74], ['sheep meadow', -50, 42],
+  // The woodland belt: the whole point of it is that you can walk into it, so
+  // every side of it has to be standable ground rather than scenery.
+  ['belt north', -20, -130], ['belt south', 30, 140],
+  ['belt west', -140, 20], ['belt east', 150, -30],
 ];
 let landed = 0;
 const failures = [];
@@ -84,7 +88,7 @@ check('player lands on solid ground everywhere', landed === probes.length,
       failures.length ? failures.join('; ') : `${landed}/${probes.length} regions`);
 
 // --- The bridge is standable and crossable ---------------------------------
-const onBridge = await dropAt(-34, -26, 14);
+const onBridge = await dropAt(-44, -30, 14);
 check('Bow Bridge deck is standable', onBridge.grounded && onBridge.y > 1.5,
       `settled at y=${onBridge.y.toFixed(2)}`);
 
@@ -111,8 +115,8 @@ check('arcade undercroft is walkable through an arch',
 // still inside. Phase 1 established that only flat vertical walls hold.
 const escapes = [];
 for (const [name, x, z, yaw] of [
-  ['north', 0, -50, 0], ['south', 0, 50, Math.PI],
-  ['west', -50, 0, Math.PI / 2], ['east', 50, 0, -Math.PI / 2],
+  ['north', 0, -150, 0], ['south', 0, 150, Math.PI],
+  ['west', -150, 0, Math.PI / 2], ['east', 150, 0, -Math.PI / 2],
 ]) {
   await page.evaluate(({ x, z, yaw }) => {
     const { player, state } = window.__paintball;
@@ -127,7 +131,9 @@ for (const [name, x, z, yaw] of [
   await page.keyboard.up('Shift');
   await waitSim(0.4);
   const at = await read();
-  const outside = Math.abs(at.x) > 64 || Math.abs(at.z) > 64 || at.y < -6;
+  // PARK_HALF is 168 and the wall stands at 166; a metre of slack covers the
+  // capsule radius resting against it.
+  const outside = Math.abs(at.x) > 167 || Math.abs(at.z) > 167 || at.y < -6;
   if (outside) escapes.push(`${name} -> (${at.x.toFixed(1)}, ${at.y.toFixed(1)}, ${at.z.toFixed(1)})`);
 }
 check('perimeter contains the player on all four sides', escapes.length === 0,
