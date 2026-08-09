@@ -99,12 +99,16 @@ export const paint = {
   /** World-space radius of a splat on world geometry, at nominal impact speed. */
   baseSplatRadius: 0.34,
   /**
-   * Radius for splats on a character, much smaller than for world surfaces.
-   * A torso face is only 0.44m across, so the world radius produced a splat
-   * wider than the body part — scissored to the face, that renders as a solid
-   * rectangle of colour rather than as a splat.
+   * Radius for splats on a character.
+   *
+   * Smaller than the world radius, because a torso face is only 0.44m across
+   * and an oversized splat scissors into a solid rectangle of colour. But not
+   * *much* smaller: at 0.13 a hit covered so little of a body that at ordinary
+   * combat range — where a character is 40-80 pixels tall — landing three or
+   * four shots left no visible mark at all, and the paint read as broken.
+   * A hit should be obvious from across the plaza.
    */
-  characterSplatRadius: 0.13,
+  characterSplatRadius: 0.2,
   /** Splats scale up with impact speed, within these bounds. */
   minSplatScale: 0.7,
   maxSplatScale: 1.5,
