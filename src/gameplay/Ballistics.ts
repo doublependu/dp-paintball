@@ -8,7 +8,12 @@ import {
   SphereGeometry,
   Vector3,
 } from 'three';
-import { ballistics as config, physics as physicsConfig } from '../core/Config';
+import {
+  FIXED_DT,
+  ballistics as config,
+  physics as physicsConfig,
+  reticle as reticleConfig,
+} from '../core/Config';
 import type { CharacterRegistry } from '../character/CharacterRegistry';
 import { createCelMaterial } from '../render/CelMaterial';
 import type { GameContext, System } from '../core/System';
@@ -25,6 +30,38 @@ interface Projectile {
   color: number;
   shooterId: string;
   exclude?: RapierNS.Collider;
+}
+
+/**
+ * A traced flight path and where it ends. Callers own one and hand it back in,
+ * so the solver allocates nothing after the first call and two callers can
+ * never scribble over each other's answer.
+ */
+export class TrajectoryPrediction {
+  /** True if the trace found a surface inside the time budget. */
+  hit = false;
+  readonly point = new Vector3();
+  readonly normal = new Vector3();
+  /** Straight-line muzzle-to-impact distance. Not the arc length. */
+  distance = 0;
+  flightTime = 0;
+  /** Set when the impact lands on a registered character. */
+  characterId?: string;
+
+  /**
+   * The traced path, muzzle first. Only the first `pointCount` are meaningful —
+   * the array is retained at its high-water mark rather than reallocated.
+   */
+  readonly points: Vector3[] = [];
+  pointCount = 0;
+
+  /** Appends a point, growing the buffer only the first time it is needed. */
+  pushPoint(x: number, y: number, z: number): void {
+    const existing = this.points[this.pointCount];
+    if (existing) existing.set(x, y, z);
+    else this.points.push(new Vector3(x, y, z));
+    this.pointCount++;
+  }
 }
 
 /**
@@ -56,6 +93,14 @@ export class BallisticsSystem implements System {
   private readonly hitPoint = new Vector3();
   private readonly hitNormal = new Vector3();
   private readonly renderPosition = new Vector3();
+  // Prediction scratch. Kept apart from the live-step scratch above: the
+  // reticle predicts from its own fixedUpdate, and sharing would let one
+  // overwrite the other mid-trace.
+  private readonly predictPosition = new Vector3();
+  private readonly predictVelocity = new Vector3();
+  private readonly predictChordStart = new Vector3();
+  private readonly predictChord = new Vector3();
+  private readonly predictDirection = new Vector3();
   private readonly matrix = new Matrix4();
   private readonly scratchColor = new Color();
   private static readonly NO_ROTATION = new Quaternion();
@@ -123,10 +168,7 @@ export class BallisticsSystem implements System {
       projectile.previous.copy(projectile.position);
       projectile.renderFrom.copy(projectile.position);
 
-      // Linear drag. Cheaper than quadratic, unconditionally stable at this
-      // timestep, and indistinguishable over a paintball's short flight.
-      projectile.velocity.y += physicsConfig.gravity * config.gravityScale * dt;
-      projectile.velocity.addScaledVector(projectile.velocity, -config.drag * dt);
+      BallisticsSystem.advance(projectile.velocity, dt);
 
       this.delta.copy(projectile.velocity).multiplyScalar(dt);
       const distance = this.delta.length();
@@ -168,6 +210,126 @@ export class BallisticsSystem implements System {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
+  }
+
+  /**
+   * A fresh prediction buffer for a caller to own.
+   *
+   * Exists so the headless suites can hold one without reaching into the module
+   * graph, and so callers are steered away from sharing a single instance.
+   */
+  newPrediction(): TrajectoryPrediction {
+    return new TrajectoryPrediction();
+  }
+
+  /**
+   * One step of the flight model, applied in place.
+   *
+   * Gravity, then linear drag — cheaper than quadratic, unconditionally stable
+   * at this timestep, and indistinguishable over a paintball's short flight.
+   *
+   * This is deliberately the *only* copy of the flight maths. The aiming
+   * reticle has to trace exactly the path a real ball will take, and the moment
+   * that integration exists twice the two drift apart and the reticle starts
+   * lying — which is the same failure that already put the player's aim and the
+   * bots' aim on different physics.
+   */
+  static advance(velocity: Vector3, dt: number): void {
+    velocity.y += physicsConfig.gravity * config.gravityScale * dt;
+    velocity.addScaledVector(velocity, -config.drag * dt);
+  }
+
+  /**
+   * Traces where a shot fired right now would actually land.
+   *
+   * Integrates at exactly FIXED_DT, so the path is the one a real projectile
+   * would fly, step for step. Collision, though, is resolved with a ray over a
+   * *chord* of several steps rather than a swept sphere per step: a 40 m shot
+   * is 74 steps, `sweep()` allocates a wasm-backed Ball per cast, and doing
+   * that 74 times a frame is not affordable. Over a three-step chord the arc
+   * sags under the chord by under 3 cm, and dropping the ball's 5.5 cm radius
+   * costs less accuracy than the reticle's own line width.
+   *
+   * Returns false — and leaves `out.hit` false — if nothing is struck inside
+   * the time budget, which is the case when you aim at the sky.
+   */
+  predict(
+    physics: GameContext['physics'],
+    origin: Vector3,
+    direction: Vector3,
+    out: TrajectoryPrediction,
+    exclude?: RapierNS.Collider,
+  ): boolean {
+    out.hit = false;
+    out.pointCount = 0;
+    out.characterId = undefined;
+    out.distance = 0;
+    out.flightTime = 0;
+    if (!physics.isReady) return false;
+
+    const position = this.predictPosition.copy(origin);
+    const velocity = this.predictVelocity
+      .copy(direction)
+      .normalize()
+      .multiplyScalar(config.muzzleSpeed);
+    const chordStart = this.predictChordStart.copy(origin);
+
+    out.pushPoint(origin.x, origin.y, origin.z);
+
+    const maxSteps = Math.ceil(reticleConfig.maxFlightTime / FIXED_DT);
+    const chordSteps = Math.max(1, reticleConfig.chordSteps);
+    let sinceChord = 0;
+    let elapsed = 0;
+    // Where the open chord began, in both the path buffer and the clock, so a
+    // hit inside it can be placed exactly.
+    let chordStartIndex = 0;
+    let chordStartTime = 0;
+
+    for (let step = 0; step < maxSteps; step++) {
+      BallisticsSystem.advance(velocity, FIXED_DT);
+      position.addScaledVector(velocity, FIXED_DT);
+      elapsed += FIXED_DT;
+      sinceChord++;
+      out.pushPoint(position.x, position.y, position.z);
+
+      // Resolve the accumulated chord, and always resolve the final one so the
+      // tail of the budget is never left untested.
+      if (sinceChord < chordSteps && step < maxSteps - 1) continue;
+
+      this.predictChord.subVectors(position, chordStart);
+      const chordLength = this.predictChord.length();
+      const hit =
+        chordLength < 1e-6
+          ? null
+          : physics.raycast(
+              chordStart,
+              this.predictDirection.copy(this.predictChord).divideScalar(chordLength),
+              chordLength,
+              exclude,
+            );
+
+      if (hit) {
+        const fraction = hit.distance / chordLength;
+        out.hit = true;
+        out.point.set(hit.point.x, hit.point.y, hit.point.z);
+        out.normal.set(hit.normal.x, hit.normal.y, hit.normal.z);
+        out.distance = out.point.distanceTo(origin);
+        out.flightTime = chordStartTime + (elapsed - chordStartTime) * fraction;
+        out.characterId = this.characters?.getId(hit.collider.handle);
+        // Drop every step past the surface and end the path on it, or the drawn
+        // arc pokes out the far side of whatever it just hit.
+        out.pointCount = chordStartIndex + 1;
+        out.pushPoint(out.point.x, out.point.y, out.point.z);
+        return true;
+      }
+
+      chordStart.copy(position);
+      chordStartIndex = out.pointCount - 1;
+      chordStartTime = elapsed;
+      sinceChord = 0;
+    }
+
+    return false;
   }
 
   /** Swept sphere cast over this step's motion. Returns the hit, or null. */

@@ -88,6 +88,60 @@ export const ballistics = {
   maxActive: 256,
 } as const;
 
+/**
+ * The aiming reticles.
+ *
+ * There are two, and the gap between them is the point. The fixed one at screen
+ * centre is where you are pointing and the direction the ball leaves the
+ * muzzle; the world one is where that ball actually ends up once gravity and
+ * drag have had their say — 0.46 m lower at 8 m, 1.73 m at 15 m. Showing both
+ * teaches the arc, where compensating the shot would hide it, and the lazy
+ * readable arc is the thing this game is built around.
+ */
+export const reticle = {
+  /** Seconds of flight to trace before giving up. Beyond this you are lobbing. */
+  maxFlightTime: 1.2,
+  /**
+   * Fixed steps resolved per collision ray. The path is always integrated at
+   * FIXED_DT; this only coarsens *collision*, trading a few cm of chord sag for
+   * a third of the ray casts.
+   */
+  chordSteps: 2,
+  /** Marker lift off the struck surface, against z-fighting. */
+  surfaceOffset: 0.03,
+  /**
+   * Ring size, as an angle rather than a world radius, so it holds a roughly
+   * constant size on screen at every range.
+   *
+   * Sizing it by the spread cone alone was the first idea and it does not
+   * survive the numbers: `baseSpread` is 0.9 degrees, which at 15 m is a 24 cm
+   * ring — two pixels of band, invisible. Spread is *added* to this instead, so
+   * settling or aiming still visibly tightens the ring without it ever
+   * shrinking below something you can see.
+   */
+  ringAngularSize: 0.026,
+  /**
+   * Angular size of the camera-facing centre dot.
+   *
+   * The flat ring alone is not enough. This camera sits 1.5 m up, so ground at
+   * ordinary fighting range is seen at five degrees or less — a ring lying on
+   * it compresses to a couple of pixels of height and disappears. The dot
+   * always faces the viewer, so there is something readable at every angle,
+   * while the ring keeps the marker feeling planted on the surface.
+   */
+  dotAngularSize: 0.013,
+  /** Ring damping toward each freshly solved point. */
+  lambda: 26,
+  /** Spacing between trajectory dots, in fixed steps. */
+  arcStride: 2,
+  /** Dot radius in metres. */
+  arcDotRadius: 0.05,
+  /** Cap on drawn dots; the trace is longer than it is useful to draw. */
+  arcMaxDots: 40,
+  /** The near end of the arc is behind the character — skip it. */
+  arcSkipSteps: 4,
+} as const;
+
 export const paint = {
   /** Resolution of the shared world paint atlas. */
   worldAtlasSize: 4096,

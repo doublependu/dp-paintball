@@ -4,6 +4,8 @@ import { CharacterRegistry } from './character/CharacterRegistry';
 import { CharactersSystem, type BotSpec } from './character/CharactersSystem';
 import { AudioSystem } from './audio/AudioSystem';
 import { Game } from './core/Game';
+import { AimSolver } from './gameplay/Aim';
+import { AimReticleSystem } from './gameplay/AimReticle';
 import { BallisticsSystem } from './gameplay/Ballistics';
 import { CameraRig } from './gameplay/CameraRig';
 import { PlayerController } from './gameplay/PlayerController';
@@ -73,6 +75,9 @@ const charactersSystem = new CharactersSystem(
 );
 const audio = new AudioSystem(playerState);
 const hud = new HudSystem(container, charactersSystem, splatAtlas);
+// One solver shared by the gun and the reticle, so the marker on the ground is
+// traced from the same muzzle and direction the ball actually leaves.
+const aim = new AimSolver();
 
 // Registration order is execution order, and it matters:
 //   player writes renderPosition -> camera reads it and writes avatarOpacity
@@ -82,7 +87,9 @@ game
   .add(player)
   .add(new CameraRig(playerState))
   .add(ballistics)
-  .add(new WeaponSystem(playerState, ballistics))
+  .add(new WeaponSystem(playerState, ballistics, aim))
+  // After the camera, which it aims from; before paint, which does not care.
+  .add(new AimReticleSystem(playerState, ballistics, aim))
   .add(paint)
   .add(charactersSystem)
   // After characters: the HUD reads their scores, and audio positions sounds
