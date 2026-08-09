@@ -111,12 +111,20 @@ export class CharacterPaint {
 
   /** Wipes all paint from this character. */
   clear(): void {
-    const previous = this.renderer.getRenderTarget();
+    const previousTarget = this.renderer.getRenderTarget();
+    // The clear colour is global renderer state, and this runs from every
+    // character's constructor. Leaving it on transparent black would hand the
+    // main pass a clear colour nobody asked for.
+    const previousClearColor = this.renderer.getClearColor(SCRATCH_COLOR);
+    const previousClearAlpha = this.renderer.getClearAlpha();
+
     this.renderer.setRenderTarget(this.target);
     // Transparent black: the character material treats alpha as paint coverage.
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.clear(true, false, false);
-    this.renderer.setRenderTarget(previous);
+
+    this.renderer.setClearColor(previousClearColor, previousClearAlpha);
+    this.renderer.setRenderTarget(previousTarget);
     this.stamped = 0;
   }
 
@@ -189,3 +197,5 @@ export class CharacterPaint {
     this.material.dispose();
   }
 }
+
+const SCRATCH_COLOR = new Color();

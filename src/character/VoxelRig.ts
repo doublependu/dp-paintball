@@ -181,23 +181,14 @@ export class VoxelRig {
     worldMatrix: Matrix4,
     maxFaces = 3,
   ): PaintHitUv[] {
-    const primary = this.resolvePaintUv(worldPoint, worldMatrix);
-    if (!primary) return [];
+    // Owned here rather than shared with resolvePart's internals, so locating
+    // the part cannot scribble over the position that locating it produced.
+    const inPart = SCRATCH_IN_PART;
+    const partIndex = this.resolvePart(worldPoint, worldMatrix, inPart);
+    if (partIndex < 0) return [];
 
-    const part = this.parts[primary.partIndex]!;
+    const part = this.parts[partIndex]!;
     const half = [part.size[0] / 2, part.size[1] / 2, part.size[2] / 2];
-
-    // The impact in the part's own frame — recomputed rather than cached,
-    // because resolvePaintUv works through shared scratch vectors.
-    const local = SCRATCH_V.copy(worldPoint).applyMatrix4(
-      SCRATCH_M.copy(worldMatrix).invert(),
-    );
-    const inPart = SCRATCH_V2.copy(local).applyMatrix4(
-      SCRATCH_M2.copy(this.jointMatrices[part.joint]!).invert(),
-    );
-    inPart.x -= part.offset[0];
-    inPart.y -= part.offset[1];
-    inPart.z -= part.offset[2];
 
     // Distance from the impact to each face plane, as a fraction of the part's
     // size along that axis, so faces of very different sizes compare fairly.
@@ -212,8 +203,7 @@ export class VoxelRig {
       // Only faces the impact is genuinely near; beyond a third of the part's
       // depth, paint on that face would look like it teleported there.
       if (results.length > 0 && distance > 0.34) break;
-      const uv = this.faceUvFor(primary.partIndex, index, inPart, half);
-      if (!uv) continue;
+      const uv = this.faceUvFor(partIndex, index, inPart, half);
       // Wrapped faces get a smaller splat, tapering with distance.
       uv.weight = results.length === 0 ? 1 : Math.max(0.35, 1 - distance * 2.2);
       results.push(uv);
@@ -227,7 +217,8 @@ export class VoxelRig {
     faceIndex: number,
     inPart: Vector3,
     half: number[],
-  ): PaintHitUv | null {
+  ): PaintHitUv {
+    // The two axes that aren't the face normal become the face's own UV.
     const { axis } = FACE_AXES[faceIndex]!;
     const uAxis = axis === 0 ? 2 : 0;
     const vAxis = axis === 1 ? 2 : 1;
@@ -240,28 +231,37 @@ export class VoxelRig {
       v: rect.v0 + (rect.v1 - rect.v0) * Math.min(Math.max(vLocal, 0), 1),
       partIndex,
       faceIndex,
+      // The face spans `2 * half[uAxis]` metres across `rect.u1 - rect.u0` UV
+      // units, which is what converts a world splat radius into a UV radius.
       uvPerMeter: (rect.u1 - rect.u0) / (2 * half[uAxis]!),
       weight: 1,
     };
   }
 
   /**
-   * Resolves a world-space impact into a paint-atlas UV.
+   * Locates a world-space impact on the rig: which part it struck, and where in
+   * that part's own frame. Writes the position into `outInPart` and returns the
+   * part index, or -1 if the point is clear of every part.
    *
    * Analytic rather than a raycast: the CPU-side geometry is in bind pose, so
    * raycasting it would place paint where the limb *used* to be. Instead the
    * point is pushed into each part's local space through that part's current
-   * joint matrix, and the nearest box face is solved directly.
+   * joint matrix, and the nearest box is solved directly.
+   *
+   * Which *face* the impact belongs to is deliberately not decided here — the
+   * caller scores all six anyway, so choosing one would only be overruled.
    */
-  resolvePaintUv(worldPoint: Vector3, worldMatrix: Matrix4): PaintHitUv | null {
+  private resolvePart(
+    worldPoint: Vector3,
+    worldMatrix: Matrix4,
+    outInPart: Vector3,
+  ): number {
     const local = SCRATCH_V.copy(worldPoint).applyMatrix4(
       SCRATCH_M.copy(worldMatrix).invert(),
     );
 
     let bestPart = -1;
-    let bestFace = 0;
     let bestDistance = Infinity;
-    let bestLocal = new Vector3();
 
     for (let p = 0; p < this.parts.length; p++) {
       const part = this.parts[p]!;
@@ -283,43 +283,13 @@ export class VoxelRig {
       if (distance < bestDistance) {
         bestDistance = distance;
         bestPart = p;
-        bestLocal = bestLocal.copy(inJoint);
-        // The dominant axis, measured as a fraction of that half-extent, is the
-        // face the impact belongs to.
-        const rx = Math.abs(inJoint.x) / half[0]!;
-        const ry = Math.abs(inJoint.y) / half[1]!;
-        const rz = Math.abs(inJoint.z) / half[2]!;
-        if (rx >= ry && rx >= rz) bestFace = inJoint.x >= 0 ? 0 : 1;
-        else if (ry >= rz) bestFace = inJoint.y >= 0 ? 2 : 3;
-        else bestFace = inJoint.z >= 0 ? 4 : 5;
+        outInPart.copy(inJoint);
       }
     }
 
     // Well clear of every part — a miss, or a hit on something else entirely.
-    if (bestPart < 0 || bestDistance > 0.5) return null;
-
-    const part = this.parts[bestPart]!;
-    const half = [part.size[0] / 2, part.size[1] / 2, part.size[2] / 2];
-    const { axis } = FACE_AXES[bestFace]!;
-
-    // The two axes that aren't the face normal become the face's own UV.
-    const uAxis = axis === 0 ? 2 : 0;
-    const vAxis = axis === 1 ? 2 : 1;
-    const uLocal = (bestLocal.getComponent(uAxis) / half[uAxis]! + 1) / 2;
-    const vLocal = (bestLocal.getComponent(vAxis) / half[vAxis]! + 1) / 2;
-
-    const rect = faceUvRect(bestPart, bestFace);
-    // The face spans `2 * half[uAxis]` metres across `rect.u1 - rect.u0` UV
-    // units, which is what converts a world splat radius into a UV radius.
-    const uvPerMeter = (rect.u1 - rect.u0) / (2 * half[uAxis]!);
-    return {
-      u: rect.u0 + (rect.u1 - rect.u0) * Math.min(Math.max(uLocal, 0), 1),
-      v: rect.v0 + (rect.v1 - rect.v0) * Math.min(Math.max(vLocal, 0), 1),
-      partIndex: bestPart,
-      faceIndex: bestFace,
-      uvPerMeter,
-      weight: 1,
-    };
+    if (bestPart < 0 || bestDistance > 0.5) return -1;
+    return bestPart;
   }
 
   private buildGeometry(): BufferGeometry {
@@ -417,5 +387,7 @@ export class VoxelRig {
 
 const SCRATCH_V = new Vector3();
 const SCRATCH_V2 = new Vector3();
+/** Kept apart from the two above, which resolvePart uses while filling it. */
+const SCRATCH_IN_PART = new Vector3();
 const SCRATCH_M = new Matrix4();
 const SCRATCH_M2 = new Matrix4();
