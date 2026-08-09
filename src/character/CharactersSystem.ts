@@ -63,7 +63,7 @@ export class CharactersSystem implements System {
     this.splatAtlas = this.sharedAtlas;
 
     this.player = new Character(
-      { id: 'player', colorIndex: 0, paintSize: 512 },
+      { id: 'player', colorIndex: 0 },
       ctx,
       this.splatAtlas,
     );
@@ -86,7 +86,7 @@ export class CharactersSystem implements System {
 
     for (const spec of this.botSpecs) {
       const character = new Character(
-        { id: spec.id, colorIndex: spec.colorIndex, paintSize: 256 },
+        { id: spec.id, colorIndex: spec.colorIndex },
         ctx,
         this.splatAtlas,
       );
@@ -106,7 +106,14 @@ export class CharactersSystem implements System {
   }
 
   private onHit(
-    event: { targetId: string; shooterId: string; color: number; point: Vector3; impactSpeed: number },
+    event: {
+      targetId: string;
+      shooterId: string;
+      color: number;
+      point: Vector3;
+      normal: Vector3;
+      impactSpeed: number;
+    },
     ctx: GameContext,
   ): void {
     const target = this.find(event.targetId);
@@ -114,6 +121,7 @@ export class CharactersSystem implements System {
 
     const registered = target.takeHit(
       event.point,
+      event.normal,
       event.color,
       event.impactSpeed,
       ctx.rng,

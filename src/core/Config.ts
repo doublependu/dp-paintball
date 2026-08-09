@@ -151,8 +151,15 @@ export const sceneCrosshair = {
 export const paint = {
   /** Resolution of the shared world paint atlas. */
   worldAtlasSize: 4096,
-  /** Per-character paint target. */
-  characterTargetSize: 256,
+  /**
+   * Splats a character can carry before the oldest is dropped.
+   *
+   * Every live splat costs three vec4 uniforms and one iteration of the rig's
+   * fragment loop, so this is a real budget rather than a nominal one. It is
+   * also higher than it looks: a body is visually saturated well before 24
+   * hits, so the cap is reached long after it stops being legible.
+   */
+  characterMaxSplats: 24,
   /** Number of procedurally generated splat shapes in the variant atlas. */
   splatVariants: 16,
   splatAtlasSize: 1024,

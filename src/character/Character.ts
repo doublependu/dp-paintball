@@ -15,8 +15,6 @@ export interface CharacterOptions {
   id: string;
   /** Team colour, used for the shirt and this character's own paint. */
   colorIndex: number;
-  /** Paint target resolution. The player wants more than a distant bot does. */
-  paintSize?: number;
 }
 
 /**
@@ -45,6 +43,8 @@ export class Character {
 
   private readonly material: RigMaterialHandle;
   private readonly worldMatrix = new Matrix4();
+  private readonly paintPoint = new Vector3();
+  private readonly paintNormal = new Vector3();
   private collider?: RapierNS.Collider;
 
   constructor(
@@ -70,12 +70,8 @@ export class Character {
     });
 
     this.rig = new VoxelRig(parts);
-    this.paint = new CharacterPaint(
-      ctx.renderer,
-      splatAtlas,
-      options.paintSize ?? paintConfig.characterTargetSize,
-    );
-    this.material = createRigMaterial(this.paint.target.texture);
+    this.paint = new CharacterPaint();
+    this.material = createRigMaterial(this.paint, splatAtlas);
 
     this.mesh = new Mesh(this.rig.geometry, this.material.material);
     this.mesh.castShadow = true;
@@ -141,11 +137,12 @@ export class Character {
   }
 
   /**
-   * Registers a hit: stamps paint where it landed, flinches, and scores.
+   * Registers a hit: records paint where it landed, flinches, and scores.
    * Returns false if the hit was inside the grace window and ignored.
    */
   takeHit(
     point: Vector3,
+    normal: Vector3,
     color: number,
     impactSpeed: number,
     rng: Rng,
@@ -159,38 +156,46 @@ export class Character {
     this.rig.root.updateMatrixWorld(true);
     this.worldMatrix.copy(this.rig.root.matrixWorld);
 
+    // Drawn unconditionally, before anything that might bail. `rng` is the
+    // match's shared sequence, so if the number of draws depended on where a
+    // splat happened to land, one hit clipping the edge of a limb would shift
+    // every bot decision that followed it.
+    const variant = rng.int(0, splatVariants);
+    const rotation = rng.range(0, Math.PI * 2);
+
+    const joint = this.rig.resolvePaintAnchor(
+      point,
+      normal,
+      this.worldMatrix,
+      this.paintPoint,
+      this.paintNormal,
+    );
+    // Landed on the collider but clear of every box — the capsule is a little
+    // more generous than the figure inside it.
+    if (joint < 0) return true;
+
     const speedScale = clamp(
       remap(impactSpeed, 12, 42, paintConfig.minSplatScale, paintConfig.maxSplatScale),
       paintConfig.minSplatScale,
       paintConfig.maxSplatScale,
     );
-    const worldRadius = paintConfig.characterSplatRadius * speedScale;
 
-    // Every face the impact is near, not just the one it struck. A hit near a
-    // corner wraps onto both, and — the reason this matters — a shot to the
-    // chest leaves something visible from behind, which is the only angle a
-    // third-person player ever sees themselves from.
-    const variant = rng.int(0, splatVariants);
-    const rotation = rng.range(0, Math.PI * 2);
-    for (const hit of this.rig.resolvePaintFaces(point, this.worldMatrix)) {
-      this.paint.stamp(
-        hit.u,
-        hit.v,
-        hit.partIndex,
-        hit.faceIndex,
-        worldRadius * hit.uvPerMeter * hit.weight,
-        color,
-        variant,
-        rotation,
-      );
-    }
+    this.paint.add(
+      this.paintPoint,
+      this.paintNormal,
+      joint,
+      paintConfig.characterSplatRadius * speedScale,
+      color,
+      variant,
+      rotation,
+    );
     return true;
   }
 
   dispose(): void {
     this.rig.root.removeFromParent();
     this.rig.dispose();
-    this.paint.dispose();
+    // No paint.dispose(): paint is three Float32Arrays now, not a GPU resource.
     this.material.dispose();
   }
 }

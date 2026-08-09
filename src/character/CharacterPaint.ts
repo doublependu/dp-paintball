@@ -1,200 +1,102 @@
-import {
-  Color,
-  Mesh,
-  NoBlending,
-  OrthographicCamera,
-  PlaneGeometry,
-  Scene,
-  ShaderMaterial,
-  Vector2,
-  Vector4,
-  type WebGLRenderer,
-  WebGLRenderTarget,
-} from 'three';
-import type { SplatAtlas } from '../paint/SplatAtlas';
-import { faceUvRect } from './VoxelRig';
+import { Color, Vector3 } from 'three';
+import { paint as paintConfig } from '../core/Config';
+import { JOINT_COUNT } from './VoxelRig';
 
-const STAMP_VERTEX = /* glsl */ `
-varying vec2 vUv;
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
-}
-`;
-
-const STAMP_FRAGMENT = /* glsl */ `
-uniform sampler2D uSplatAtlas;
-uniform vec3 uTint;
-uniform vec3 uTile;   // atlas offset.xy, scale.z
-uniform float uRotation;
-varying vec2 vUv;
-
-void main() {
-  // Rotate about the quad centre so repeated hits don't stamp identically.
-  vec2 centered = vUv - 0.5;
-  float s = sin( uRotation );
-  float c = cos( uRotation );
-  vec2 rotated = vec2( centered.x * c - centered.y * s,
-                       centered.x * s + centered.y * c ) + 0.5;
-  if ( rotated.x < 0.0 || rotated.x > 1.0 || rotated.y < 0.0 || rotated.y > 1.0 ) discard;
-
-  vec4 splat = texture2D( uSplatAtlas, rotated * uTile.z + uTile.xy );
-  if ( splat.a < 0.35 ) discard;
-
-  // splat.r rises toward the interior; darken the wet rim, as world paint does.
-  gl_FragColor = vec4( uTint * ( 0.74 + 0.26 * splat.r ), 1.0 );
-}
-`;
+/** Floats per splat in each of the three uniform buffers. */
+const STRIDE = 4;
 
 /**
- * Per-character paint, accumulated into a render target.
+ * Per-character paint, held as a list of splats rather than a texture.
  *
  * World paint uses decals, but a decal is baked against static geometry — on an
- * animated limb it would need reprojecting every frame. Characters instead own
- * a small paint texture that their material samples, so paint travels with the
- * body for free and survives any pose.
+ * animated limb it would need reprojecting every frame. The obvious fix is to
+ * give each character a paint texture and stamp into it, and that is what this
+ * was: a render target, an orthographic camera, and a scissored quad per hit.
  *
- * Each splat is scissored to the face it landed on. Without that the quad would
- * bleed into whatever face happens to sit beside it in the atlas, which is not
- * its geometric neighbour, and paint would appear in unrelated places.
+ * It works, but it pays a texture, a render pass per hit and a whole UV atlas
+ * to store something a body only ever holds a handful of. Splats are instead
+ * kept as plain numbers here and evaluated by the rig's fragment shader, in the
+ * one space where paint is free to sit still: the *joint's* own frame. Nothing
+ * needs reprojecting, because in that frame an elbow never moves.
+ *
+ * Buffers are laid out for direct upload as `vec4[]` uniforms — see
+ * `createRigMaterial`, which reads them in place.
  */
 export class CharacterPaint {
-  readonly target: WebGLRenderTarget;
-  private readonly scene = new Scene();
-  private readonly camera: OrthographicCamera;
-  private readonly quad: Mesh;
-  private readonly material: ShaderMaterial;
-  private readonly size: number;
-  private stamped = 0;
+  readonly max: number;
+  /** centre.xyz, radius. Joint-local metres. */
+  readonly bufferA: Float32Array;
+  /** normal.xyz, rotation. The axis the splat is projected along. */
+  readonly bufferB: Float32Array;
+  /** colour.rgb, and joint + variant * JOINT_COUNT packed into one float. */
+  readonly bufferC: Float32Array;
 
-  constructor(
-    private readonly renderer: WebGLRenderer,
-    private readonly atlas: SplatAtlas,
-    size = 512,
-  ) {
-    this.size = size;
-    this.target = new WebGLRenderTarget(size, size, {
-      depthBuffer: false,
-      stencilBuffer: false,
-    });
+  private count = 0;
 
-    // UV space maps directly to the camera's view, so a quad at (u,v) lands at
-    // exactly that texel.
-    this.camera = new OrthographicCamera(0, 1, 1, 0, -1, 1);
-
-    this.material = new ShaderMaterial({
-      vertexShader: STAMP_VERTEX,
-      fragmentShader: STAMP_FRAGMENT,
-      transparent: false,
-      depthTest: false,
-      depthWrite: false,
-      // Fragments either replace the target or discard; blending would fight
-      // the alpha test and soften every edge.
-      blending: NoBlending,
-      uniforms: {
-        uSplatAtlas: { value: atlas.texture },
-        uTint: { value: new Color(0xffffff) },
-        uTile: { value: new Vector4(0, 0, 1, 0) },
-        uRotation: { value: 0 },
-      },
-    });
-
-    this.quad = new Mesh(new PlaneGeometry(1, 1), this.material);
-    this.scene.add(this.quad);
-
-    this.clear();
+  constructor(max = paintConfig.characterMaxSplats) {
+    this.max = max;
+    this.bufferA = new Float32Array(max * STRIDE);
+    this.bufferB = new Float32Array(max * STRIDE);
+    this.bufferC = new Float32Array(max * STRIDE);
   }
 
   get splatCount(): number {
-    return this.stamped;
+    return this.count;
   }
 
   /** Wipes all paint from this character. */
   clear(): void {
-    const previousTarget = this.renderer.getRenderTarget();
-    // The clear colour is global renderer state, and this runs from every
-    // character's constructor. Leaving it on transparent black would hand the
-    // main pass a clear colour nobody asked for.
-    const previousClearColor = this.renderer.getClearColor(SCRATCH_COLOR);
-    const previousClearAlpha = this.renderer.getClearAlpha();
-
-    this.renderer.setRenderTarget(this.target);
-    // Transparent black: the character material treats alpha as paint coverage.
-    this.renderer.setClearColor(0x000000, 0);
-    this.renderer.clear(true, false, false);
-
-    this.renderer.setClearColor(previousClearColor, previousClearAlpha);
-    this.renderer.setRenderTarget(previousTarget);
-    this.stamped = 0;
+    this.count = 0;
   }
 
   /**
-   * Stamps a splat at a paint-atlas UV.
+   * Records a splat.
    *
-   * `partIndex` and `faceIndex` identify the face to scissor against; `radius`
-   * is in UV units.
+   * `centre` and `normal` are in the frame of `joint`; `radius` is in metres.
+   * Once full, the oldest splat is dropped — splats are held in the order they
+   * landed, because the shader lets later ones paint over earlier ones and that
+   * only reads correctly if the order is the order they arrived in.
    */
-  stamp(
-    u: number,
-    v: number,
-    partIndex: number,
-    faceIndex: number,
+  add(
+    centre: Vector3,
+    normal: Vector3,
+    joint: number,
     radius: number,
     color: number,
     variant: number,
     rotation: number,
   ): void {
-    const rect = faceUvRect(partIndex, faceIndex);
-    const tile = this.atlas.getTileTransform(variant);
+    if (this.count === this.max) {
+      // Shifting beats a ring buffer here: it keeps the arrays in draw order,
+      // so the shader needs no wrap-around, and it happens once per hit rather
+      // than once per pixel.
+      this.bufferA.copyWithin(0, STRIDE);
+      this.bufferB.copyWithin(0, STRIDE);
+      this.bufferC.copyWithin(0, STRIDE);
+      this.count--;
+    }
 
-    (this.material.uniforms.uTint!.value as Color).setHex(color);
-    (this.material.uniforms.uTile!.value as Vector4).set(
-      tile.offsetX,
-      tile.offsetY,
-      tile.scale,
-      0,
-    );
-    this.material.uniforms.uRotation!.value = rotation;
+    const at = this.count * STRIDE;
 
-    this.quad.position.set(u, v, 0);
-    this.quad.scale.set(radius * 2, radius * 2, 1);
-    this.quad.updateMatrixWorld(true);
+    this.bufferA[at] = centre.x;
+    this.bufferA[at + 1] = centre.y;
+    this.bufferA[at + 2] = centre.z;
+    this.bufferA[at + 3] = radius;
 
-    const previousTarget = this.renderer.getRenderTarget();
-    const previousScissorTest = this.renderer.getScissorTest();
-    const previousScissor = this.renderer.getScissor(new Vector4());
-    const previousAutoClear = this.renderer.autoClear;
+    this.bufferB[at] = normal.x;
+    this.bufferB[at + 1] = normal.y;
+    this.bufferB[at + 2] = normal.z;
+    this.bufferB[at + 3] = rotation;
 
-    this.renderer.setRenderTarget(this.target);
-    // Accumulate: never clear between stamps.
-    this.renderer.autoClear = false;
-    this.renderer.setScissorTest(true);
-    this.renderer.setScissor(
-      Math.floor(rect.u0 * this.size),
-      Math.floor(rect.v0 * this.size),
-      Math.ceil((rect.u1 - rect.u0) * this.size),
-      Math.ceil((rect.v1 - rect.v0) * this.size),
-    );
+    SCRATCH_COLOR.setHex(color);
+    this.bufferC[at] = SCRATCH_COLOR.r;
+    this.bufferC[at + 1] = SCRATCH_COLOR.g;
+    this.bufferC[at + 2] = SCRATCH_COLOR.b;
+    // Both are small integers and float32 holds them exactly, so one slot does
+    // for two fields and the splat stays within three vec4s.
+    this.bufferC[at + 3] = joint + variant * JOINT_COUNT;
 
-    this.renderer.render(this.scene, this.camera);
-
-    this.renderer.setScissorTest(previousScissorTest);
-    this.renderer.setScissor(previousScissor);
-    this.renderer.autoClear = previousAutoClear;
-    this.renderer.setRenderTarget(previousTarget);
-
-    this.stamped++;
-  }
-
-  /** Texel size, for shaders that want to sample neighbours. */
-  get texelSize(): Vector2 {
-    return new Vector2(1 / this.size, 1 / this.size);
-  }
-
-  dispose(): void {
-    this.target.dispose();
-    this.quad.geometry.dispose();
-    this.material.dispose();
+    this.count++;
   }
 }
 

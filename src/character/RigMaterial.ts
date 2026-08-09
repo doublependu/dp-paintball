@@ -5,10 +5,11 @@ import {
   MeshBasicMaterial,
   MeshNormalMaterial,
   MeshToonMaterial,
-  type Texture,
 } from 'three';
 import { palette, render as renderConfig } from '../core/Config';
 import { getCelGradient } from '../render/CelMaterial';
+import type { SplatAtlas } from '../paint/SplatAtlas';
+import type { CharacterPaint } from './CharacterPaint';
 import { JOINT_COUNT } from './VoxelRig';
 
 export interface RigMaterialHandle {
@@ -35,7 +36,11 @@ export interface RigMaterialHandle {
    * grass or stone. This is the Borderlands half of the look.
    */
   hullMaterial: MeshBasicMaterial;
-  /** Call once per frame after posing, with the rig's joint matrices. */
+  /**
+   * Call once per frame after posing, with the rig's joint matrices. Also
+   * publishes the character's live splat count, which is the fragment loop's
+   * bound.
+   */
   setJoints(matrices: Matrix4[]): void;
   setOpacity(opacity: number): void;
   dispose(): void;
@@ -48,8 +53,18 @@ export interface RigMaterialHandle {
  * matrices, indexed per vertex. Because every part is rigid there is no weight
  * blending to do — one matrix per vertex is exact, not an approximation — so
  * the whole figure animates in a single draw call.
+ *
+ * Paint is composited straight from `paint`'s splat list, in the joint's own
+ * frame. The three interesting consequences: paint needs no storage beyond a
+ * few hundred bytes, it survives any pose without reprojection because a joint
+ * frame does not move relative to the limb in it, and a splat near a corner
+ * wraps onto the neighbouring face on its own rather than being stamped there
+ * a second time.
  */
-export function createRigMaterial(paintTexture: Texture): RigMaterialHandle {
+export function createRigMaterial(
+  paint: CharacterPaint,
+  splatAtlas: SplatAtlas,
+): RigMaterialHandle {
   const jointUniform: Matrix4[] = [];
   for (let i = 0; i < JOINT_COUNT; i++) jointUniform.push(new Matrix4());
 
@@ -59,13 +74,19 @@ export function createRigMaterial(paintTexture: Texture): RigMaterialHandle {
     transparent: false,
   });
 
-  let uniforms: Record<string, { value: unknown }> | undefined;
+  const splatCount = { value: 0 };
 
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uJoints = { value: jointUniform };
-    shader.uniforms.uPaint = { value: paintTexture };
     shader.uniforms.uRimColor = { value: [1, 0.95, 0.82] };
-    uniforms = shader.uniforms;
+    shader.uniforms.uSplatAtlas = { value: splatAtlas.texture };
+    shader.uniforms.uSplatTiles = { value: splatAtlas.tilesPerRow };
+    // The buffers are read in place; three re-uploads an array uniform when its
+    // contents change, so recording a splat needs no flag flipped here.
+    shader.uniforms.uSplatA = { value: paint.bufferA };
+    shader.uniforms.uSplatB = { value: paint.bufferB };
+    shader.uniforms.uSplatC = { value: paint.bufferC };
+    shader.uniforms.uSplatCount = splatCount;
 
     shader.vertexShader = shader.vertexShader
       .replace(
@@ -73,7 +94,9 @@ export function createRigMaterial(paintTexture: Texture): RigMaterialHandle {
         `#include <common>
          attribute float aJoint;
          uniform mat4 uJoints[ ${JOINT_COUNT} ];
-         varying vec2 vRigUv;`,
+         varying vec3 vRigPos;
+         varying vec3 vRigNormal;
+         varying float vRigJoint;`,
       )
       .replace(
         '#include <beginnormal_vertex>',
@@ -85,7 +108,11 @@ export function createRigMaterial(paintTexture: Texture): RigMaterialHandle {
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-         vRigUv = uv;
+         // Deliberately the *un*-skinned attributes: paint is evaluated in the
+         // joint's frame, which is the one frame the limb is motionless in.
+         vRigPos = position;
+         vRigNormal = normal;
+         vRigJoint = aJoint;
          transformed = ( uJoints[ int( aJoint ) ] * vec4( transformed, 1.0 ) ).xyz;`,
       );
 
@@ -93,20 +120,78 @@ export function createRigMaterial(paintTexture: Texture): RigMaterialHandle {
       .replace(
         '#include <common>',
         `#include <common>
-         uniform sampler2D uPaint;
-         varying vec2 vRigUv;`,
+         uniform sampler2D uSplatAtlas;
+         uniform vec4 uSplatA[ ${paint.max} ];
+         uniform vec4 uSplatB[ ${paint.max} ];
+         uniform vec4 uSplatC[ ${paint.max} ];
+         uniform int uSplatCount;
+         uniform float uSplatTiles;
+         varying vec3 vRigPos;
+         varying vec3 vRigNormal;
+         varying float vRigJoint;`,
       )
       .replace(
         '#include <map_fragment>',
         `#include <map_fragment>
-         // Paint sits on top of the base colour. Alpha is coverage: the paint
-         // target is cleared to transparent black and stamped opaque.
-         vec4 rigPaint = texture2D( uPaint, vRigUv );
-         diffuseColor.rgb = mix( diffuseColor.rgb, rigPaint.rgb, rigPaint.a );`,
+         float rigTile = 1.0 / uSplatTiles;
+         for ( int i = 0; i < ${paint.max}; i++ ) {
+           if ( i >= uSplatCount ) break;
+
+           vec4 splatA = uSplatA[ i ];
+           vec4 splatB = uSplatB[ i ];
+           vec4 splatC = uSplatC[ i ];
+
+           // Paint belongs to the joint it landed on. Without this the legs,
+           // which are identical in joint-local space, would share every splat.
+           float packed = splatC.a;
+           if ( abs( mod( packed, ${JOINT_COUNT}.0 ) - vRigJoint ) > 0.5 ) continue;
+
+           vec3 toPixel = vRigPos - splatA.xyz;
+           vec3 axis = splatB.xyz;
+           float radius = splatA.w;
+           float along = dot( toPixel, axis );
+           if ( abs( along ) > radius ) continue;
+
+           // A face near-parallel to the projection axis would take a smeared
+           // streak rather than a splat, which is the classic decal artefact.
+           if ( abs( dot( vRigNormal, axis ) ) < 0.35 ) continue;
+
+           // Wrapping onto the far side of a limb paints smaller, which is both
+           // what a real splat does and what keeps a chest hit from stamping a
+           // full-size copy of itself on the back.
+           float taper = mix( 1.0, 0.55, clamp( abs( along ) / radius, 0.0, 1.0 ) );
+           vec3 tangential = toPixel - axis * along;
+           vec3 tangentX = normalize(
+             abs( axis.y ) < 0.99 ? cross( vec3( 0.0, 1.0, 0.0 ), axis )
+                                  : vec3( 1.0, 0.0, 0.0 ) );
+           vec3 tangentY = cross( axis, tangentX );
+           vec2 local = vec2( dot( tangential, tangentX ),
+                              dot( tangential, tangentY ) ) / ( radius * taper );
+
+           // Rotate about the centre so repeated hits don't read as identical.
+           float rigSin = sin( splatB.w );
+           float rigCos = cos( splatB.w );
+           local = vec2( local.x * rigCos - local.y * rigSin,
+                         local.x * rigSin + local.y * rigCos );
+           if ( abs( local.x ) > 1.0 || abs( local.y ) > 1.0 ) continue;
+
+           float variant = floor( packed / ${JOINT_COUNT}.0 );
+           vec2 tileOrigin = vec2( mod( variant, uSplatTiles ),
+                                   floor( variant / uSplatTiles ) ) * rigTile;
+           vec4 splat = texture2D( uSplatAtlas,
+                                   ( local * 0.5 + 0.5 ) * rigTile + tileOrigin );
+           if ( splat.a < 0.35 ) continue;
+
+           // Later splats paint over earlier ones, which is why the list is
+           // kept in the order the hits landed.
+           // splat.r rises toward the interior; darken the wet rim, as world
+           // paint does.
+           diffuseColor.rgb = splatC.rgb * ( 0.74 + 0.26 * splat.r );
+         }`,
       );
   };
 
-  material.customProgramCacheKey = () => 'voxel-rig-v1';
+  material.customProgramCacheKey = () => `voxel-rig-v2-${paint.max}`;
 
   // The normal variant shares the *same* jointUniform array, so a single
   // setJoints() keeps the colour pass and the prepass in lockstep. Two separate
@@ -191,7 +276,9 @@ export function createRigMaterial(paintTexture: Texture): RigMaterialHandle {
       for (let i = 0; i < JOINT_COUNT; i++) {
         jointUniform[i]!.copy(matrices[i]!);
       }
-      void uniforms;
+      // The splat buffers are shared by reference, but their length is not the
+      // live count, so the loop bound has to be published separately.
+      splatCount.value = paint.splatCount;
     },
     setOpacity(opacity: number): void {
       const transparent = opacity < 0.999;

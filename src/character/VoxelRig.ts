@@ -21,11 +21,6 @@ export const JOINT = {
 
 export const JOINT_COUNT = 8;
 
-/** Paint atlas is a 4x4 grid of part cells; each cell holds a box's 6 faces. */
-const CELLS_PER_ROW = 4;
-const FACE_COLS = 3;
-const FACE_ROWS = 2;
-
 export interface RigPart {
   name: string;
   joint: number;
@@ -81,42 +76,6 @@ const FACE_AXES: Array<{ axis: 0 | 1 | 2; sign: 1 | -1 }> = [
   { axis: 2, sign: -1 }, // -Z
 ];
 
-/** UV rect for one face of one part inside the character's paint atlas. */
-export function faceUvRect(
-  partIndex: number,
-  faceIndex: number,
-): { u0: number; v0: number; u1: number; v1: number } {
-  const cellX = partIndex % CELLS_PER_ROW;
-  const cellY = Math.floor(partIndex / CELLS_PER_ROW);
-  const cellW = 1 / CELLS_PER_ROW;
-  const cellH = 1 / CELLS_PER_ROW;
-
-  const faceX = faceIndex % FACE_COLS;
-  const faceY = Math.floor(faceIndex / FACE_COLS);
-  const faceW = cellW / FACE_COLS;
-  const faceH = cellH / FACE_ROWS;
-
-  // A small inset keeps bilinear filtering from bleeding between faces.
-  const pad = faceW * 0.04;
-  return {
-    u0: cellX * cellW + faceX * faceW + pad,
-    v0: cellY * cellH + faceY * faceH + pad,
-    u1: cellX * cellW + (faceX + 1) * faceW - pad,
-    v1: cellY * cellH + (faceY + 1) * faceH - pad,
-  };
-}
-
-export interface PaintHitUv {
-  u: number;
-  v: number;
-  partIndex: number;
-  faceIndex: number;
-  /** UV units per world metre on this face, for sizing the splat. */
-  uvPerMeter: number;
-  /** 1 for the struck face, less for faces the splat wraps onto. */
-  weight: number;
-}
-
 /**
  * A blocky character.
  *
@@ -165,96 +124,29 @@ export class VoxelRig {
   }
 
   /**
-   * Resolves an impact into every nearby face of the part it struck.
-   *
-   * A paintball does not stop at a box edge, and neither should its splat. More
-   * practically: bots face you when they shoot, so hits land on a character's
-   * front — which in third person is the side you never see. Without wrapping,
-   * a player gets tagged repeatedly and sees no paint at all, which reads as
-   * the feature being broken.
-   *
-   * Faces are weighted by how close the impact is to each, so a square hit
-   * paints one face strongly and a corner hit paints two or three.
-   */
-  resolvePaintFaces(
-    worldPoint: Vector3,
-    worldMatrix: Matrix4,
-    maxFaces = 3,
-  ): PaintHitUv[] {
-    // Owned here rather than shared with resolvePart's internals, so locating
-    // the part cannot scribble over the position that locating it produced.
-    const inPart = SCRATCH_IN_PART;
-    const partIndex = this.resolvePart(worldPoint, worldMatrix, inPart);
-    if (partIndex < 0) return [];
-
-    const part = this.parts[partIndex]!;
-    const half = [part.size[0] / 2, part.size[1] / 2, part.size[2] / 2];
-
-    // Distance from the impact to each face plane, as a fraction of the part's
-    // size along that axis, so faces of very different sizes compare fairly.
-    const scored = FACE_AXES.map((face, index) => {
-      const h = half[face.axis]!;
-      const distance = Math.abs(face.sign * h - inPart.getComponent(face.axis)) / (2 * h);
-      return { index, distance };
-    }).sort((a, b) => a.distance - b.distance);
-
-    const results: PaintHitUv[] = [];
-    for (const { index, distance } of scored.slice(0, maxFaces)) {
-      // Only faces the impact is genuinely near; beyond a third of the part's
-      // depth, paint on that face would look like it teleported there.
-      if (results.length > 0 && distance > 0.34) break;
-      const uv = this.faceUvFor(partIndex, index, inPart, half);
-      // Wrapped faces get a smaller splat, tapering with distance.
-      uv.weight = results.length === 0 ? 1 : Math.max(0.35, 1 - distance * 2.2);
-      results.push(uv);
-    }
-    return results;
-  }
-
-  /** UV on a specific face of a part, for a point already in the part's frame. */
-  private faceUvFor(
-    partIndex: number,
-    faceIndex: number,
-    inPart: Vector3,
-    half: number[],
-  ): PaintHitUv {
-    // The two axes that aren't the face normal become the face's own UV.
-    const { axis } = FACE_AXES[faceIndex]!;
-    const uAxis = axis === 0 ? 2 : 0;
-    const vAxis = axis === 1 ? 2 : 1;
-    const uLocal = (inPart.getComponent(uAxis) / half[uAxis]! + 1) / 2;
-    const vLocal = (inPart.getComponent(vAxis) / half[vAxis]! + 1) / 2;
-
-    const rect = faceUvRect(partIndex, faceIndex);
-    return {
-      u: rect.u0 + (rect.u1 - rect.u0) * Math.min(Math.max(uLocal, 0), 1),
-      v: rect.v0 + (rect.v1 - rect.v0) * Math.min(Math.max(vLocal, 0), 1),
-      partIndex,
-      faceIndex,
-      // The face spans `2 * half[uAxis]` metres across `rect.u1 - rect.u0` UV
-      // units, which is what converts a world splat radius into a UV radius.
-      uvPerMeter: (rect.u1 - rect.u0) / (2 * half[uAxis]!),
-      weight: 1,
-    };
-  }
-
-  /**
-   * Locates a world-space impact on the rig: which part it struck, and where in
-   * that part's own frame. Writes the position into `outInPart` and returns the
-   * part index, or -1 if the point is clear of every part.
+   * Locates a world-space impact in the frame of the joint it landed on, which
+   * is the frame the rig shader evaluates paint in. Writes the point and the
+   * projection axis into `outPoint` and `outNormal`, and returns the joint
+   * index — or -1 if the impact is clear of every part.
    *
    * Analytic rather than a raycast: the CPU-side geometry is in bind pose, so
    * raycasting it would place paint where the limb *used* to be. Instead the
    * point is pushed into each part's local space through that part's current
    * joint matrix, and the nearest box is solved directly.
    *
-   * Which *face* the impact belongs to is deliberately not decided here — the
-   * caller scores all six anyway, so choosing one would only be overruled.
+   * The *joint* frame, not the part's box frame, because that is the space the
+   * `position` attribute is already in — so the shader compares the two without
+   * transforming anything. Which face was struck is not decided here at all:
+   * the shader projects the splat along `outNormal` and lets it fall across
+   * however many faces it reaches, which is what makes a splat wrap a corner
+   * instead of being stamped onto each face separately.
    */
-  private resolvePart(
+  resolvePaintAnchor(
     worldPoint: Vector3,
+    worldNormal: Vector3,
     worldMatrix: Matrix4,
-    outInPart: Vector3,
+    outPoint: Vector3,
+    outNormal: Vector3,
   ): number {
     const local = SCRATCH_V.copy(worldPoint).applyMatrix4(
       SCRATCH_M.copy(worldMatrix).invert(),
@@ -265,31 +157,37 @@ export class VoxelRig {
 
     for (let p = 0; p < this.parts.length; p++) {
       const part = this.parts[p]!;
-      // Into the joint's frame, then into the box's frame.
       const inJoint = SCRATCH_V2.copy(local).applyMatrix4(
         SCRATCH_M2.copy(this.jointMatrices[part.joint]!).invert(),
       );
-      inJoint.x -= part.offset[0];
-      inJoint.y -= part.offset[1];
-      inJoint.z -= part.offset[2];
 
-      const half = [part.size[0] / 2, part.size[1] / 2, part.size[2] / 2];
-      // Distance to the box surface, clamped per axis.
-      const dx = Math.max(Math.abs(inJoint.x) - half[0]!, 0);
-      const dy = Math.max(Math.abs(inJoint.y) - half[1]!, 0);
-      const dz = Math.max(Math.abs(inJoint.z) - half[2]!, 0);
+      // Distance to the box surface, clamped per axis. The box sits at its
+      // offset within the joint frame, so compare against that rather than
+      // moving the point — the point is what gets kept.
+      const dx = Math.max(Math.abs(inJoint.x - part.offset[0]) - part.size[0] / 2, 0);
+      const dy = Math.max(Math.abs(inJoint.y - part.offset[1]) - part.size[1] / 2, 0);
+      const dz = Math.max(Math.abs(inJoint.z - part.offset[2]) - part.size[2] / 2, 0);
       const distance = Math.hypot(dx, dy, dz);
 
       if (distance < bestDistance) {
         bestDistance = distance;
         bestPart = p;
-        outInPart.copy(inJoint);
+        outPoint.copy(inJoint);
       }
     }
 
     // Well clear of every part — a miss, or a hit on something else entirely.
     if (bestPart < 0 || bestDistance > 0.5) return -1;
-    return bestPart;
+
+    const joint = this.parts[bestPart]!.joint;
+    // A direction, so only the rotation applies — transformDirection uses the
+    // upper 3x3, which is what the joint matrices carry.
+    outNormal
+      .copy(worldNormal)
+      .transformDirection(SCRATCH_M.copy(worldMatrix).invert())
+      .transformDirection(SCRATCH_M2.copy(this.jointMatrices[joint]!).invert())
+      .normalize();
+    return joint;
   }
 
   private buildGeometry(): BufferGeometry {
@@ -297,7 +195,6 @@ export class VoxelRig {
     const vertexCount = partCount * 24;
     const positions = new Float32Array(vertexCount * 3);
     const normals = new Float32Array(vertexCount * 3);
-    const uvs = new Float32Array(vertexCount * 2);
     const colors = new Float32Array(vertexCount * 3);
     const jointIndices = new Float32Array(vertexCount);
     const indices = new Uint16Array(partCount * 36);
@@ -318,7 +215,6 @@ export class VoxelRig {
         const { axis, sign } = FACE_AXES[f]!;
         const uAxis = axis === 0 ? 2 : 0;
         const vAxis = axis === 1 ? 2 : 1;
-        const rect = faceUvRect(p, f);
         const base = v;
 
         for (let corner = 0; corner < 4; corner++) {
@@ -335,9 +231,6 @@ export class VoxelRig {
           positions[v * 3 + 2] = pos[2]! + oz;
 
           normals[v * 3 + axis] = sign;
-
-          uvs[v * 2] = rect.u0 + ((su + 1) / 2) * (rect.u1 - rect.u0);
-          uvs[v * 2 + 1] = rect.v0 + ((sv + 1) / 2) * (rect.v1 - rect.v0);
 
           colors[v * 3] = r;
           colors[v * 3 + 1] = g;
@@ -369,7 +262,8 @@ export class VoxelRig {
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new BufferAttribute(normals, 3));
-    geometry.setAttribute('uv', new BufferAttribute(uvs, 2));
+    // No uv attribute: nothing samples a texture by surface UV any more. Paint
+    // is placed in the joint frame, from `position`, by the rig shader.
     geometry.setAttribute('color', new BufferAttribute(colors, 3));
     geometry.setAttribute('aJoint', new BufferAttribute(jointIndices, 1));
     geometry.setIndex(new BufferAttribute(indices, 1));
@@ -387,7 +281,5 @@ export class VoxelRig {
 
 const SCRATCH_V = new Vector3();
 const SCRATCH_V2 = new Vector3();
-/** Kept apart from the two above, which resolvePart uses while filling it. */
-const SCRATCH_IN_PART = new Vector3();
 const SCRATCH_M = new Matrix4();
 const SCRATCH_M2 = new Matrix4();

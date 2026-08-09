@@ -64,12 +64,18 @@ const rig = await page.evaluate(() => {
     verts: g.getAttribute('position').count,
     tris: g.getIndex().count / 3,
     hasJoint: Boolean(g.getAttribute('aJoint')),
+    // Part colours ride on the geometry; the material draws with vertexColors.
+    hasColor: Boolean(g.getAttribute('color')),
+    // Deliberately absent. Paint is placed in the joint's frame from `position`,
+    // so nothing samples a texture by surface UV and the attribute would be
+    // dead weight — see CharacterPaint.
     hasUv: Boolean(g.getAttribute('uv')),
     joints: c.rig.jointMatrices.length,
   };
 });
 check('rig geometry is one skinned mesh',
-      rig.hasJoint && rig.hasUv && rig.joints === 8 && rig.verts === rig.tris * 2,
+      rig.hasJoint && rig.hasColor && !rig.hasUv && rig.joints === 8
+        && rig.verts === rig.tris * 2,
       `${rig.verts} verts, ${rig.tris} tris, ${rig.joints} joints`);
 
 // --- Outline integrity -----------------------------------------------------
@@ -223,6 +229,37 @@ const playerTaken = (await stats()).find((c) => c.id === 'player').taken;
 check('the player character can be painted', playerPaintAfter > playerPaintBefore,
       `${playerPaintBefore} -> ${playerPaintAfter} splats`);
 check('being hit increments the player counter', playerTaken > 0, `taken ${playerTaken}`);
+
+// --- The splat list is bounded ---------------------------------------------
+// Paint used to accumulate into a render target and so had no ceiling. It is a
+// fixed-size uniform buffer now, and the fragment loop trusts the published
+// count — so overrunning it has to evict the oldest, not grow or wrap.
+const cap = await page.evaluate(() => {
+  const { game, state, characters } = window.__paintball;
+  const character = characters.playerCharacter;
+  const Vec = state.position.constructor;
+  const max = character.paint.max;
+  character.paint.clear();
+
+  let peak = 0;
+  for (let i = 0; i < max + 8; i++) {
+    // Each hit needs the grace window cleared or it is silently swallowed.
+    character.tickGameplay(5);
+    const p = state.position;
+    game.events.emit('hit:character', {
+      targetId: 'player',
+      shooterId: 'dummy-a',
+      color: 0x00d4e8,
+      point: new Vec(p.x, p.y + 1.1, p.z - 0.2),
+      normal: new Vec(0, 0, -1),
+      impactSpeed: 34,
+    });
+    peak = Math.max(peak, character.paint.splatCount);
+  }
+  return { max, peak, final: character.paint.splatCount };
+});
+check('the splat list is bounded', cap.peak === cap.max && cap.final === cap.max,
+      `${cap.max + 8} hits -> ${cap.final} splats, cap ${cap.max}`);
 
 // --- Animation responds to state -------------------------------------------
 // Must go through real input: PlayerController rewrites state.crouching from
