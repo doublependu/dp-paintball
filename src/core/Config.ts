@@ -86,28 +86,34 @@ export const ballistics = {
   fireInterval: 0.14,
   /** Pool size; shots beyond this recycle the oldest. */
   maxActive: 256,
+
+  // Trajectory prediction, driving the scene crosshair. These live here rather
+  // than with the crosshair because they describe the flight model, not the
+  // mark drawn at the end of it: `predict()` is a ballistics concern that the
+  // crosshair merely happens to be the only caller of.
+  /** Seconds of flight to trace before giving up. Beyond this you are lobbing. */
+  predictMaxFlight: 1.2,
+  /**
+   * Fixed steps resolved per collision ray. The path is always integrated at
+   * FIXED_DT; this only coarsens *collision*, trading a couple of cm of chord
+   * sag for half the ray casts.
+   */
+  predictChordSteps: 2,
 } as const;
 
 /**
- * The aiming reticles.
+ * The scene crosshair — the half of the aiming pair drawn in the world.
  *
- * There are two, and the gap between them is the point. The fixed one at screen
- * centre is where you are pointing and the direction the ball leaves the
- * muzzle; the world one is where that ball actually ends up once gravity and
- * drag have had their say — 0.46 m lower at 8 m, 1.73 m at 15 m. Showing both
- * teaches the arc, where compensating the shot would hide it, and the lazy
- * readable arc is the thing this game is built around.
+ * The aiming pair is two crosshairs. The *viewport* crosshair is a DOM element
+ * at screen centre (`.hud__viewport-crosshair`): where you are pointing, and
+ * the direction the ball leaves the muzzle. The *scene* crosshair is this one,
+ * drawn on the surface the ball will actually reach — 0.46 m lower at 8 m,
+ * 1.73 m at 15 m. The gap between them is the arc, and showing it is the point:
+ * compensating the shot would hide the arc, and the lazy readable arc is the
+ * thing this game is built around.
  */
-export const reticle = {
-  /** Seconds of flight to trace before giving up. Beyond this you are lobbing. */
-  maxFlightTime: 1.2,
-  /**
-   * Fixed steps resolved per collision ray. The path is always integrated at
-   * FIXED_DT; this only coarsens *collision*, trading a few cm of chord sag for
-   * a third of the ray casts.
-   */
-  chordSteps: 2,
-  /** Marker lift off the struck surface, against z-fighting. */
+export const sceneCrosshair = {
+  /** Ring lift off the struck surface, against z-fighting. */
   surfaceOffset: 0.03,
   /**
    * Ring size, as an angle rather than a world radius, so it holds a roughly
@@ -121,22 +127,22 @@ export const reticle = {
    */
   ringAngularSize: 0.026,
   /**
-   * Angular size of the camera-facing centre dot.
+   * Angular size of the camera-facing dot.
    *
-   * The flat ring alone is not enough. This camera sits 1.5 m up, so ground at
+   * The ring alone is not enough. This camera sits 1.5 m up, so ground at
    * ordinary fighting range is seen at five degrees or less — a ring lying on
    * it compresses to a couple of pixels of height and disappears. The dot
    * always faces the viewer, so there is something readable at every angle,
-   * while the ring keeps the marker feeling planted on the surface.
+   * while the ring keeps the mark feeling planted on the surface.
    */
   dotAngularSize: 0.013,
-  /** Ring damping toward each freshly solved point. */
+  /** Damping toward each freshly solved point. */
   lambda: 26,
-  /** Spacing between trajectory dots, in fixed steps. */
+  /** Spacing between arc droplets, in fixed steps. */
   arcStride: 2,
-  /** Dot radius in metres. */
+  /** Arc droplet radius in metres. */
   arcDotRadius: 0.05,
-  /** Cap on drawn dots; the trace is longer than it is useful to draw. */
+  /** Cap on drawn droplets; the trace is longer than it is useful to draw. */
   arcMaxDots: 40,
   /** The near end of the arc is behind the character — skip it. */
   arcSkipSteps: 4,

@@ -1,18 +1,18 @@
 /**
- * Headless reticle tests.
+ * Headless tests for the aiming pair.
  *
  * The one that matters is the round trip: predict where a shot will land, fire
  * that exact shot, and check the ball arrives where the prediction said. That
  * is a direct test that `BallisticsSystem.predict()` and the live integrator
  * have not drifted apart — the failure this whole feature depends on not
- * happening, since a reticle running on its own copy of the physics would drift
- * silently and start lying about where you are aiming.
+ * happening, since a scene crosshair running on its own copy of the physics
+ * would drift silently and start lying about where you are aiming.
  *
  * It needs no test hooks: `shot:fired` already carries the real origin and
  * direction, spread included, so the prediction is made from the shot that was
  * actually fired rather than an idealised one.
  *
- * Usage: node tools/reticle-test.mjs [url]
+ * Usage: node tools/crosshair-test.mjs [url]
  */
 import { chromium } from 'playwright-core';
 import { existsSync } from 'node:fs';
@@ -57,7 +57,7 @@ async function waitSim(seconds) {
 // FIFO pairing would silently mismatch a close shot against a distant one.
 await page.evaluate(() => {
   const { game, ballistics, state } = window.__paintball;
-  window.__reticle = { armed: false, pending: null, pairs: [],
+  window.__pairing = { armed: false, pending: null, pairs: [],
                        out: ballistics.newPrediction() };
 
   // `armed` narrows capture to exactly one shot per iteration. Holding the
@@ -65,12 +65,12 @@ await page.evaluate(() => {
   // the browser, so a burst can be two shots, and pairing the first
   // prediction with the second shot's impact would look like drift.
   game.events.on('shot:fired', ({ shooterId, origin, direction }) => {
-    if (shooterId !== 'player' || !window.__reticle.armed) return;
-    window.__reticle.armed = false;
-    const out = window.__reticle.out;
+    if (shooterId !== 'player' || !window.__pairing.armed) return;
+    window.__pairing.armed = false;
+    const out = window.__pairing.out;
     const ok = ballistics.predict(
       game.physics, origin, direction, out, state.collider ?? undefined);
-    window.__reticle.pending = ok
+    window.__pairing.pending = ok
       ? { x: out.point.x, y: out.point.y, z: out.point.z,
           flightTime: out.flightTime, distance: out.distance,
           characterId: out.characterId, points: out.pointCount }
@@ -80,10 +80,10 @@ await page.evaluate(() => {
   // Bots fire constantly, and their impacts raise the same events. Without the
   // shooter filter every bot splat downrange pairs with our pending prediction.
   const record = (shooterId, point) => {
-    const p = window.__reticle.pending;
+    const p = window.__pairing.pending;
     if (!p || shooterId !== 'player') return;
-    window.__reticle.pending = null;
-    window.__reticle.pairs.push({
+    window.__pairing.pending = null;
+    window.__pairing.pairs.push({
       predicted: p,
       actual: { x: point.x, y: point.y, z: point.z },
       error: Math.hypot(point.x - p.x, point.y - p.y, point.z - p.z),
@@ -109,16 +109,16 @@ for (let i = 0; i < PITCHES.length; i++) {
     state.yaw = (i / 8) * Math.PI * 2;
   }, { pitch: PITCHES[i], i });
   await waitSim(0.35);
-  await page.evaluate(() => { window.__reticle.armed = true; });
+  await page.evaluate(() => { window.__pairing.armed = true; });
   await page.mouse.down();
   await waitSim(0.1);
   await page.mouse.up();
   // Long enough for the longest lob in the set to land.
   await waitSim(2.2);
-  await page.evaluate(() => { window.__reticle.armed = false; });
+  await page.evaluate(() => { window.__pairing.armed = false; });
 }
 
-const pairs = await page.evaluate(() => window.__reticle.pairs);
+const pairs = await page.evaluate(() => window.__pairing.pairs);
 const errors = pairs.map((p) => p.error).sort((a, b) => a - b);
 const worst = errors[errors.length - 1] ?? Infinity;
 const median = errors[Math.floor(errors.length / 2)] ?? Infinity;
@@ -172,11 +172,11 @@ check('the traced path drops like the real flight model',
       `drop 8m ${arc.d8?.toFixed(2)}m (want 0.46), 15m ${arc.d15?.toFixed(2)}m (want 1.73)`);
 check('a horizontal shot only ever falls', arc.monotonic);
 
-// --- The two reticles disagree, and by more with range ----------------------
-// This is the entire feature: the fixed crosshair sits at screen centre, and
-// the world marker has to sit *below* it by the drop. If these ever coincide,
-// something has started compensating the shot and the world marker is
-// redundant.
+// --- The pair disagrees, and by more with range -----------------------------
+// This is the entire feature: the viewport crosshair sits at screen centre, and
+// the scene crosshair has to sit *below* it by the drop. If these ever
+// coincide, something has started compensating the shot and the scene
+// crosshair is redundant.
 // Driven through the live camera, because the claim is about what the player
 // sees, not about the numbers. The camera has to be given a settled pose first
 // — reading it straight after a teleport measures the previous frame's view.
@@ -207,22 +207,22 @@ const separation = await page.evaluate(() => {
   // Screen centre is exactly where the launch direction points, because the
   // shot is fired from the camera along its own forward axis.
   const centre = toScreen(origin.clone().addScaledVector(dir, out.distance));
-  const marker = toScreen(out.point);
+  const scenePoint = toScreen(out.point);
   return { range: +out.distance.toFixed(1),
-           centreY: +centre.y.toFixed(0), markerY: +marker.y.toFixed(0),
-           gapPx: +(marker.y - centre.y).toFixed(0),
+           viewportY: +centre.y.toFixed(0), sceneY: +scenePoint.y.toFixed(0),
+           gapPx: +(scenePoint.y - centre.y).toFixed(0),
            height: window.innerHeight };
 });
 
-console.log(`\n  at ${separation?.range}m the marker sits ${separation?.gapPx}px ` +
-            `below screen centre\n`);
-check('the world marker sits below the fixed crosshair',
+console.log(`\n  at ${separation?.range}m the scene crosshair sits ` +
+            `${separation?.gapPx}px below the viewport crosshair\n`);
+check('the scene crosshair sits below the viewport crosshair',
       separation !== null && separation.gapPx > 10,
       separation ? `${separation.gapPx}px at ${separation.range}m` : 'no impact predicted');
 
 // --- A shot lined up on a person is reported as such ------------------------
-// Drives the ring's white "you are on target" state, and proves the collider
-// lookup survives the switch from swept-sphere to ray.
+// Drives the scene crosshair's white "you are on target" state, and proves the
+// collider lookup survives the switch from swept-sphere to ray.
 const onTarget = await page.evaluate(() => {
   const { ballistics, game, characters, state } = window.__paintball;
   const V = state.position.constructor;

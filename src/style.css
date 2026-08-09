@@ -77,16 +77,16 @@ body {
 }
 
 /*
- * The fixed half of the aiming pair: where you are pointing, and the direction
- * the ball leaves the muzzle. Where it *lands* is the ring drawn in the world,
- * which sits lower because paint arcs.
+ * The viewport crosshair: half of the aiming pair. Where you are pointing, and
+ * the direction the ball leaves the muzzle. Where it *lands* is the scene
+ * crosshair drawn in the world, which sits lower because paint arcs.
  *
  * Deliberately the quieter of the two — a small hollow dot rather than the
- * previous heavier ring. The world marker is the one you aim with; this one is
- * the reference the arc falls away from, and two rings of equal weight fought
- * each other for attention.
+ * heavier ring this used to be. The scene crosshair is the one you aim with;
+ * this one is the reference the arc falls away from, and two rings of equal
+ * weight fought each other for attention.
  */
-.hud__crosshair {
+.hud__viewport-crosshair {
   position: absolute;
   left: 50%;
   top: 50%;

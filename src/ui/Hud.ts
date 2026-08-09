@@ -34,7 +34,7 @@ export class Hud {
     this.root.className = 'hud';
 
     this.root.innerHTML = `
-      <div class="hud__crosshair" aria-hidden="true"></div>
+      <div class="hud__viewport-crosshair" aria-hidden="true"></div>
       <div class="hud__counters">
         <div class="hud__counter hud__counter--given">
           <span class="hud__value" data-given>0</span>

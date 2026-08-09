@@ -64,12 +64,13 @@ check('audio unlocks on the click that grants pointer lock',
 const present = await page.evaluate(() => ({
   hud: Boolean(document.querySelector('.hud')),
   splash: Boolean(document.querySelector('.splash-overlay')),
-  crosshair: Boolean(document.querySelector('.hud__crosshair')),
+  crosshair: Boolean(document.querySelector('.hud__viewport-crosshair')),
   // The HUD must never swallow clicks, or pointer lock breaks.
   hudEvents: getComputedStyle(document.querySelector('.hud')).pointerEvents,
   splashEvents: getComputedStyle(document.querySelector('.splash-overlay')).pointerEvents,
 }));
-check('HUD and splash layers exist', present.hud && present.splash && present.crosshair);
+check('HUD, splash and the viewport crosshair exist',
+      present.hud && present.splash && present.crosshair);
 check('overlays do not intercept pointer events',
       present.hudEvents === 'none' && present.splashEvents === 'none',
       `hud=${present.hudEvents} splash=${present.splashEvents}`);

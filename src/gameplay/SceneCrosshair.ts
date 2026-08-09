@@ -11,7 +11,7 @@ import {
   SphereGeometry,
   Vector3,
 } from 'three';
-import { paintColors, reticle as config } from '../core/Config';
+import { paintColors, sceneCrosshair as config } from '../core/Config';
 import { damp } from '../core/MathUtils';
 import { NO_OUTLINE_LAYER } from '../render/NprPipeline';
 import type { GameContext, System } from '../core/System';
@@ -20,37 +20,43 @@ import { BallisticsSystem, type TrajectoryPrediction } from './Ballistics';
 import type { PlayerState } from './PlayerState';
 
 /**
- * The world-space half of the aiming pair.
+ * The scene crosshair: where the ball actually lands, drawn in the world.
  *
- * The fixed crosshair at screen centre says where you are pointing, which is
- * also the direction the ball leaves the muzzle. It cannot say where the ball
- * ends up, because the ball arcs: 0.46 m low at 8 m, 1.73 m at 15 m. This
- * system traces the real flight and marks the ground where it lands.
+ * Half of the aiming pair. The viewport crosshair at screen centre says where
+ * you are pointing, which is also the direction the ball leaves the muzzle. It
+ * cannot say where the ball ends up, because the ball arcs: 0.46 m low at 8 m,
+ * 1.73 m at 15 m. This system traces the real flight and marks the surface it
+ * reaches.
  *
  * The deliberate choice is to show the arc rather than cancel it. Compensating
- * the shot would make the fixed crosshair truthful and hide the trajectory
+ * the shot would make the viewport crosshair truthful and hide the trajectory
  * entirely — but the lazy readable arc is the thing this game is built around,
  * and a player who can see it can learn to lead with it. So the shot is left
  * exactly as it was and the truth is drawn into the world instead.
  *
- * The dotted arc between the two is the same traced path, sampled. It costs
- * nothing extra to draw — the points are already computed to find the impact —
- * and it turns "your shot went somewhere below the crosshair" into a shape you
- * can actually read while you fire.
+ * Three parts:
+ *   ring   lies on the struck surface, so the mark feels planted on it
+ *   dot    faces the camera, so something stays legible at any viewing angle
+ *   arc    droplets along the traced path, joining the pair together
+ *
+ * The arc costs nothing extra — those points are already computed to find the
+ * impact — and it turns "the shot went somewhere below the crosshair" into a
+ * shape you can read while you fire.
  */
-export class AimReticleSystem implements System {
-  readonly name = 'aim-reticle';
+export class SceneCrosshairSystem implements System {
+  readonly name = 'scene-crosshair';
 
   private ring?: Mesh;
   private ringMaterial?: MeshBasicMaterial;
-  /** The player's own paint colour — what is about to land on that spot. */
-  private readonly color: number;
   private dot?: Mesh;
   private dotMaterial?: MeshBasicMaterial;
   private arc?: InstancedMesh;
   private prediction!: TrajectoryPrediction;
 
-  /** Damped ring position, so a trace that steps off a ledge does not snap. */
+  /** The player's own paint colour — what is about to land on that spot. */
+  private readonly color: number;
+
+  /** Damped position, so a trace that steps off a ledge does not snap. */
   private readonly smoothed = new Vector3();
   private smoothedValid = false;
   private ringRadius = 0;
@@ -73,14 +79,14 @@ export class AimReticleSystem implements System {
   init(ctx: GameContext): void {
     this.prediction = this.ballistics.newPrediction();
 
-    // A ring, matching the fixed crosshair's language — paint arcs, so a
+    // A ring, matching the viewport crosshair's language — paint arcs, so a
     // precise cross would be a lie in either place.
     //
     // In the player's own paint colour rather than ink. Ink is the right
-    // vocabulary for outlines but the wrong one for a marker: it is nearly
-    // black, so on shadowed stone or under the arcade it disappeared entirely.
-    // A saturated paint colour reads against every surface in a deliberately
-    // muted park, and it says whose paint is about to land there.
+    // vocabulary for outlines but the wrong one here: it is nearly black, so on
+    // shadowed stone or under the arcade it disappeared entirely. A saturated
+    // paint colour reads against every surface in a deliberately muted park,
+    // and it says whose paint is about to land there.
     this.ringMaterial = new MeshBasicMaterial({
       color: new Color(this.color),
       transparent: true,
@@ -93,20 +99,20 @@ export class AimReticleSystem implements System {
     });
 
     // A wide band, not a hairline. At 0.82 the annulus was 7cm across on a 40cm
-    // ring and vanished to two pixels by 25m; the marker has to survive being
-    // small far more than it has to look delicate up close.
+    // ring and vanished to two pixels by 25m; this has to survive being small
+    // far more than it has to look delicate up close.
     this.ring = new Mesh(new RingGeometry(0.62, 1, 32), this.ringMaterial);
     this.ring.castShadow = false;
     this.ring.receiveShadow = false;
     this.ring.visible = false;
     this.ring.renderOrder = 2;
-    // Off the outline prepass: a marker is not scenery, and an ink line around
-    // it would fight the ink line it is drawn with.
+    // Off the outline prepass: this is not scenery, and an ink line around it
+    // would fight the ink line it is drawn with.
     this.ring.layers.set(NO_OUTLINE_LAYER);
     ctx.scene.add(this.ring);
 
-    // The always-legible half of the marker: a small disc turned to face the
-    // camera, so it holds its shape however grazing the view of the surface is.
+    // The always-legible part: a small disc turned to face the camera, so it
+    // holds its shape however grazing the view of the surface is.
     this.dotMaterial = new MeshBasicMaterial({
       color: new Color(this.color),
       transparent: true,
@@ -127,7 +133,7 @@ export class AimReticleSystem implements System {
     // on every platform that matters, which reads as a technical overlay. A
     // dotted trail of paint is both legible at any resolution and the right
     // material for a game about flinging paint.
-    const dotMaterial = new MeshBasicMaterial({
+    const arcMaterial = new MeshBasicMaterial({
       color: new Color(this.color),
       transparent: true,
       opacity: 0.7,
@@ -136,7 +142,7 @@ export class AimReticleSystem implements System {
     });
     this.arc = new InstancedMesh(
       new SphereGeometry(config.arcDotRadius, 6, 4),
-      dotMaterial,
+      arcMaterial,
       config.arcMaxDots,
     );
     this.arc.count = 0;
@@ -180,8 +186,8 @@ export class AimReticleSystem implements System {
       return;
     }
 
-    // Snap on the first solve, damp after: a fresh marker should appear where
-    // it belongs rather than fly in from wherever the last one died.
+    // Snap on the first solve, damp after: it should appear where it belongs
+    // rather than fly in from wherever the last one died.
     if (!this.smoothedValid) {
       this.smoothed.copy(prediction.point);
       this.smoothedValid = true;
@@ -192,8 +198,8 @@ export class AimReticleSystem implements System {
     }
 
     // Scaling the radius with range holds the ring at a roughly constant size
-    // on screen, and folding spread in on top keeps the reticle honest about
-    // accuracy — it opens at a sprint and tightens the moment you aim.
+    // on screen, and folding spread in on top keeps it honest about accuracy —
+    // it opens at a sprint and tightens the moment you aim.
     this.ringRadius =
       (config.ringAngularSize + spreadConeRadius(this.state)) * prediction.distance;
 
@@ -215,9 +221,9 @@ export class AimReticleSystem implements System {
     dot.scale.setScalar(config.dotAngularSize * prediction.distance);
     dot.visible = true;
 
-    // Lined up on a person is the outcome worth calling out, so the marker
-    // goes white — the one value that separates cleanly from every paint colour
-    // in the roster as well as from the park.
+    // Lined up on a person is the outcome worth calling out, so both parts go
+    // white — the one value that separates cleanly from every paint colour in
+    // the roster as well as from the park.
     const target = prediction.characterId;
     const hex = target !== undefined && target !== 'player' ? 0xffffff : this.color;
     this.ringMaterial?.color.setHex(hex);
@@ -231,8 +237,8 @@ export class AimReticleSystem implements System {
    *
    * The near end is skipped: the first few steps are inside and behind the
    * character's own body from a third-person camera, and dots there just
-   * clutter the shoulder. Dots fade and shrink toward the muzzle so the eye is
-   * led along the arc toward the impact rather than away from it.
+   * clutter the shoulder. Droplets grow toward the impact so the eye is led
+   * along the arc toward it rather than away from it.
    */
   private drawArc(): void {
     const arc = this.arc;
@@ -247,8 +253,8 @@ export class AimReticleSystem implements System {
       i += stride
     ) {
       const point = prediction.points[i]!;
-      // Grow toward the impact end, which also hides the fact that the last
-      // dot may not land exactly on the surface.
+      // Growing toward the impact end also hides the fact that the last droplet
+      // may not land exactly on the surface.
       const t = i / Math.max(1, prediction.pointCount - 1);
       this.scale.setScalar(0.45 + 0.55 * t);
       this.matrix.compose(point, FLAT, this.scale);

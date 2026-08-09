@@ -14,9 +14,8 @@ const UP = new Vector3(0, 1, 0);
  *
  * Tightens when aiming or crouched, opens up when sprinting or airborne — so
  * standing still and aiming is rewarded without ever making the gun feel
- * unreliable. Shared with the reticle, which draws its ring at exactly this
- * radius: the ring is then literally the shot's uncertainty at that range
- * rather than a decorative circle, and it visibly tightens as you settle.
+ * unreliable. Shared with the scene crosshair, which folds it into its ring
+ * radius, so the ring visibly tightens as you settle and opens at a sprint.
  */
 export function spreadConeRadius(state: PlayerState): number {
   let multiplier = 1;
@@ -30,12 +29,12 @@ export function spreadConeRadius(state: PlayerState): number {
 /**
  * Where a shot starts and which way it points.
  *
- * Split out of the weapon because the reticle has to answer the same question
- * every frame that the gun answers on every trigger pull, and they have to
- * answer it identically. A reticle solving its own muzzle offset would sit a
- * few centimetres off the real one and drift further with every tweak — the
- * same duplication that already put the player's aim and the bots' aim on
- * different physics.
+ * Split out of the weapon because the scene crosshair has to answer the same
+ * question every frame that the gun answers on every trigger pull, and they
+ * have to answer it identically. A crosshair solving its own muzzle offset
+ * would sit a few centimetres off the real one and drift further with every
+ * tweak — the same duplication that already put the player's aim and the bots'
+ * aim on different physics.
  *
  * The subtlety it encapsulates is convergent aiming. The muzzle sits at the
  * character's shoulder, but the player aims with a camera offset behind and to
@@ -45,7 +44,7 @@ export function spreadConeRadius(state: PlayerState): number {
  * muzzle at *that point*.
  *
  * A useful consequence: the launch direction always passes through the point
- * under the centre of the screen, so the fixed crosshair is honest about the
+ * under the centre of the screen, so the viewport crosshair is honest about the
  * direction of initial velocity without any correction of its own.
  */
 export class AimSolver {

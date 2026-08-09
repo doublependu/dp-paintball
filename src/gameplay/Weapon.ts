@@ -13,8 +13,8 @@ const RECOIL = 0.0045;
  * Turns fire input into paintballs.
  *
  * Where a shot starts and which way it points is `AimSolver`'s job, shared with
- * the reticle so the marker on the ground is solved from the same muzzle the
- * ball actually leaves.
+ * the scene crosshair so the mark on the ground is solved from the same muzzle
+ * the ball actually leaves.
  */
 export class WeaponSystem implements System {
   readonly name = 'weapon';
@@ -49,9 +49,9 @@ export class WeaponSystem implements System {
     const { events, rng } = ctx;
     const { state } = this;
 
-    // The reticle has already solved this step; solving again is a handful of
-    // vector ops and one raycast, and it keeps the gun correct whatever order
-    // the systems end up registered in.
+    // The scene crosshair has already solved this step; solving again is a
+    // handful of vector ops and one raycast, and it keeps the gun correct
+    // whatever order the systems end up registered in.
     this.aim.solve(state, ctx);
     this.muzzle.copy(this.aim.muzzle);
     this.shotDirection.copy(this.aim.direction);
@@ -77,7 +77,7 @@ export class WeaponSystem implements System {
     state.pitch = clamp(state.pitch + RECOIL, -Math.PI / 2, Math.PI / 2);
   }
 
-  /** Scatters the shot within the cone the reticle is drawing. */
+  /** Scatters the shot within the cone the scene crosshair is drawing. */
   private applySpread(rng: GameContext['rng']): void {
     const coneRadius = spreadConeRadius(this.state);
     if (coneRadius <= 0) return;

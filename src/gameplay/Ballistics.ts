@@ -8,12 +8,7 @@ import {
   SphereGeometry,
   Vector3,
 } from 'three';
-import {
-  FIXED_DT,
-  ballistics as config,
-  physics as physicsConfig,
-  reticle as reticleConfig,
-} from '../core/Config';
+import { FIXED_DT, ballistics as config, physics as physicsConfig } from '../core/Config';
 import type { CharacterRegistry } from '../character/CharacterRegistry';
 import { createCelMaterial } from '../render/CelMaterial';
 import type { GameContext, System } from '../core/System';
@@ -93,8 +88,8 @@ export class BallisticsSystem implements System {
   private readonly hitPoint = new Vector3();
   private readonly hitNormal = new Vector3();
   private readonly renderPosition = new Vector3();
-  // Prediction scratch. Kept apart from the live-step scratch above: the
-  // reticle predicts from its own fixedUpdate, and sharing would let one
+  // Prediction scratch. Kept apart from the live-step scratch above: the scene
+  // crosshair predicts from its own fixedUpdate, and sharing would let one
   // overwrite the other mid-trace.
   private readonly predictPosition = new Vector3();
   private readonly predictVelocity = new Vector3();
@@ -228,11 +223,11 @@ export class BallisticsSystem implements System {
    * Gravity, then linear drag — cheaper than quadratic, unconditionally stable
    * at this timestep, and indistinguishable over a paintball's short flight.
    *
-   * This is deliberately the *only* copy of the flight maths. The aiming
-   * reticle has to trace exactly the path a real ball will take, and the moment
-   * that integration exists twice the two drift apart and the reticle starts
-   * lying — which is the same failure that already put the player's aim and the
-   * bots' aim on different physics.
+   * This is deliberately the *only* copy of the flight maths. The scene
+   * crosshair has to trace exactly the path a real ball will take, and the
+   * moment that integration exists twice the two drift apart and the crosshair
+   * starts lying — which is the same failure that already put the player's aim
+   * and the bots' aim on different physics.
    */
   static advance(velocity: Vector3, dt: number): void {
     velocity.y += physicsConfig.gravity * config.gravityScale * dt;
@@ -248,7 +243,7 @@ export class BallisticsSystem implements System {
    * is 74 steps, `sweep()` allocates a wasm-backed Ball per cast, and doing
    * that 74 times a frame is not affordable. Over a three-step chord the arc
    * sags under the chord by under 3 cm, and dropping the ball's 5.5 cm radius
-   * costs less accuracy than the reticle's own line width.
+   * costs less accuracy than the crosshair's own line width.
    *
    * Returns false — and leaves `out.hit` false — if nothing is struck inside
    * the time budget, which is the case when you aim at the sky.
@@ -276,8 +271,8 @@ export class BallisticsSystem implements System {
 
     out.pushPoint(origin.x, origin.y, origin.z);
 
-    const maxSteps = Math.ceil(reticleConfig.maxFlightTime / FIXED_DT);
-    const chordSteps = Math.max(1, reticleConfig.chordSteps);
+    const maxSteps = Math.ceil(config.predictMaxFlight / FIXED_DT);
+    const chordSteps = Math.max(1, config.predictChordSteps);
     let sinceChord = 0;
     let elapsed = 0;
     // Where the open chord began, in both the path buffer and the clock, so a
