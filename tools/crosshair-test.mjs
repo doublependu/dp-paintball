@@ -79,18 +79,19 @@ await page.evaluate(() => {
 
   // Bots fire constantly, and their impacts raise the same events. Without the
   // shooter filter every bot splat downrange pairs with our pending prediction.
-  const record = (shooterId, point) => {
+  const record = (shooterId, point, onCharacter) => {
     const p = window.__pairing.pending;
     if (!p || shooterId !== 'player') return;
     window.__pairing.pending = null;
     window.__pairing.pairs.push({
       predicted: p,
+      onCharacter,
       actual: { x: point.x, y: point.y, z: point.z },
       error: Math.hypot(point.x - p.x, point.y - p.y, point.z - p.z),
     });
   };
-  game.events.on('hit:world', ({ shooterId, point }) => record(shooterId, point));
-  game.events.on('hit:character', ({ shooterId, point }) => record(shooterId, point));
+  game.events.on('hit:world', ({ shooterId, point }) => record(shooterId, point, false));
+  game.events.on('hit:character', ({ shooterId, point }) => record(shooterId, point, true));
 });
 
 // --- Round trip: predicted impact vs. real impact ---------------------------
@@ -126,7 +127,8 @@ const median = errors[Math.floor(errors.length / 2)] ?? Infinity;
 console.log(`\n  paired ${pairs.length} shots`);
 for (const p of pairs) {
   console.log(`    range ${p.predicted.distance.toFixed(1)}m  flight ` +
-              `${p.predicted.flightTime.toFixed(2)}s  error ${(p.error * 100).toFixed(1)}cm`);
+              `${p.predicted.flightTime.toFixed(2)}s  error ${(p.error * 100).toFixed(1)}cm` +
+              `${p.onCharacter ? '  [landed on a character]' : ''}`);
 }
 console.log('');
 

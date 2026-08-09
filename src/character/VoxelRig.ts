@@ -6,6 +6,7 @@ import {
   Object3D,
   Vector3,
 } from 'three';
+import { clamp } from '../core/MathUtils';
 
 /** Joint indices. Must match the uniform array size in the rig shader. */
 export const JOINT = {
@@ -179,7 +180,29 @@ export class VoxelRig {
     // Well clear of every part — a miss, or a hit on something else entirely.
     if (bestPart < 0 || bestDistance > 0.5) return -1;
 
-    const joint = this.parts[bestPart]!.joint;
+    const part = this.parts[bestPart]!;
+
+    // Snap onto the body's surface.
+    //
+    // The impact arrives on the physics capsule, which stands well proud of the
+    // figure inside it: the capsule is 0.35m in radius while the torso box is
+    // 0.13m half-deep, so a face-on chest hit lands 0.22m off the shirt. Left
+    // out there, the splat centre sits further from the surface than its own
+    // projection depth and the shader discards it — the hit scores and no paint
+    // appears. It shows up on the torso first because that is where the gap is
+    // widest; the head is 0.22m half-deep and mostly clears it.
+    //
+    // Clamping per axis gives the closest point on the box, which for a point
+    // outside it is exactly the surface point the ball would have struck.
+    for (let axis = 0; axis < 3; axis++) {
+      const half = part.size[axis]! / 2;
+      outPoint.setComponent(
+        axis,
+        clamp(outPoint.getComponent(axis), part.offset[axis]! - half, part.offset[axis]! + half),
+      );
+    }
+
+    const joint = part.joint;
     // A direction, so only the rotation applies — transformDirection uses the
     // upper 3x3, which is what the joint matrices carry.
     outNormal
