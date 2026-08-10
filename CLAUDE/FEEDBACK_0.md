@@ -17,12 +17,20 @@
 
 # Gameplay
 
- 1. There should be a limit on the number of paintballs available to each player. They can pick up new ones in game. 
- 2. There should be a paintball gun model so that each player and NPC is actually holding a paintball gun
- 3. The paintball gun should have a higher initial speed: right now, the game feels like players are throwing paints at each other. 
- 4. (done) There should be two cross hairs
-    - one is fixed to the view port, showing where the player is facing and the direction of the initial speed of the paint ball
-    - the other is rendered on the scene, showing where the paint ball is actually going to hit in the 3D scene. 
+ 1. There should be a limit on the number of initial paintballs available to each player. 
+   - try 100
+ 2. They can pick up new paint balls in game. 
+   - try one 20-ball loot, hidden in a different random place in each game. 
+ 3. There should be a paintball gun model so that each player is actually holding a paintball gun
+ 4. Paint balls should have a higher initial speed: right now, the game feels like players are throwing paints at each other. 
+   - try 1.5x
+ 5. let's make the game last for 5 min or when all players run out of paintballs including the loot
+ 6. When the game ends, a transparent screen should pop up and show all player characters in rotation with paints received. and scores, highlight the winners:
+   - least hit received
+   - most hit 
+ 7. (done) There should be two cross hairs
+   - one is fixed to the view port, showing where the player is facing and the direction of the initial speed of the paint ball
+   - the other is rendered on the scene, showing where the paint ball is actually going to hit in the 3D scene. 
 
 
 # Map
