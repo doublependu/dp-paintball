@@ -1,3 +1,5 @@
+import { match as matchConfig } from '../core/Config';
+
 export interface ScoreRow {
   id: string;
   label: string;
@@ -20,6 +22,7 @@ export interface ScoreRow {
  */
 export class Hud {
   private root: HTMLDivElement;
+  private ammoValue: HTMLSpanElement;
   private givenValue: HTMLSpanElement;
   private takenValue: HTMLSpanElement;
   private toast: HTMLDivElement;
@@ -36,6 +39,10 @@ export class Hud {
     this.root.innerHTML = `
       <div class="hud__viewport-crosshair" aria-hidden="true"></div>
       <div class="hud__counters">
+        <div class="hud__counter hud__counter--ammo">
+          <span class="hud__value" data-ammo>0</span>
+          <span class="hud__label">paint left</span>
+        </div>
         <div class="hud__counter hud__counter--given">
           <span class="hud__value" data-given>0</span>
           <span class="hud__label">tagged them</span>
@@ -58,12 +65,26 @@ export class Hud {
 
     container.append(this.root);
 
+    this.ammoValue = this.root.querySelector('[data-ammo]')!;
     this.givenValue = this.root.querySelector('[data-given]')!;
     this.takenValue = this.root.querySelector('[data-taken]')!;
     this.toast = this.root.querySelector('[data-toast]')!;
     this.scoreboard = this.root.querySelector('[data-scoreboard]')!;
     this.scoreboardBody = this.root.querySelector('[data-scoreboard-body]')!;
     this.hint = this.root.querySelector('[data-hint]')!;
+  }
+
+  /**
+   * Paint remaining. `Infinity` — sandbox mode — draws as an infinity sign
+   * rather than as a number, because "Infinity" in a HUD reads as a bug.
+   */
+  setAmmo(remaining: number): void {
+    const text = Number.isFinite(remaining) ? String(remaining) : '∞';
+    if (this.ammoValue.textContent === text) return;
+    this.ammoValue.textContent = text;
+    this.ammoValue.classList.toggle('is-low', remaining > 0 && remaining <= matchConfig.lowAmmo);
+    this.ammoValue.classList.toggle('is-empty', remaining <= 0);
+    this.pulse(this.ammoValue);
   }
 
   setCounters(given: number, taken: number): void {

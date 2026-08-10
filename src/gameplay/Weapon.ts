@@ -4,6 +4,7 @@ import { DEG2RAD, clamp, damp } from '../core/MathUtils';
 import type { GameContext, System } from '../core/System';
 import { AimSolver, spreadConeRadius } from './Aim';
 import type { BallisticsSystem } from './Ballistics';
+import { consume, type MatchState } from './MatchState';
 import type { PlayerState } from './PlayerState';
 
 /** Pitch kick per shot, in radians. Deliberately tiny — this is a calm game. */
@@ -27,6 +28,8 @@ export class WeaponSystem implements System {
   private cooldown = 0;
   /** Kick applied by past shots and not yet given back. See `recover()`. */
   private recoil = 0;
+  /** Latches the empty-marker click to one per trigger pull. */
+  private dryClicked = false;
   readonly color: number;
 
   private readonly muzzle = new Vector3();
@@ -38,6 +41,7 @@ export class WeaponSystem implements System {
     private readonly state: PlayerState,
     private readonly ballistics: BallisticsSystem,
     private readonly aim: AimSolver,
+    private readonly match: MatchState,
     private readonly shooterId = 'player',
     colorIndex = 0,
   ) {
@@ -47,7 +51,26 @@ export class WeaponSystem implements System {
   fixedUpdate(dt: number, ctx: GameContext): void {
     this.cooldown = Math.max(0, this.cooldown - dt);
     this.recover(dt);
-    if (!ctx.input.isDown('fire') || this.cooldown > 0) return;
+
+    if (!ctx.input.isDown('fire')) {
+      this.dryClicked = false;
+      return;
+    }
+    if (this.cooldown > 0) return;
+
+    // The only gate on shooting. Spending the round here rather than inside
+    // `shoot()` keeps the empty case from paying for an aim solve.
+    if (!consume(this.match, this.shooterId)) {
+      // One click per trigger pull, not one per fire interval: an empty marker
+      // should sound empty rather than like a slower marker. Tracked with a
+      // latch instead of `wasPressed`, because a single frame can run several
+      // fixed steps and every one of them would see the same press.
+      if (!this.dryClicked) {
+        this.dryClicked = true;
+        ctx.events.emit('weapon:dry', { shooterId: this.shooterId });
+      }
+      return;
+    }
 
     this.cooldown = config.fireInterval;
     this.shoot(ctx);

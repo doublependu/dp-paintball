@@ -2,6 +2,7 @@ import type * as RapierNS from '@dimforge/rapier3d';
 import { Vector3 } from 'three';
 import {
   ballistics as ballisticsConfig,
+  match as matchConfig,
   physics as physicsConfig,
   player as playerConfig,
 } from '../core/Config';
@@ -11,10 +12,12 @@ import type { GameContext } from '../core/System';
 import type { Character } from '../character/Character';
 import type { AnimationInput } from '../character/CharacterAnimator';
 import type { BallisticsSystem } from '../gameplay/Ballistics';
+import type { LootState } from '../gameplay/LootSystem';
+import { ammoOf, consume, type MatchState } from '../gameplay/MatchState';
 import type { NavGrid } from './NavGrid';
 import type { Personality } from './Personality';
 
-export type BotState = 'wander' | 'loiter' | 'engage' | 'reposition' | 'startled';
+export type BotState = 'wander' | 'loiter' | 'engage' | 'reposition' | 'startled' | 'restock';
 
 export interface BotTarget {
   id: string;
@@ -29,6 +32,10 @@ const ARRIVE_RADIUS = 1.1;
 const REPATH_INTERVAL = 0.9;
 /** Bots hold roughly this far apart. */
 const SEPARATION_RADIUS = 1.8;
+/** How long a bot will keep trying to reach a crate before giving up on it. */
+const RESTOCK_TIMEOUT = 14;
+/** And how long it then leaves the crate alone. */
+const RESTOCK_COOLDOWN = 10;
 
 /**
  * One NPC paintballer: navigation, a small behaviour state machine, and aim.
@@ -60,6 +67,8 @@ export class Bot {
   private fireCooldown = 0;
   private target: BotTarget | null = null;
   private lastSeenTargetAt = -Infinity;
+  /** Elapsed time before which this bot will not try for the crate again. */
+  private restockBlockedUntil = -Infinity;
 
   private readonly desired = new Vector3();
   private readonly eye = new Vector3();
@@ -88,6 +97,12 @@ export class Bot {
     character: Character,
     spawn: Vector3,
     ctx: GameContext,
+    /**
+     * Shared, lifetime-stable state, so these are constructor arguments rather
+     * than two more parameters on `fixedUpdate` — which already takes six.
+     */
+    private readonly match: MatchState,
+    private readonly loot: LootState,
   ) {
     this.id = id;
     this.personality = personality;
@@ -190,7 +205,27 @@ export class Bot {
       return;
     }
 
-    if (this.target) {
+    // Paint before fighting. Checked after `startled` — being shot at while
+    // fetching ammo should still make a bot scurry — and before targets,
+    // because a bot with nothing to shoot has no business in `engage`: it would
+    // stand there aiming and never fire, which reads as a stalled agent rather
+    // than an empty one.
+    if (this.state === 'restock' && this.stateTimer <= 0) {
+      // Been trying too long: the crate is behind something the navgrid cannot
+      // route around, or we are wedged. Give up for a while — without the
+      // cooldown, `wantsRestock` is still true next step and the bot goes
+      // straight back to failing at it.
+      this.restockBlockedUntil = ctx.elapsed + RESTOCK_COOLDOWN;
+      this.enterWander(nav, rng);
+    } else if (this.wantsRestock(ctx)) {
+      this.driveRestock(nav);
+      return;
+    } else if (this.state === 'restock') {
+      // Topped up, or somebody else got there first.
+      this.enterWander(nav, rng);
+    }
+
+    if (this.target && ammoOf(this.match, this.id) > 0) {
       this.reactionTimer = Math.max(0, this.reactionTimer - dt);
       if (this.state !== 'engage' && this.state !== 'reposition') {
         // Hesitate before committing, so bots don't snap onto targets.
@@ -233,6 +268,50 @@ export class Bot {
     }
   }
 
+  /**
+   * Whether there is a crate worth walking to.
+   *
+   * Gated on range as well as on ammo. Bots read the crate's position from the
+   * same shared state the pickup check uses, so without the range test all six
+   * would set off for it the instant it spawned and it would be gone before the
+   * player had looked around. `sightRange` is generous enough that a bot which
+   * has genuinely run dry will usually find one by wandering into range.
+   */
+  private wantsRestock(ctx: GameContext): boolean {
+    const position = this.loot.position;
+    if (!position) return false;
+    if (ctx.elapsed < this.restockBlockedUntil) return false;
+    if (ammoOf(this.match, this.id) >= matchConfig.botSeekAmmo) return false;
+    const notice = this.personality.sightRange * matchConfig.botLootSightScale;
+    return this.position.distanceTo(position) <= notice;
+  }
+
+  /**
+   * Heads for the crate, repathing on a timer.
+   *
+   * Deliberately *only* on the timer, unlike `repositionAround`. There, running
+   * out of path means the errand is finished and a new one is due; here the last
+   * couple of metres are walked by `approachLoot` rather than by path, so an
+   * exhausted path is the normal state on arrival. Repathing on it as well would
+   * mean a full A* every step for a bot standing next to the crate — and every
+   * step forever for one whose crate cannot be routed to at all, which is what
+   * `RESTOCK_TIMEOUT` now catches.
+   */
+  private driveRestock(nav: NavGrid): void {
+    const target = this.loot.position;
+    if (!target) return;
+
+    const fresh = this.state !== 'restock';
+    if (fresh) {
+      this.state = 'restock';
+      this.stateTimer = RESTOCK_TIMEOUT;
+    }
+    if (fresh || this.repathTimer <= 0) {
+      const walkable = nav.nearestWalkable(target.x, target.z);
+      this.setPath(walkable ? nav.findPath(this.position, walkable) : null);
+    }
+  }
+
   private enterWander(nav: NavGrid, rng: Rng): void {
     this.state = 'wander';
     this.stateTimer = 12;
@@ -265,6 +344,8 @@ export class Bot {
         .setY(0)
         .normalize()
         .multiplyScalar(speedLimit * 1.25);
+    } else if (this.state === 'restock') {
+      this.approachLoot(speedLimit);
     } else if (this.state === 'reposition' && this.target) {
       this.repositionAround(nav, ctx, speedLimit);
     } else if (this.state === 'engage' && this.target) {
@@ -299,6 +380,27 @@ export class Bot {
       return;
     }
     this.desired.copy(this.toTarget).normalize().multiplyScalar(speedLimit);
+  }
+
+  /**
+   * Walks the path to the crate, then closes the last stretch by hand.
+   *
+   * The path cannot finish the job on its own: its final waypoint is a navgrid
+   * cell centre, cells are 2m, and `followPath` considers a waypoint reached
+   * from `ARRIVE_RADIUS` away — so a bot can run out of path while still
+   * standing outside the 1.4m pickup radius, and stand there next to the paint
+   * it came for.
+   */
+  private approachLoot(speedLimit: number): void {
+    const target = this.loot.position;
+    if (!target) return;
+
+    this.toTarget.subVectors(target, this.position).setY(0);
+    if (this.toTarget.length() > 2.5) {
+      this.followPath(speedLimit);
+      return;
+    }
+    this.desired.copy(this.toTarget).normalize().multiplyScalar(speedLimit * 0.8);
   }
 
   /** Picks a fresh vantage point at a sensible range from the target. */
@@ -404,6 +506,10 @@ export class Bot {
     this.aimDirection.subVectors(this.target.position, this.muzzle);
     const range = this.aimDirection.length();
     if (range < 0.5) return;
+
+    // Spent last, once this is definitely a shot: an early return past this
+    // point would throw the round away without firing it.
+    if (!consume(this.match, this.id)) return;
 
     // Ballistic lift: the drop over the flight time, added to the aim point.
     const flightTime = range / ballisticsConfig.muzzleSpeed;

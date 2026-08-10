@@ -122,6 +122,43 @@ export const ballistics = {
 } as const;
 
 /**
+ * The round: what you carry, and where more of it comes from.
+ *
+ * Paint is finite now, which changes the game more than any single number here:
+ * an unlimited marker rewards holding the trigger, and a hundred rounds rewards
+ * picking a shot. Note how short the supply really is — at `fireInterval` 0.14,
+ * `startingAmmo` is fourteen seconds of held trigger, so the crate is not a
+ * bonus but the thing that keeps a round moving.
+ */
+export const match = {
+  /** Paintballs everyone starts with. */
+  startingAmmo: 100,
+  /** Paint in one crate. */
+  lootAmmo: 20,
+  /**
+   * Seconds before a taken crate reappears somewhere new. 0 is one crate per
+   * round and nothing more, which is the brief; try 45 if rounds run dry and
+   * turn into a walk in the park.
+   */
+  lootRespawnSeconds: 0,
+  /** How close you have to get to take a crate. */
+  lootPickupRadius: 1.4,
+  /** Below this, a bot would rather find paint than a fight. */
+  botSeekAmmo: 15,
+  /**
+   * How far a bot can notice a crate, scaling its own sight range.
+   *
+   * Range-gated deliberately. Bots know where the crate is the instant it
+   * spawns — they read the same shared state the pickup check does — so without
+   * a limit every one of them beelines for it at t=0 and the crate is gone
+   * before the player has finished looking around.
+   */
+  botLootSightScale: 1.5,
+  /** The HUD counter turns warm below this. */
+  lowAmmo: 20,
+} as const;
+
+/**
  * The scene crosshair — the half of the aiming pair drawn in the world.
  *
  * The aiming pair is two crosshairs. The *viewport* crosshair is a DOM element

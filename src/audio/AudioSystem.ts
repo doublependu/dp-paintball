@@ -59,6 +59,26 @@ export class AudioSystem implements System {
       if (targetId === 'player') this.synth?.tagged(1);
       else if (shooterId === 'player') this.synth?.scored(1);
     });
+
+    ctx.events.on('weapon:dry', ({ shooterId }) => {
+      // Only the player's. Bots never emit this — they stop shooting rather
+      // than pull an empty trigger — and an off-screen click would read as a
+      // shot the player then went looking for.
+      if (shooterId === 'player') this.synth?.dryFire(0.9, 0);
+    });
+
+    ctx.events.on('loot:taken', ({ characterId, position }) => {
+      if (characterId === 'player') {
+        // Two bells, a fifth apart: unmistakably a reward, and it needs no new
+        // sound in the set.
+        this.synth?.bell(784, 0.42, 0.8);
+        this.synth?.bell(1175, 0.3, 1.0);
+      } else {
+        // Somebody else got there — audible, and placed, so you know roughly
+        // where the paint you were looking for just went.
+        this.playAt(position, (g, p) => this.synth?.footstep(g * 1.4, p, 1.8));
+      }
+    });
   }
 
   private async start(ctx: GameContext): Promise<void> {

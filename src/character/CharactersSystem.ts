@@ -5,6 +5,8 @@ import { Bot, type BotTarget } from '../ai/Bot';
 import { NavGrid } from '../ai/NavGrid';
 import { PERSONALITIES } from '../ai/Personality';
 import type { BallisticsSystem } from '../gameplay/Ballistics';
+import type { LootState } from '../gameplay/LootSystem';
+import type { MatchState } from '../gameplay/MatchState';
 import type { PlayerState } from '../gameplay/PlayerState';
 import { SplatAtlas } from '../paint/SplatAtlas';
 import { Character } from './Character';
@@ -53,6 +55,8 @@ export class CharactersSystem implements System {
     private readonly characters: CharacterRegistry,
     private readonly ballistics: BallisticsSystem,
     private readonly sharedAtlas: SplatAtlas,
+    private readonly match: MatchState,
+    private readonly loot: LootState,
     private readonly botSpecs: BotSpec[] = [],
   ) {}
 
@@ -97,7 +101,7 @@ export class CharactersSystem implements System {
         new Vector3(spec.position.x, this.nav.groundAt(spec.position.x, spec.position.z), spec.position.z);
 
       const bot = new Bot(spec.id, PERSONALITIES[spec.personality % PERSONALITIES.length]!,
-                          character, grounded, ctx);
+                          character, grounded, ctx, this.match, this.loot);
       this.characters.register(bot.collider.handle, spec.id);
       this.bots.push(bot);
     }

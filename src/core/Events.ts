@@ -27,6 +27,12 @@ export interface GameEventMap {
   };
   /** A paintball was fired. */
   'shot:fired': { shooterId: string; color: number; origin: Vector3; direction: Vector3 };
+  /** The trigger was pulled with nothing left to fire. */
+  'weapon:dry': { shooterId: string };
+  /** A paint crate was placed in the world. */
+  'loot:spawned': { position: Vector3; rounds: number };
+  /** Somebody reached a crate first. */
+  'loot:taken': { characterId: string; rounds: number; position: Vector3 };
   /** Score counters changed for someone. */
   'score:changed': { characterId: string; hitsTaken: number; hitsGiven: number };
   /** Loading progress, 0..1. */

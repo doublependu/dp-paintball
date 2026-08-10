@@ -125,6 +125,10 @@ body {
 
 .hud__counter--given .hud__value { color: #a8e337; }
 .hud__counter--taken .hud__value { color: #ff3d81; }
+.hud__counter--ammo .hud__value { color: #00d4e8; }
+/* Specific enough to beat the rule above, which is a descendant selector. */
+.hud__counter--ammo .hud__value.is-low { color: #ffd23f; }
+.hud__counter--ammo .hud__value.is-empty { color: #ff5757; }
 
 .hud__value.is-bumped {
   animation: hud-bump 0.32s cubic-bezier(0.34, 1.8, 0.64, 1);

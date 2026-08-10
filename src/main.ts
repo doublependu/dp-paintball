@@ -10,6 +10,8 @@ import { BallisticsSystem } from './gameplay/Ballistics';
 import { CameraRig } from './gameplay/CameraRig';
 import { PlayerController } from './gameplay/PlayerController';
 import { createPlayerState } from './gameplay/PlayerState';
+import { LootSystem, createLootState, type LootState } from './gameplay/LootSystem';
+import { createMatchState, type MatchState } from './gameplay/MatchState';
 import { WeaponSystem } from './gameplay/Weapon';
 import { PaintSystem } from './paint/PaintSystem';
 import { SplatAtlas } from './paint/SplatAtlas';
@@ -69,15 +71,34 @@ const bots: BotSpec[] = useTestCourse
       { id: 'bot-e', position: new Vector3(44, 0, -10), colorIndex: 6, personality: 2 },
       { id: 'bot-f', position: new Vector3(-34, 0, 40), colorIndex: 7, personality: 1 },
     ];
+// Paint is finite. One map for everybody, passed to whoever needs to answer
+// "can I fire?" synchronously — see MatchState's header.
+const match = createMatchState(
+  ['player', ...bots.map((bot) => bot.id)],
+  // The test course is a sandbox: unlimited paint and no crate, so the
+  // movement, ballistics and paint suites keep measuring geometry rather than
+  // how much paint was left when they got there.
+  { sandbox: useTestCourse },
+);
+const loot = createLootState();
+// A different hiding place every game, so this cannot come from WORLD_SEED.
+// `?seed=` pins it, which is what makes a crate reproducible when something
+// about one needs reproducing.
+const seedParam = new URLSearchParams(location.search).get('seed');
+const lootSeed = seedParam !== null ? Number(seedParam) >>> 0 : Date.now() >>> 0;
+
 const charactersSystem = new CharactersSystem(
   playerState,
   characterRegistry,
   ballistics,
   splatAtlas,
+  match,
+  loot,
   bots,
 );
+const lootSystem = new LootSystem(match, loot, playerState, charactersSystem, lootSeed);
 const audio = new AudioSystem(playerState);
-const hud = new HudSystem(container, charactersSystem, splatAtlas);
+const hud = new HudSystem(container, charactersSystem, splatAtlas, match);
 // One solver shared by the gun and the scene crosshair, so the mark on the
 // ground is traced from the same muzzle and direction the ball actually leaves.
 const aim = new AimSolver();
@@ -90,11 +111,13 @@ game
   .add(player)
   .add(new CameraRig(playerState))
   .add(ballistics)
-  .add(new WeaponSystem(playerState, ballistics, aim))
+  .add(new WeaponSystem(playerState, ballistics, aim, match))
   // After the camera, which it aims from; before paint, which does not care.
   .add(new SceneCrosshairSystem(playerState, ballistics, aim))
   .add(paint)
   .add(charactersSystem)
+  // After characters, whose init builds the navgrid the crate is placed on.
+  .add(lootSystem)
   // After characters: the HUD reads their scores, and audio positions sounds
   // relative to the player's interpolated transform.
   .add(audio)
@@ -123,6 +146,9 @@ declare global {
       characters: CharactersSystem;
       audio: AudioSystem;
       hud: HudSystem;
+      match: MatchState;
+      loot: LootState;
+      lootSystem: LootSystem;
       camera: () => { x: number; y: number; z: number };
       simTime: () => number;
       setManualSim: (on: boolean) => void;
@@ -159,6 +185,9 @@ window.__paintball = {
   characters: charactersSystem,
   audio,
   hud,
+  match,
+  loot,
+  lootSystem,
   camera: () => game.render.camera.position.clone(),
   simTime: () => game.simElapsed,
   setManualSim: (on) => game.setManualSim(on),

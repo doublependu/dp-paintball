@@ -389,6 +389,81 @@ Left alone, and genuinely arguable: both arms carry `- crouchAmount * 0.2`, whic
 tucks them slightly *behind* the hip when crouched. At 11° that reads as bracing
 rather than as a defect, so it stays until someone dislikes it.
 
+## 4b. What actually landed — phase C
+
+Ammo and the crate, items 1 and 2. No clock and no round end yet; those are D.
+
+**`MatchState` turned out not to need a system.** The plan had a `MatchSystem`
+owning ammo from the start, but C's only jobs are seeding a load and spending it,
+and `main.ts` already knows the full roster — it builds the `BotSpec` list — so
+`createMatchState(['player', ...bots.map(b => b.id)])` does the seeding at
+construction and the file count stays lower. `MatchSystem` arrives in D with the
+clock and the end rule, which are the parts that genuinely need a step.
+
+**No `ammo:changed` event either.** `HudSystem` already polls the score off the
+characters, with a header explaining why it keeps no copy of its own; ammo is the
+same question, so it polls `ammoOf(match, 'player')` in `update`. An event would
+have been a second path to the same number.
+
+**Bots got a sixth state, `restock`.** Ordered after `startled` (being shot at
+while fetching paint should still make a bot scurry) and before target selection,
+because a bot with an empty marker has no business in `engage`: it stands there
+aiming and never fires, which reads as a stalled agent rather than an empty one.
+Its last stretch to the crate is walked by hand rather than by path — a navgrid
+path ends on a 2 m cell centre and `followPath` calls a waypoint reached from
+1.1 m away, so a bot can run out of path while still outside the 1.4 m pickup
+radius and stand next to the paint it came for. `tools/match-test.mjs` covers it
+with a bot dropped 10.8 m away holding nothing.
+
+That hand-walked final stretch is also why `restock` repaths on its timer *only*,
+unlike `repositionAround` which repaths when its path runs out too. Here an
+exhausted path is the normal state on arrival, so treating it as a repath trigger
+meant a full A* every step for a bot standing at the crate — and every step
+forever for one whose crate could not be routed to at all. `RESTOCK_TIMEOUT`
+now gives up after 14 s and `RESTOCK_COOLDOWN` keeps it from immediately going
+back to failing at the same thing; both covered, the second by pointing a bot at
+a decoy crate in the middle of the lake.
+
+**Hiding places are authored, not sampled.** `LOOT_SPOTS` in `ParkLayout` — the
+arcade undercroft, behind the terrace, the Ramble, the west bank above Bow
+Bridge, the treeline on the meadow's rim, the Mall's south end, the east rise —
+each validated against the navgrid at spawn and skipped if it has drifted off
+walkable ground. All inside `PLAY_HALF`, because the navgrid stops there and a
+crate no bot can reach would stall D's "everyone is out" rule. The crate's own
+`Rng` is seeded from `Date.now()`, overridable with `?seed=`, and never
+`ctx.rng`.
+
+**The suite caught two things I had wrong.** A bot that restocks then finds a
+target has already spent some of it, so asserting "ammo is now 20" failed on
+correct behaviour — it watches the `loot:taken` event instead. And the sandbox
+HUD read `0`: nothing had called `update` yet, which also meant the real game
+showed a red empty-marker zero for one frame at startup, now filled in from
+`HudSystem.init`.
+
+`lootRespawnSeconds` defaults to 0 — one crate per round, as specified. The dial
+is there; 45 is the number to try.
+
+**An unresolved flake in `bot-test`, recorded so the next person does not start
+from zero.** Twice it exited 1 with a node exception rather than a failed
+assertion — no `FAIL` line, no summary, just the tail of an uncaught error. Both
+times were inside a back-to-back run of several suites. It then passed 8
+consecutive isolated runs and a full 5-suite chain, so it did not reproduce and
+the trace was never captured.
+
+What is known: whenever the suite runs to completion it passes 16/16, so its
+assertions are not the thing failing. The file has exactly two waits, both at
+boot — `waitForFunction` for `window.__paintball` at 30 s and for the loader at
+60 s — and a throw from either would produce precisely this signature: no
+assertions run, no summary, exit 1. It is not memory pressure (22 GB free,
+`/dev/shm` at 1%). Nothing in phase C plausibly touches it: bots start at 100
+rounds and `wantsRestock` is false until they are under 15, and a regression in
+`Bot` would surface as a failed assertion, not an exception.
+
+If it recurs, run `node tools/bot-test.mjs` alone with **full** output — every
+loop that caught it was piping through `grep`/`tail`, which is why the trace was
+lost each time. The cheap hardening, if it becomes a nuisance, is raising that
+30 s hook wait to match the 60 s loader wait beside it.
+
 ## 5. Rough order and size
 
 | Phase | Item(s) | New files | Touches | Feel |

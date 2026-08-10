@@ -100,6 +100,51 @@ export class Synth {
     thud.stop(t + 0.15);
   }
 
+  /**
+   * An empty marker: the click with none of the puff.
+   *
+   * Deliberately the inverse of `shoot()` — a hard, dry, high transient and no
+   * gas escape at all, because what tells you you're empty is the *absence* of
+   * the sound you expected.
+   */
+  dryFire(gain = 1, pan = 0): void {
+    const ctx = this.engine.ctx;
+    const voice = this.engine.createVoice('sfx', gain * 0.45, pan);
+    if (!ctx || !voice) return;
+    const t = ctx.currentTime;
+
+    const noise = this.engine.createNoiseSource();
+    if (noise) {
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 2600;
+
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0001, t);
+      env.gain.exponentialRampToValueAtTime(0.8, t + 0.002);
+      env.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
+
+      noise.connect(filter);
+      filter.connect(env);
+      env.connect(voice.input);
+      noise.start(t);
+      noise.stop(t + 0.05);
+    }
+
+    // The sear dropping — a tiny woody knock under the click.
+    const knock = ctx.createOscillator();
+    knock.type = 'square';
+    knock.frequency.setValueAtTime(210, t);
+    knock.frequency.exponentialRampToValueAtTime(120, t + 0.03);
+    const knockEnv = ctx.createGain();
+    knockEnv.gain.setValueAtTime(0.22, t);
+    knockEnv.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+    knock.connect(knockEnv);
+    knockEnv.connect(voice.input);
+    knock.start(t);
+    knock.stop(t + 0.05);
+  }
+
   /** Footfall: a brief damped noise tap, pitched by surface. */
   footstep(gain = 1, pan = 0, pitch = 1): void {
     const ctx = this.engine.ctx;

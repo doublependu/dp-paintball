@@ -72,6 +72,34 @@ export const ISLAND = { x: 8, z: -50, radius: 9 };
 /** Bounds the water plane has to cover — the lake and nothing else. */
 export const LAKE_BOUNDS = { minX: -74, maxX: 70, minZ: -74, maxZ: -12 };
 
+/**
+ * Places a paint crate can hide, one picked per round.
+ *
+ * Hand-authored rather than drawn from `NavGrid.randomWalkablePoint()`, which
+ * lands in the middle of Sheep Meadow about as often as anywhere and is neither
+ * hidden nor interesting. Every entry is somewhere with a reason to be there —
+ * a corner you have to go around, under something, behind something — and all
+ * of them sit inside `PLAY_HALF`, because the navgrid stops there and a crate a
+ * bot cannot path to would stall the "everyone is out of paint" rule.
+ *
+ * Each is still validated against the navgrid at spawn, so a spot that drifts
+ * into the lake or inside a prop as the map changes is skipped rather than
+ * quietly dropping the crate somewhere unreachable.
+ */
+export const LOOT_SPOTS: ReadonlyArray<{ x: number; z: number; where: string }> = [
+  { x: -7, z: 21, where: 'the arcade undercroft, west bay' },
+  { x: 8, z: 21, where: 'the arcade undercroft, east bay' },
+  { x: 26, z: 33, where: 'behind the terrace, on the plateau' },
+  { x: -6, z: -72, where: 'deep in the Ramble' },
+  { x: 25, z: -70, where: 'the Ramble, east of the rock outcrop' },
+  { x: -66, z: -8, where: 'the west bank above Bow Bridge' },
+  { x: -26, z: 53, where: "the treeline on Sheep Meadow's east rim" },
+  { x: -76, z: 72, where: 'the south-west woods' },
+  { x: 11, z: 82, where: "the Mall's south end, off the allée" },
+  { x: 58, z: 5, where: 'the wooded rise on the east flank' },
+  { x: 52, z: -69, where: 'the north-east shore, above the water' },
+];
+
 /** Elliptical distance: < 1 is inside the ellipse. */
 function ellipse(x: number, z: number, cx: number, cz: number, rx: number, rz: number): number {
   const dx = (x - cx) / rx;

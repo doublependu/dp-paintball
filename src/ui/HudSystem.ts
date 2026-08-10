@@ -1,5 +1,6 @@
 import type { CharactersSystem } from '../character/CharactersSystem';
 import type { GameContext, System } from '../core/System';
+import { ammoOf, type MatchState } from '../gameplay/MatchState';
 import { SplatAtlas } from '../paint/SplatAtlas';
 import { Hud, type ScoreRow } from './Hud';
 import { SplashOverlay } from './SplashOverlay';
@@ -25,15 +26,22 @@ export class HudSystem implements System {
   private scoreboardOpen = false;
   private lastGiven = -1;
   private lastTaken = -1;
+  private lastAmmo = -1;
 
   constructor(
     private readonly container: HTMLElement,
     private readonly characters: CharactersSystem,
     private readonly sharedAtlas: SplatAtlas,
+    private readonly match: MatchState,
   ) {}
 
   init(ctx: GameContext): void {
     this.hud = new Hud(this.container);
+    // Filled in here rather than waiting for the first update: the markup ships
+    // with a placeholder 0, which would otherwise show for a frame styled as an
+    // empty marker — a red zero on a full one.
+    this.lastAmmo = ammoOf(this.match, 'player');
+    this.hud.setAmmo(this.lastAmmo);
     // The splash reuses the same generated splat shapes as world and character
     // paint, so what lands on the lens matches what's on the wall.
     this.atlas = this.sharedAtlas;
@@ -47,6 +55,16 @@ export class HudSystem implements System {
       } else if (shooterId === 'player') {
         this.hud?.showToast(ctx.rng.pick(SCORED_LINES), color, 1.2);
       }
+    });
+
+    ctx.events.on('weapon:dry', ({ shooterId }) => {
+      if (shooterId !== 'player') return;
+      this.hud?.showToast('out of paint!', 0xff5757, 1.4);
+    });
+
+    ctx.events.on('loot:taken', ({ characterId, rounds }) => {
+      if (characterId !== 'player') return;
+      this.hud?.showToast(`+${rounds} paint!`, 0xa8e337, 1.6);
     });
 
     // The hint is for the menu state; once you're playing, it's clutter.
@@ -64,6 +82,14 @@ export class HudSystem implements System {
       this.lastGiven = player.hitsGiven;
       this.lastTaken = player.hitsTaken;
       hud.setCounters(player.hitsGiven, player.hitsTaken);
+    }
+
+    // Polled, like the score above it and for the same reason: the match owns
+    // the authoritative number, so the HUD keeps no copy that could disagree.
+    const ammo = ammoOf(this.match, 'player');
+    if (ammo !== this.lastAmmo) {
+      this.lastAmmo = ammo;
+      hud.setAmmo(ammo);
     }
 
     const wantScoreboard = ctx.input.isDown('scoreboard');
