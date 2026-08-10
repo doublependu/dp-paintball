@@ -166,10 +166,12 @@ const arc = await page.evaluate(() => {
            d8: dropAt(8), d15: dropAt(15), monotonic: pts.every((p, i) =>
              i === 0 || p.y <= pts[i - 1].y + 1e-6) };
 });
+// Both figures are measured against ballistics.muzzleSpeed = 63 and must be
+// re-derived if it moves: they were 0.46 and 1.73 when it was 42.
 check('the traced path drops like the real flight model',
       arc.d8 !== null && arc.d15 !== null &&
-      Math.abs(arc.d8 - 0.46) < 0.05 && Math.abs(arc.d15 - 1.73) < 0.1,
-      `drop 8m ${arc.d8?.toFixed(2)}m (want 0.46), 15m ${arc.d15?.toFixed(2)}m (want 1.73)`);
+      Math.abs(arc.d8 - 0.21) < 0.04 && Math.abs(arc.d15 - 0.80) < 0.1,
+      `drop 8m ${arc.d8?.toFixed(2)}m (want 0.21), 15m ${arc.d15?.toFixed(2)}m (want 0.80)`);
 check('a horizontal shot only ever falls', arc.monotonic);
 
 // --- The pair disagrees, and by more with range -----------------------------

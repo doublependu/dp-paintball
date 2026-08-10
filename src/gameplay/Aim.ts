@@ -78,7 +78,26 @@ export class AimSolver {
     this.direction.subVectors(this.aimPoint, this.muzzle).normalize();
   }
 
-  /** Muzzle sits at the character's right shoulder, facing where they look. */
+  /**
+   * Muzzle sits on the marker's barrel, facing where the player looks.
+   *
+   * These numbers sit on the barrel's own axis, extended back into the
+   * receiver. Measured, not guessed: in the aim pose the barrel runs from
+   * (0.12, 1.17, 0.67) to (0.04, 1.09, 0.93) in body-relative metres, which is
+   * much closer to the centre line than the shoulder it hangs from — the aim
+   * pose tucks the arm inward across the chest (`armR.rotation.z`), so a muzzle
+   * placed at the shoulder would be 0.18m to the right of the gun.
+   *
+   * Deliberately *not* the barrel tip. Spawning a projectile 0.93m in front of
+   * the body lets a player hugging cover fire from the far side of it, so the
+   * muzzle stays just inside the receiver instead — on the same line, close
+   * enough to the capsule to keep that from happening.
+   *
+   * It stays analytic rather than reading the posed joint matrix: the rig is
+   * posed in `update()` and shots are fired from `fixedUpdate()`, so a matrix
+   * read here would be a frame stale, and the scene crosshair traces from this
+   * same point every step.
+   */
   private computeMuzzle(state: PlayerState): void {
     const yaw = state.yaw;
     const heightRatio = state.height / playerConfig.height;
@@ -90,8 +109,8 @@ export class AimSolver {
     // the interpolated visual transform is a frame stale.
     this.muzzle
       .copy(state.position)
-      .addScaledVector(UP, 1.35 * heightRatio)
-      .addScaledVector(this.lateral, 0.26)
-      .addScaledVector(this.forward, 0.34);
+      .addScaledVector(UP, 1.18 * heightRatio)
+      .addScaledVector(this.lateral, 0.15)
+      .addScaledVector(this.forward, 0.56);
   }
 }

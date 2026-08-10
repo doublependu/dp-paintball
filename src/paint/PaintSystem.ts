@@ -165,7 +165,13 @@ export class PaintSystem implements System {
 
     // Faster hits splash wider.
     const speedScale = clamp(
-      remap(impact.impactSpeed, 12, 42, paintConfig.minSplatScale, paintConfig.maxSplatScale),
+      remap(
+        impact.impactSpeed,
+        paintConfig.splatSpeedMin,
+        paintConfig.splatSpeedMax,
+        paintConfig.minSplatScale,
+        paintConfig.maxSplatScale,
+      ),
       paintConfig.minSplatScale,
       paintConfig.maxSplatScale,
     );

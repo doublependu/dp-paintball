@@ -53,6 +53,26 @@ export const HUMAN_PARTS: RigPart[] = [
   { name: 'armR', joint: JOINT.ARM_R, size: [0.17, 0.62, 0.22], offset: [0, -0.31, 0], color: 0x3f8fd0 },
   { name: 'legL', joint: JOINT.LEG_L, size: [0.2, 0.75, 0.24], offset: [0, -0.375, 0], color: 0x2f3f5e },
   { name: 'legR', joint: JOINT.LEG_R, size: [0.2, 0.75, 0.24], offset: [0, -0.375, 0], color: 0x2f3f5e },
+
+  // --- the marker ---------------------------------------------------------
+  //
+  // Parts of the rig rather than a child mesh on a hand bone. The whole figure
+  // is one merged geometry indexed by joint, so four more boxes cost four boxes
+  // of vertices and *no* extra draw call — where a separate mesh would cost one
+  // per character in each of the colour, prepass and hull passes. It also picks
+  // up the inverted-hull ink and the animated pose for free.
+  //
+  // Laid out along the arm's own -Y, continuing past the hand, which is the one
+  // orientation that reads right in both poses without a second joint: the arm
+  // hangs at rest so the marker points at the ground, and the aim pose swings
+  // the shoulder forward so the marker comes up level. In that pose the arm's
+  // local -Z points up, so the hopper sits on -Z and the grip on +Z.
+  { name: 'gunBody', joint: JOINT.ARM_R, size: [0.1, 0.2, 0.14], offset: [0, -0.64, -0.02], color: 0x39404f },
+  { name: 'gunBarrel', joint: JOINT.ARM_R, size: [0.06, 0.28, 0.06], offset: [0, -0.86, -0.02], color: 0x2f3542 },
+  { name: 'gunGrip', joint: JOINT.ARM_R, size: [0.07, 0.15, 0.08], offset: [0, -0.63, 0.08], color: 0x2f3542 },
+  // Team colour, assigned in Character — the hopper is the one part of the
+  // marker you can read from across the plaza.
+  { name: 'gunHopper', joint: JOINT.ARM_R, size: [0.12, 0.11, 0.13], offset: [0, -0.61, -0.13], color: 0xff3d81 },
 ];
 
 /** Rest-pose pivot offsets, each relative to its parent joint. */

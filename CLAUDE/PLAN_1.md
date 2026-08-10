@@ -318,6 +318,67 @@ but it's a spring and five lines, and this phase is already touching the file.
 
 ---
 
+## 4a. What actually landed — phases A and B
+
+**A (item 4).** `muzzleSpeed` 42 → 63. The splat remaps in `Character.takeHit`
+and `PaintSystem.paint` now read `paint.splatSpeedMin`/`splatSpeedMax`, both
+derived from muzzle speed, so raising the speed no longer pins every splat at
+maximum size. Measured drop fell from 0.46 m to **0.21 m at 8 m** and from 1.73 m
+to **0.80 m at 15 m** — the two figures quoted in `Config.sceneCrosshair` and
+`SceneCrosshair`'s header, both updated, and re-baselined in
+`tools/crosshair-test.mjs`. `tools/ballistics-test.mjs` needed no re-baselining
+(its assertions were range-tolerant) but its arc check gained an upper bound so
+that a regression back toward 42 m/s fails it: a level shot now carries ~21 m
+where it used to carry ~14 m. Recoil recovery folded in as agreed
+(`WeaponSystem.recover`), applied as a decaying *delta* so re-aiming mid-burst
+still wins.
+
+**B (item 3).** Four boxes on `JOINT.ARM_R` — body, barrel, grip, hopper — so the
+figure is still one draw call (10 parts → 14, 240 verts → 336). The hopper takes
+the team colour.
+
+The part worth recording: **the aim pose was pointing the arm backwards, and had
+been all along.** A rotation about +X carries a hanging limb's tip toward +Z, and
+these characters face −Z, so `aimPose = -1.35` put the hand 0.64 m *behind* the
+shoulder. Nothing showed it while the hand was empty — an arm raised behind you
+and an arm raised in front of you are the same silhouette from the front, and
+every capture in the rubric is a landscape. Measured by pushing the posed joint
+matrix through the arm tip in `rig-preview.html`, which is now repaired (it had
+been calling `createRigMaterial` with the pre-refactor signature and could not
+have run since) and exposes `window.__figures` for exactly that kind of question.
+The shot kick flipped sign with it.
+
+The muzzle moved from `1.35 up / 0.26 lateral / 0.34 forward` to
+`1.18 / 0.15 / 0.56`, and those are measured rather than guessed: with the pose
+held, the barrel runs from (0.12, 1.17, 0.67) to (0.04, 1.09, 0.93) in
+body-relative metres, so the new muzzle sits on that line, extended back into
+the receiver. The first attempt put it at the shoulder and was 0.18 m to the
+right of the gun — the aim pose tucks the arm inward across the chest, so the
+marker ends up near the body's centre line, not out where the shoulder is.
+Deliberately not the barrel tip: spawning a ball 0.93 m out lets a player
+hugging cover fire from the far side of it. `Bot.aimAndFire` got the matching
+offset, minus the lateral term, so bots' shots leave their marker rather than
+their ribcage.
+
+**Two pre-existing `ui` failures, unrelated to any of this** (confirmed by
+running the suite against a stashed tree): "releasing Tab closes it" / "Tab opens
+the scoreboard" flap between runs, and "lens paint drips away" fails every time.
+The second one has a diagnosis worth writing down, because it is the
+`elapsed`/`simElapsed` trap from `CLAUDE.md` seen from the other side: the test
+waits 5 s of *wall clock* for blobs with 2.1–3.8 s lifetimes, but the lens ages
+on frame `dt`, and under SwiftShader **5 s of wall clock is 0.58 s of simulated
+time** — about 1.4 fps, so seven frames of `dt` clamped to `MAX_FRAME_DT` age the
+lens by ~1.75 s and nothing expires. The fix belongs in the test (wait on
+`simTime`), not the overlay.
+
+**Still inverted, deliberately left alone:** `torso.rotation.x` uses the same
+convention, so `leanAmount * 0.20` leans a *running* character backward and
+`crouchAmount * 0.24` leans a crouching one backward, while `- flinch * 0.28`
+rocks a character *into* the shot that hit them. Each is one sign, all three are
+outside items 1–6, and at 0.2 rad they are subtle enough that they may have been
+tuned by eye against the inverted convention. Worth deciding, not worth
+smuggling in.
+
 ## 5. Rough order and size
 
 | Phase | Item(s) | New files | Touches | Feel |

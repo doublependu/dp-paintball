@@ -68,6 +68,7 @@ export class Bot {
   private readonly muzzle = new Vector3();
   private readonly aimRight = new Vector3();
   private readonly aimUp = new Vector3();
+  private readonly forward = new Vector3();
 
   private readonly animation: AnimationInput = {
     speed: 0,
@@ -392,7 +393,14 @@ export class Bot {
     }
     if (this.fireCooldown > 0) return;
 
-    this.muzzle.set(this.position.x, this.position.y + 1.35, this.position.z);
+    // On the barrel, not in the chest: bots hold a marker out in front now, and
+    // a ball leaving the middle of the ribcage reads wrong once you can see the
+    // gun it should have come out of. Matches `AimSolver.computeMuzzle`, minus
+    // its lateral term — the aim pose tucks the marker onto the centre line, so
+    // a bot needs no shoulder offset to sit on its own barrel.
+    this.muzzle
+      .set(this.position.x, this.position.y + 1.18, this.position.z)
+      .addScaledVector(this.forward.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), 0.56);
     this.aimDirection.subVectors(this.target.position, this.muzzle);
     const range = this.aimDirection.length();
     if (range < 0.5) return;

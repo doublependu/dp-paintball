@@ -141,9 +141,12 @@ const longShots = await fireFor(0.2, 2.5);
 if (longShots.length > 0) {
   const far = longShots[0];
   const travelled = Math.hypot(far.x - 30, far.z - 45);
+  // The upper bound is the muzzle-speed guard: a level shot from 2.35m carries
+  // ~21m at 63 m/s and only ~14m at the 42 m/s this used to be, so the window
+  // fails if the speed regresses as well as if the arc flattens out entirely.
   check(
     'shots arc downward over distance',
-    far.y < 1.0 && travelled > 6,
+    far.y < 1.0 && travelled > 17 && travelled < 27,
     `landed ${travelled.toFixed(1)}m out at y=${far.y.toFixed(2)}`,
   );
 } else {

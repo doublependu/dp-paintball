@@ -60,7 +60,13 @@ export class Character {
     // darkened so the arms still read as separate limbs against the torso.
     const sleeve = new Color(this.color).multiplyScalar(0.78).getHex();
     const parts: RigPart[] = HUMAN_PARTS.map((part) => {
-      if (part.name === 'torso' || part.name === 'cap' || part.name === 'brim') {
+      if (
+        part.name === 'torso' ||
+        part.name === 'cap' ||
+        part.name === 'brim' ||
+        // The marker's hopper: the paint you're carrying is your own colour.
+        part.name === 'gunHopper'
+      ) {
         return { ...part, color: this.color };
       }
       if (part.name === 'armL' || part.name === 'armR') {
@@ -175,7 +181,13 @@ export class Character {
     if (joint < 0) return true;
 
     const speedScale = clamp(
-      remap(impactSpeed, 12, 42, paintConfig.minSplatScale, paintConfig.maxSplatScale),
+      remap(
+        impactSpeed,
+        paintConfig.splatSpeedMin,
+        paintConfig.splatSpeedMax,
+        paintConfig.minSplatScale,
+        paintConfig.maxSplatScale,
+      ),
       paintConfig.minSplatScale,
       paintConfig.maxSplatScale,
     );

@@ -24,8 +24,8 @@ import type { PlayerState } from './PlayerState';
  *
  * Half of the aiming pair. The viewport crosshair at screen centre says where
  * you are pointing, which is also the direction the ball leaves the muzzle. It
- * cannot say where the ball ends up, because the ball arcs: 0.46 m low at 8 m,
- * 1.73 m at 15 m. This system traces the real flight and marks the surface it
+ * cannot say where the ball ends up, because the ball arcs: 0.21 m low at 8 m,
+ * 0.80 m at 15 m. This system traces the real flight and marks the surface it
  * reaches.
  *
  * The deliberate choice is to show the arc rather than cancel it. Compensating

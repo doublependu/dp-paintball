@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
-import { ballistics as config, paintColors } from '../core/Config';
-import { clamp } from '../core/MathUtils';
+import { ballistics as config, camera as cameraConfig, paintColors } from '../core/Config';
+import { DEG2RAD, clamp, damp } from '../core/MathUtils';
 import type { GameContext, System } from '../core/System';
 import { AimSolver, spreadConeRadius } from './Aim';
 import type { BallisticsSystem } from './Ballistics';
@@ -8,6 +8,11 @@ import type { PlayerState } from './PlayerState';
 
 /** Pitch kick per shot, in radians. Deliberately tiny — this is a calm game. */
 const RECOIL = 0.0045;
+/** How fast the kick is given back. */
+const RECOIL_RECOVERY = 9;
+/** The camera rig's own limits, which recoil has to respect — see `shoot()`. */
+const PITCH_MIN = cameraConfig.pitchMin * DEG2RAD;
+const PITCH_MAX = cameraConfig.pitchMax * DEG2RAD;
 
 /**
  * Turns fire input into paintballs.
@@ -20,6 +25,8 @@ export class WeaponSystem implements System {
   readonly name = 'weapon';
 
   private cooldown = 0;
+  /** Kick applied by past shots and not yet given back. See `recover()`. */
+  private recoil = 0;
   readonly color: number;
 
   private readonly muzzle = new Vector3();
@@ -39,10 +46,27 @@ export class WeaponSystem implements System {
 
   fixedUpdate(dt: number, ctx: GameContext): void {
     this.cooldown = Math.max(0, this.cooldown - dt);
+    this.recover(dt);
     if (!ctx.input.isDown('fire') || this.cooldown > 0) return;
 
     this.cooldown = config.fireInterval;
     this.shoot(ctx);
+  }
+
+  /**
+   * Gives back the accumulated kick.
+   *
+   * Without this, sustained fire walks the camera upward and never hands it
+   * back — the player ends every burst dragging the mouse down to where they
+   * were already pointing. Only the *decayed amount* is subtracted from pitch,
+   * not the absolute pre-shot pitch, so re-aiming mid-burst still wins: the
+   * recovery is applied relative to wherever the player has since pointed.
+   */
+  private recover(dt: number): void {
+    if (this.recoil <= 1e-5) return;
+    const next = damp(this.recoil, 0, RECOIL_RECOVERY, dt);
+    this.state.pitch = clamp(this.state.pitch - (this.recoil - next), PITCH_MIN, PITCH_MAX);
+    this.recoil = next;
   }
 
   private shoot(ctx: GameContext): void {
@@ -72,9 +96,16 @@ export class WeaponSystem implements System {
       direction: this.shotDirection.clone(),
     });
 
-    // Nudging pitch directly is a crude recoil — no recovery curve, the player
-    // just re-aims. Enough to give the shot weight; phase 7 can do better.
-    state.pitch = clamp(state.pitch + RECOIL, -Math.PI / 2, Math.PI / 2);
+    // Kick the view up, and remember how much so `recover()` can give it back.
+    //
+    // Against the *camera's* pitch limits, not a looser pair of our own: the
+    // camera rig re-clamps pitch every step and runs before this system, so a
+    // kick past its ceiling would be thrown away there while still being
+    // remembered here — and `recover()` would then hand back elevation the
+    // player never got, walking the view down.
+    const before = state.pitch;
+    state.pitch = clamp(before + RECOIL, PITCH_MIN, PITCH_MAX);
+    this.recoil += state.pitch - before;
   }
 
   /** Scatters the shot within the cone the scene crosshair is drawing. */

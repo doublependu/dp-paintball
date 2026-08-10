@@ -160,12 +160,20 @@ export class CharacterAnimator {
 
     // Right arm holds the marker: swings when idle, comes up to aim when
     // aiming or firing, and kicks back on the shot itself.
+    //
+    // The aim pose is *positive*. A rotation about +X carries a hanging limb's
+    // tip toward +Z, and the character faces -Z (its eyes and cap brim are on
+    // that face), so the -1.35 this used to be pointed the marker over the
+    // character's own shoulder, behind them, while they aimed. Nothing showed
+    // it until there was a gun in the hand to see; the number was measured by
+    // pushing the posed joint matrix through the arm tip in rig-preview.
     const rightSwing = swing * this.armSwing - this.crouchAmount * 0.2;
-    const aimPose = -1.35 - input.aimPitch * 0.6;
+    const aimPose = 1.35 + input.aimPitch * 0.6;
     armR.rotation.x = lerp(lerp(rightSwing, aimPose, aimBlend), -2.4, taunt);
     armR.rotation.z = lerp(-0.06 - aimBlend * 0.22, 0.5 - Math.sin(this.idleTime * 9) * 0.25, taunt);
-    // Recoil kick, additive on top of whatever pose the arm is in.
-    armR.rotation.x += this.shootKick() * 0.35;
+    // Recoil kick, additive on top of whatever pose the arm is in — negative,
+    // so it rocks the muzzle back and up out of the aim pose.
+    armR.rotation.x -= this.shootKick() * 0.35;
 
     rig.updateMatrices();
   }

@@ -81,7 +81,20 @@ export const camera = {
 } as const;
 
 export const ballistics = {
-  muzzleSpeed: 42,
+  /**
+   * Muzzle speed.
+   *
+   * Was 42, which made the game feel like people lobbing paint at each other
+   * rather than shooting it. At 63 the drop over a fighting distance falls by
+   * about 2.25x — ~0.36m at 10m rather than ~0.80m — so a shot reads as a shot,
+   * while linear drag keeps the arc an arc rather than a laser.
+   *
+   * Anything that scales with impact speed reads this rather than a literal.
+   * See `paint.splatSpeedMin`/`splatSpeedMax`: when this number moved and those
+   * were still hardcoded 12 and 42, every hit clamped to the maximum splat size
+   * and speed stopped modulating the paint at all.
+   */
+  muzzleSpeed: 63,
   /** Paintballs are light and draggy — this is what gives the readable arc. */
   drag: 0.42,
   gravityScale: 1.0,
@@ -114,8 +127,8 @@ export const ballistics = {
  * The aiming pair is two crosshairs. The *viewport* crosshair is a DOM element
  * at screen centre (`.hud__viewport-crosshair`): where you are pointing, and
  * the direction the ball leaves the muzzle. The *scene* crosshair is this one,
- * drawn on the surface the ball will actually reach — 0.46 m lower at 8 m,
- * 1.73 m at 15 m. The gap between them is the arc, and showing it is the point:
+ * drawn on the surface the ball will actually reach — 0.21 m lower at 8 m,
+ * 0.80 m at 15 m. The gap between them is the arc, and showing it is the point:
  * compensating the shot would hide the arc, and the lazy readable arc is the
  * thing this game is built around.
  */
@@ -186,6 +199,21 @@ export const paint = {
   /** Splats scale up with impact speed, within these bounds. */
   minSplatScale: 0.7,
   maxSplatScale: 1.5,
+  /**
+   * Impact speeds mapping to `minSplatScale`..`maxSplatScale`.
+   *
+   * Fractions of muzzle speed, not absolute m/s. They were literals — 12 and 42
+   * — chosen when muzzle speed happened to be 42, so raising it to 63 pushed
+   * every hit past the top of the range and pinned every splat at maximum size.
+   * An always-maxed splat is also an always-scissored one on a 0.44m torso face,
+   * which is the wrong end of the trade `characterSplatRadius` documents.
+   *
+   * The top of the range is muzzle speed itself, which only a square hit at
+   * point-blank reaches: drag and the angle-of-incidence term in
+   * `BallisticsSystem.emitImpact` mean everything else lands below it.
+   */
+  splatSpeedMin: ballistics.muzzleSpeed * 0.29,
+  splatSpeedMax: ballistics.muzzleSpeed,
 } as const;
 
 /**

@@ -20,7 +20,9 @@
       import * as THREE from 'three';
       import { VoxelRig } from '/src/character/VoxelRig.ts';
       import { CharacterAnimator } from '/src/character/CharacterAnimator.ts';
+      import { CharacterPaint } from '/src/character/CharacterPaint.ts';
       import { createRigMaterial } from '/src/character/RigMaterial.ts';
+      import { SplatAtlas } from '/src/paint/SplatAtlas.ts';
 
       const renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setSize(innerWidth, innerHeight);
@@ -42,9 +44,10 @@
       ground.rotation.x = -Math.PI / 2;
       scene.add(ground);
 
-      // A blank paint texture: this page is about the rig, not about paint.
-      const blank = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat);
-      blank.needsUpdate = true;
+      // Real atlas, empty paint: this page is about the rig, not about paint.
+      // Both are still required — the rig material reads the splat buffers and
+      // the atlas dimensions when it compiles.
+      const atlas = new SplatAtlas();
 
       // Four figures, each locked to a different pose, viewed side by side.
       const POSES = [
@@ -54,14 +57,22 @@
         { label: 'crouch', speed: 1.6, crouching: true, aiming: false, grounded: true },
       ];
 
+      // Forward is -Z, so PI turns them to face the camera at +Z. A side-on view
+      // is the one that answers whether an arm swings forward or backward, so
+      // ?yaw=<radians> overrides it — ?yaw=1.5708 puts them in profile.
+      const yawParam = new URLSearchParams(location.search).get('yaw');
+      const YAW =
+        yawParam !== null && Number.isFinite(Number(yawParam))
+          ? Number(yawParam)
+          : Math.PI + 0.5;
+
       const figures = POSES.map((pose, i) => {
         const rig = new VoxelRig();
-        const handle = createRigMaterial(blank);
+        const handle = createRigMaterial(new CharacterPaint(), atlas);
         const mesh = new THREE.Mesh(rig.geometry, handle.material);
         rig.root.add(mesh);
         rig.root.position.set((i - 1.5) * 1.7, 0, 0);
-        // Forward is -Z, so PI turns them to face the camera at +Z.
-        rig.root.rotation.y = Math.PI + 0.5;
+        rig.root.rotation.y = YAW;
         scene.add(rig.root);
         return { rig, handle, animator: new CharacterAnimator(), pose };
       });
@@ -102,6 +113,10 @@
             `draw calls=${renderer.info.render.calls}`,
           ].join('\n');
           window.__rigReady = true;
+          // Exposed so a screenshot script can also ask numeric questions of a
+          // pose — "does this arm point forward or backward" is much better
+          // answered by a joint matrix than by squinting at a render.
+          window.__figures = figures;
         }
         requestAnimationFrame(frame);
       }
