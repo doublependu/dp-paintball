@@ -8,9 +8,12 @@ A browser paintball game: Three.js + Rapier3D, third-person, single-player again
 NPC bots, set in a stylised Central Park. Hand-drawn look — Borderlands linework
 over Ghibli colour and light. Nobody dies; hits are counters.
 
-`CLAUDE/PROMPT_0.md` is the original brief. `CLAUDE/PLAN_0.md` is the design of record and explains
-*why* the big decisions went the way they did. `CLAUDE/CLAUDE_0.md` is the claude file generated with `/init` after the plan is executed. 
-`CLAUDE/NEXT_0.md` is what Claude wanted to work on next. 
+ - `CLAUDE/PROMPT_0.md` is the original brief. 
+ - `CLAUDE/PLAN_n.md` is what Claude plan to work on after receiving the prompt or feedback of iteration n
+ - `CLAUDE/NEXT_n.md` is what Claude wants to work on next after iteration n is executed
+ - `CLAUDE/FEEDBACK_n.md` is human feedback on iteration n (mostly in one session)
 
+In addition, 
+ - `CLAUDE/CLAUDE_0.md` is the claude file generated with `/init` after the plan 0 is executed. 
 
 
