@@ -125,6 +125,8 @@ declare global {
       hud: HudSystem;
       camera: () => { x: number; y: number; z: number };
       simTime: () => number;
+      setManualSim: (on: boolean) => void;
+      stepSim: (seconds: number) => number;
       bootTimings: () => Array<{ phase: string; ms: number }>;
       impacts: ImpactRecord[];
     };
@@ -159,6 +161,8 @@ window.__paintball = {
   hud,
   camera: () => game.render.camera.position.clone(),
   simTime: () => game.simElapsed,
+  setManualSim: (on) => game.setManualSim(on),
+  stepSim: (seconds) => game.stepSim(seconds),
   bootTimings: () => game.bootTimings,
   impacts,
 };

@@ -10,6 +10,17 @@ npm install
 npm run dev
 ```
 
+## Test
+
+```bash
+npm run build && npm run preview
+```
+
+In another shell
+```bash
+npm test
+```
+
 
 ## The project is started with 
 

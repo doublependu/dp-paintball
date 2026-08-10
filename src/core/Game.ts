@@ -1,4 +1,4 @@
-import { WORLD_SEED, debug } from './Config';
+import { FIXED_DT, WORLD_SEED, debug } from './Config';
 import { EventBus } from './Events';
 import { Input } from './Input';
 import { Loop } from './Loop';
@@ -39,6 +39,7 @@ export class Game {
     this.loop = new Loop({
       fixedUpdate: (dt) => this.fixedUpdate(dt),
       update: (dt, alpha) => this.update(dt, alpha),
+      draw: () => this.draw(),
     });
 
     // Systems hold this object for their lifetime, so `elapsed` is a getter
@@ -61,6 +62,37 @@ export class Game {
   /** Simulated seconds elapsed — see Loop.simElapsed. */
   get simElapsed(): number {
     return this.loop.simElapsed;
+  }
+
+  /**
+   * Hands the simulation clock to stepSim instead of to rendered frames.
+   * Test-only; see Loop.manual for why the headless harnesses need it.
+   */
+  setManualSim(on: boolean): void {
+    this.loop.manual = on;
+  }
+
+  /**
+   * Advances the simulation by `seconds` immediately, in one synchronous run,
+   * and returns the number of fixed steps taken.
+   *
+   * Each step gets its own visual update, because animation and camera
+   * smoothing read frame dt and the tests assert on both — stepping physics
+   * alone would let them drift apart. Nothing is drawn: the draw is the whole
+   * reason a headless frame is expensive, and the rAF tick is still there to
+   * paint the current state whenever a test wants a screenshot.
+   *
+   * Only meaningful under setManualSim(true); calling it while frames are
+   * still driving the loop would advance time twice.
+   */
+  stepSim(seconds: number): number {
+    const steps = Math.max(1, Math.round(seconds / FIXED_DT));
+    for (let i = 0; i < steps; i++) {
+      this.fixedUpdate(FIXED_DT);
+      this.loop.bookExternalStep(FIXED_DT);
+      this.update(FIXED_DT, 0, false);
+    }
+    return steps;
   }
 
   /** Registers a system. Must be called before boot(). */
@@ -119,18 +151,24 @@ export class Game {
     }
   }
 
-  private update(dt: number, alpha: number): void {
+  private update(dt: number, alpha: number, draw = true): void {
     if (this.input.wasPressed('togglePerf')) this.perfHud.toggle();
 
     for (const system of this.systems) {
       system.update?.(dt, alpha, this.context);
     }
 
-    this.render.render(this.loop.elapsed);
-    this.perfHud.update(dt, this.render.renderer, this.loop.lastStepCount);
+    if (draw) {
+      this.draw();
+      this.perfHud.update(dt, this.render.renderer, this.loop.lastStepCount);
+    }
 
     // Must be last: systems read edge-triggered input during update.
     this.input.endFrame();
+  }
+
+  private draw(): void {
+    this.render.render(this.loop.elapsed);
   }
 
   dispose(): void {

@@ -31,6 +31,22 @@ page.on('pageerror', (e) => consoleErrors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
 
 await page.goto(url, { waitUntil: 'load' });
+
+// Simulated time is driven from here rather than by rendered frames. These
+// headless frames are software-rasterised and land well under the ~12fps
+// `simElapsed` needs to keep pace with the wall clock, so waiting on frames for
+// simulated seconds cost minutes per test. See Game.stepSim.
+//
+// Claimed before boot starts the loop, so a run begins from the same world
+// every time rather than from however far the bots wandered while the page
+// was still loading.
+await page.waitForFunction(() => Boolean(window.__paintball), { timeout: 30_000 });
+await page.evaluate(() => {
+  if (!window.__paintball.setManualSim) {
+    throw new Error('this build predates the sim step hook — rebuild it');
+  }
+  window.__paintball.setManualSim(true);
+});
 await page.waitForFunction(() => window.__paintball && !document.querySelector('#loader'),
                            { timeout: 60_000 });
 
@@ -40,11 +56,9 @@ function check(name, pass, detail) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
 }
 
+/** Advances the simulation by `seconds`, stepping it directly. */
 async function waitSim(seconds) {
-  const start = await page.evaluate(() => window.__paintball.simTime());
-  await page.waitForFunction(({ start, seconds }) =>
-    window.__paintball.simTime() - start >= seconds, { start, seconds },
-    { timeout: 180_000, polling: 30 });
+  await page.evaluate((s) => window.__paintball.stepSim(s), seconds);
 }
 
 // --- Audio must not start before a gesture ---------------------------------
@@ -121,9 +135,9 @@ const splashPixels = () => page.evaluate(() => {
 const blobsQueued = await page.evaluate(() => window.__paintball.hud.lensSplash.blobCount);
 check('being tagged queues lens paint', blobsQueued > 0, `${blobsQueued} blobs`);
 
-// And it must actually reach the canvas. Allow several frames: under software
-// rendering a single frame can take 200ms, so a short wait proves nothing.
-await page.waitForTimeout(1200);
+// And it must actually reach the canvas, which the HUD repaints as the
+// simulation advances.
+await waitSim(0.3);
 const afterHit = await splashPixels();
 check('the splash renders to the canvas', afterHit > 0, `${afterHit} painted pixels`);
 
@@ -146,9 +160,9 @@ await page.evaluate(() => {
     point: new V(p.x, p.y + 1.2, p.z - 0.2), normal: new V(0, 0, -1), impactSpeed: 34,
   });
 });
-await page.waitForTimeout(200);
+await waitSim(0.2);
 const blobsAfterHit = await page.evaluate(() => window.__paintball.hud.lensSplash.blobCount);
-await page.waitForTimeout(5000);
+await waitSim(5);
 const blobsAfterDrip = await page.evaluate(() => window.__paintball.hud.lensSplash.blobCount);
 check('lens paint drips away', blobsAfterHit > 0 && blobsAfterDrip < blobsAfterHit,
       `${blobsAfterHit} blobs -> ${blobsAfterDrip}`);
@@ -168,7 +182,7 @@ check('landing a hit shows a toast', toastVisible === true);
 
 // --- Scoreboard ------------------------------------------------------------
 await page.keyboard.down('Tab');
-await page.waitForTimeout(350);
+await waitSim(0.35);
 const board = await page.evaluate(() => ({
   visible: document.querySelector('[data-scoreboard]').classList.contains('is-visible'),
   rows: document.querySelectorAll('.hud__score-row').length,
@@ -178,7 +192,7 @@ const board = await page.evaluate(() => ({
     .every((v, i, a) => i === 0 || a[i - 1] >= v),
 }));
 await page.keyboard.up('Tab');
-await page.waitForTimeout(250);
+await waitSim(0.25);
 const boardClosed = await page.evaluate(() =>
   document.querySelector('[data-scoreboard]').classList.contains('is-visible'));
 

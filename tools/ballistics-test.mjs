@@ -31,6 +31,22 @@ const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });
 page.on('pageerror', (err) => console.error('[pageerror]', err.message));
 
 await page.goto(url, { waitUntil: 'load' });
+
+// Simulated time is driven from here rather than by rendered frames. These
+// headless frames are software-rasterised and land well under the ~12fps
+// `simElapsed` needs to keep pace with the wall clock, so waiting on frames for
+// simulated seconds cost minutes per test. See Game.stepSim.
+//
+// Claimed before boot starts the loop, so a run begins from the same world
+// every time rather than from however far the bots wandered while the page
+// was still loading.
+await page.waitForFunction(() => Boolean(window.__paintball), { timeout: 30_000 });
+await page.evaluate(() => {
+  if (!window.__paintball.setManualSim) {
+    throw new Error('this build predates the sim step hook — rebuild it');
+  }
+  window.__paintball.setManualSim(true);
+});
 await page.waitForFunction(() => window.__paintball && !document.querySelector('#loader'), {
   timeout: 30_000,
 });
@@ -66,19 +82,9 @@ async function place(x, y, z, yaw, pitch = 0) {
   await waitSim(0.3);
 }
 
-/**
- * Waits for `seconds` of *simulated* time. Wall clock is unusable here: when
- * frames are slow the loop caps catch-up at MAX_SUB_STEPS and drops the
- * backlog, so the game advances in slow motion and any millisecond-phrased
- * assertion silently becomes wrong.
- */
+/** Advances the simulation by `seconds`, stepping it directly. */
 async function waitSim(seconds) {
-  const start = await page.evaluate(() => window.__paintball.simTime());
-  await page.waitForFunction(
-    ({ start, seconds }) => window.__paintball.simTime() - start >= seconds,
-    { start, seconds },
-    { timeout: 120_000, polling: 30 },
-  );
+  await page.evaluate((s) => window.__paintball.stepSim(s), seconds);
 }
 
 /** Fires for a span of simulated time, then waits for rounds to land. */

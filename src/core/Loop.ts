@@ -9,6 +9,11 @@ export interface LoopCallbacks {
    * stays smooth when the display rate isn't a multiple of the sim rate.
    */
   update(dt: number, alpha: number): void;
+  /**
+   * Paints the current state without advancing anything. Used for frames in
+   * manual mode, where time and input belong to whoever drives stepSim.
+   */
+  draw(): void;
 }
 
 /**
@@ -37,8 +42,31 @@ export class Loop {
   simElapsed = 0;
   /** Fixed steps taken in the most recent frame — surfaced to the perf HUD. */
   lastStepCount = 0;
+  /**
+   * When true, frames only paint: they advance neither time nor input, and
+   * something outside the loop drives the whole update via Game.stepSim.
+   *
+   * This exists for the headless tests. They assert on simulated time, and the
+   * software rasteriser they run under is slow enough to sit under the ~12fps
+   * needed to keep `simElapsed` up with the wall clock, so waiting on frames
+   * made every test many times longer than the behaviour it checks.
+   *
+   * Frames must stay inert rather than merely skipping the fixed steps: a
+   * frame that ran the normal update would end the input frame, swallowing a
+   * keypress before the stepped simulation ever saw it.
+   */
+  manual = false;
 
   constructor(private readonly callbacks: LoopCallbacks) {}
+
+  /**
+   * Books a fixed step that was driven from outside the frame loop, so both
+   * clocks stay consistent with the simulation that actually ran.
+   */
+  bookExternalStep(dt: number): void {
+    this.elapsed += dt;
+    this.simElapsed += dt;
+  }
 
   start(): void {
     if (this.running) return;
@@ -66,6 +94,14 @@ export class Loop {
     // otherwise hand us a multi-second delta and demand hundreds of steps.
     const frameDt = Math.min((now - this.lastTime) / 1000, MAX_FRAME_DT);
     this.lastTime = now;
+
+    if (this.manual) {
+      // Paint only, so the page stays live for screenshots while the stepped
+      // simulation keeps sole ownership of time and input.
+      this.callbacks.draw();
+      return;
+    }
+
     this.elapsed += frameDt;
     this.accumulator += frameDt;
 

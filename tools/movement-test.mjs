@@ -32,6 +32,22 @@ const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });
 page.on('pageerror', (err) => console.error('[pageerror]', err.message));
 
 await page.goto(url, { waitUntil: 'load' });
+
+// Simulated time is driven from here rather than by rendered frames. These
+// headless frames are software-rasterised and land well under the ~12fps
+// `simElapsed` needs to keep pace with the wall clock, so waiting on frames for
+// simulated seconds cost minutes per test. See Game.stepSim.
+//
+// Claimed before boot starts the loop, so a run begins from the same world
+// every time rather than from however far the bots wandered while the page
+// was still loading.
+await page.waitForFunction(() => Boolean(window.__paintball), { timeout: 30_000 });
+await page.evaluate(() => {
+  if (!window.__paintball.setManualSim) {
+    throw new Error('this build predates the sim step hook — rebuild it');
+  }
+  window.__paintball.setManualSim(true);
+});
 await page.waitForFunction(() => window.__paintball && !document.querySelector('#loader'), {
   timeout: 30_000,
 });
@@ -64,21 +80,9 @@ const read = () =>
     };
   });
 
-/**
- * Waits for `seconds` of *simulated* time.
- *
- * Wall clock is not a usable measure here: when frames are slow the loop caps
- * catch-up at MAX_SUB_STEPS and drops the backlog, so the game advances in slow
- * motion. Under software rendering that is a ~2.5x discrepancy, which silently
- * invalidates any assertion phrased in milliseconds.
- */
+/** Advances the simulation by `seconds`, stepping it directly. */
 async function waitSim(seconds) {
-  const start = await page.evaluate(() => window.__paintball.simTime());
-  await page.waitForFunction(
-    ({ start, seconds }) => window.__paintball.simTime() - start >= seconds,
-    { start, seconds },
-    { timeout: 120_000, polling: 30 },
-  );
+  await page.evaluate((s) => window.__paintball.stepSim(s), seconds);
 }
 
 /** Holds keys for a span of simulated time. */
@@ -101,14 +105,15 @@ async function holdAndRead(keys, seconds) {
 
 /** Samples over a span of simulated time, returning the highest y seen. */
 async function peakHeight(seconds) {
+  // Stepped in slices rather than one jump: the apex of a jump lasts a couple
+  // of frames, and sampling only the endpoints would miss it entirely.
+  const slice = 1 / 30;
   let peak = -Infinity;
-  const start = await page.evaluate(() => window.__paintball.simTime());
-  for (;;) {
+  for (let t = 0; t < seconds; t += slice) {
     peak = Math.max(peak, (await read()).y);
-    const now = await page.evaluate(() => window.__paintball.simTime());
-    if (now - start >= seconds) return peak;
-    await page.waitForTimeout(25);
+    await waitSim(slice);
   }
+  return peak;
 }
 
 /** Walks forward from a spawn and reports the height gained. */
