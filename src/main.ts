@@ -18,6 +18,7 @@ import { PaintSystem } from './paint/PaintSystem';
 import { SplatAtlas } from './paint/SplatAtlas';
 import { SurfaceRegistry } from './paint/SurfaceRegistry';
 import { HudSystem } from './ui/HudSystem';
+import { ResultsSystem } from './ui/ResultsSystem';
 import { ParkArenaSystem } from './world/ParkArena';
 import { TestCourseSystem } from './world/TestCourse';
 
@@ -128,7 +129,10 @@ game
   // After characters: the HUD reads their scores, and audio positions sounds
   // relative to the player's interpolated transform.
   .add(audio)
-  .add(hud);
+  .add(hud)
+  // Last: it draws over the finished frame, and it takes the characters out of
+  // the world, which everything above expects to still be there while playing.
+  .add(new ResultsSystem(container, charactersSystem, match, game.render));
 
 interface ImpactRecord {
   x: number;

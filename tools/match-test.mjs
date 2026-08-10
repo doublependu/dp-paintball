@@ -312,7 +312,14 @@ check('the player wears the paint they were tagged with', wornBefore > 0,
 
 await page.evaluate(() => {
   window.__ended = null;
-  window.__paintball.game.events.on('match:ended', (e) => { window.__ended = e; });
+  window.__paintball.game.events.on('match:ended', (e) => {
+    window.__ended = e;
+    // Read here, not later: the line-up turns continuously once it is up, so
+    // "faces the camera" is only an invariant at the moment it is presented.
+    // Registered after ResultsSystem's own handler, so the stage is already set.
+    window.__facingAtPresent =
+      window.__paintball.characters.playerCharacter.rig.root.rotation.y;
+  });
   window.__paintball.match.timeLeft = 0.5;
 });
 await stepSim(1.5);
@@ -320,17 +327,31 @@ const ended = await page.evaluate(() => ({
   event: window.__ended,
   phase: window.__paintball.match.phase,
   endedBy: window.__paintball.match.endedBy,
-  boardVisible: document.querySelector('[data-scoreboard]').classList.contains('is-visible'),
-  isFinal: document.querySelector('[data-scoreboard]').classList.contains('is-final'),
-  rows: document.querySelectorAll('.hud__score-row').length,
+  cardVisible: document.querySelector('.results').classList.contains('is-visible'),
+  rows: document.querySelectorAll('.results__row').length,
+  awards: [...document.querySelectorAll('.results__award-label')].map((e) => e.textContent),
+  // The line-up takes the characters out of the world and stands them on the
+  // stage, so their rigs must no longer be parented into the game scene.
+  onStage: window.__paintball.characters.allCharacters
+    .filter((c) => c.rig.root.parent !== window.__paintball.game.render.scene).length,
+  facing: +window.__facingAtPresent.toFixed(3),
   locked: window.__paintball.game.input.isLocked,
   clock: document.querySelector('[data-clock]').textContent,
 }));
 check('running out of time ends the round',
       ended.phase === 'ended' && ended.endedBy === 'time' && ended.event?.reason === 'time',
       `phase=${ended.phase} by=${ended.endedBy}`);
-check('the final board is shown, with everyone on it',
-      ended.boardVisible && ended.isFinal && ended.rows === 7, `${ended.rows} rows`);
+check('the results card is shown, with everyone on it',
+      ended.cardVisible && ended.rows === 7, `${ended.rows} rows`);
+check('every character is taken out of the world and onto the stage',
+      ended.onStage === 7, `${ended.onStage}/7 reparented`);
+// Facing -Z, camera at +Z: a line-up at rotation 0 presents its back, and every
+// splat on a chest is hidden behind the character wearing it.
+check('the line-up starts facing the camera', Math.abs(ended.facing - Math.PI) < 0.001,
+      `rotation.y = ${ended.facing}`);
+check('the awards are handed out',
+      ended.awards.includes('sharpshooter') && ended.awards.includes('cleanest'),
+      ended.awards.join(', ') || 'none');
 check('the clock stops at 0:00', ended.clock === '0:00', `shows "${ended.clock}"`);
 check('the cursor is handed back so the board can be read', ended.locked === false);
 
@@ -377,7 +398,9 @@ const restarted = await page.evaluate(() => ({
   given: window.__paintball.characters.playerCharacter.hitsGiven,
   splats: window.__paintball.characters.playerCharacter.paint.splatCount,
   crate: window.__paintball.loot.position !== null,
-  isFinal: document.querySelector('[data-scoreboard]').classList.contains('is-final'),
+  cardVisible: document.querySelector('.results').classList.contains('is-visible'),
+  inWorld: window.__paintball.characters.allCharacters
+    .filter((c) => c.rig.root.parent === window.__paintball.game.render.scene).length,
 }));
 check('clicking after the whistle starts a fresh round',
       restarted.phase === 'playing' && restarted.timeLeft > 290,
@@ -386,7 +409,9 @@ check('a fresh round refills, rescores and puts out a new crate',
       restarted.ammo === 100 && restarted.given === 0 && restarted.splats === 0 && restarted.crate,
       `ammo ${restarted.ammo}, given ${restarted.given}, splats ${restarted.splats},` +
         ` crate ${restarted.crate}`);
-check('the final board is put away', restarted.isFinal === false);
+check('the results card is put away', restarted.cardVisible === false);
+check('the characters go back into the world',
+      restarted.inWorld === 7, `${restarted.inWorld}/7 back in the park`);
 
 // --- The other ending: the last paintball in the park --------------------
 await page.evaluate(() => {

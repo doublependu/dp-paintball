@@ -501,6 +501,59 @@ failure. And the sandbox section of the suite was silently firing nothing:
 navigating away from a pointer-locked page and re-locking too soon is refused by
 Chrome, so `lockPointer()` now retries and fails loudly instead.
 
+## 4d. What actually landed — phase E
+
+Item 6: the round ends on a line-up of everybody's character, turning slowly,
+wearing the paint they collected, over the final scores and three awards.
+
+`RenderSystem.setOverlay()` draws a second scene on top of the finished frame —
+**after** post-processing, deliberately: the outline pass and the grade belong to
+the world, and running a presentation through them would ink and tint something
+that is not part of it. `ResultsStage` owns that scene, `ResultsPanel` the DOM
+card, and `ResultsSystem` is the only thing that knows a round has ended.
+
+The figures are the real ones, reparented out of the world. Paint, team colour
+and pose come along for free, since `CharacterPaint` is uniform data on a
+material that travels with the mesh. `CharactersSystem` stops writing their
+transforms while the round is over and feeds them an idle pose so they breathe
+rather than freeze; `Bot.pose` bails for the same reason, though the bots
+themselves keep wandering underneath — invisibly, since nothing renders them.
+
+**Three bugs, each of which needed a measurement to find, and two of which I
+first diagnosed wrongly:**
+
+- **The scrim dimmed the characters along with the park.** A full-screen quad
+  with `depthTest: false` and `renderOrder: -1` is the obvious way to dim a
+  frame, and it is wrong here: three renders opaque meshes before transparent
+  ones *whatever* their render order, so the scrim always landed on top of the
+  figures. It is now real geometry hung behind the line-up, parented to the
+  camera, with the depth test **on** — it fails exactly where a character stands
+  and passes everywhere else. (The camera is added to the scene, or three never
+  walks to its children.)
+- **The line-up presented its back.** These characters face -Z and the stage
+  camera sits at +Z, so `rotation.y = 0` — the natural-looking default — turned
+  every figure away. Every splat was on the far side of the body wearing it,
+  which looked exactly like character paint being broken, and I spent a while
+  believing it was: the reported Visual item 1 says paint often does not appear.
+  It was not that. Paint renders correctly both in the world and, once turned
+  round, on the stage. `rotation.y` starts at π and spins from there.
+- **Two of my own probes lied before the code did.** Hits emitted before any
+  frame has run resolve against rig roots still sitting at the origin, so they
+  miss the body entirely and record nothing — that is why the first "paint is
+  broken" reading was wrong. And `rig-preview.html` now retains its
+  `CharacterPaint` so a splat can be stamped on a character in isolation, which
+  is the fastest way to answer "is this the shader or the caller" and did answer
+  it here.
+
+The awards are three, not two, because the brief's "least hit received" and
+"most hit" parses either as the best shot or as the booby prize: *sharpshooter*,
+*cleanest*, *most painted*. Each is suppressed when nobody earned it — an award
+for most tags handed to somebody who landed none is worse than no award.
+
+Phase D's placeholder ending — the Tab scoreboard promoted to a final board — is
+gone, along with its `is-final` styling. The Tab board itself is unchanged for
+in-round use.
+
 ## 5. Rough order and size
 
 | Phase | Item(s) | New files | Touches | Feel |

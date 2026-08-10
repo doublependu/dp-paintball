@@ -34,7 +34,6 @@ export class Hud {
   private takenValue: HTMLSpanElement;
   private toast: HTMLDivElement;
   private scoreboard: HTMLDivElement;
-  private scoreboardTitle: HTMLDivElement;
   private scoreboardBody: HTMLDivElement;
   private hint: HTMLDivElement;
 
@@ -65,7 +64,7 @@ export class Hud {
       <div class="hud__toast" data-toast></div>
       <div class="hud__hint" data-hint>${LIVE_HINT}</div>
       <div class="hud__scoreboard" data-scoreboard>
-        <div class="hud__scoreboard-title" data-scoreboard-title>${LIVE_SCOREBOARD_TITLE}</div>
+        <div class="hud__scoreboard-title">${LIVE_SCOREBOARD_TITLE}</div>
         <div class="hud__scoreboard-head">
           <span>player</span><span>tagged them</span><span>tagged</span>
         </div>
@@ -76,7 +75,6 @@ export class Hud {
     container.append(this.root);
 
     this.clock = this.root.querySelector('[data-clock]')!;
-    this.scoreboardTitle = this.root.querySelector('[data-scoreboard-title]')!;
     this.ammoValue = this.root.querySelector('[data-ammo]')!;
     this.givenValue = this.root.querySelector('[data-given]')!;
     this.takenValue = this.root.querySelector('[data-taken]')!;
@@ -99,17 +97,17 @@ export class Hud {
     this.pulse(this.ammoValue);
   }
 
+  /** Hidden outright in the sandbox, where a frozen 5:00 would be a lie. */
+  setClockVisible(visible: boolean): void {
+    this.clock.classList.toggle('is-hidden', !visible);
+  }
+
   /**
    * The round clock, as m:ss.
    *
    * Rounded up, not down, so it reads 5:00 for the first second rather than
    * 4:59, and never shows 0:00 while there is still time to play.
    */
-  /** Hidden outright in the sandbox, where a frozen 5:00 would be a lie. */
-  setClockVisible(visible: boolean): void {
-    this.clock.classList.toggle('is-hidden', !visible);
-  }
-
   setClock(secondsLeft: number): void {
     const total = Math.max(0, Math.ceil(secondsLeft));
     const text = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
@@ -119,32 +117,22 @@ export class Hud {
   }
 
   /**
-   * Locks the scoreboard open with a closing title.
+   * Hides or restores everything that only means something mid-round — the
+   * clock, the counters, the crosshair, any lingering toast.
    *
-   * Phase D's whole ending: the board the player already knows from Tab,
-   * promoted to the final word. Phase E replaces this with the full-screen
-   * showcase of everybody's paint.
+   * The results card is the only thing on screen between rounds, and a live
+   * ammo count under it is just noise. `roundOver` also latches the Tab
+   * scoreboard shut, because the card already *is* the scoreboard.
    */
-  showRoundOver(title: string, rows: ScoreRow[]): void {
-    this.roundOver = true;
-    // The last toast is almost always "1 minute left!", which lingers behind the
-    // board it has just been overtaken by.
-    this.toastTimer = 0;
-    this.toast.classList.remove('is-visible');
-    this.scoreboardTitle.textContent = title;
-    this.updateScoreboard(rows);
-    this.scoreboard.classList.add('is-visible', 'is-final');
-    this.hint.textContent = 'click to play again';
-    this.hint.classList.remove('is-hidden');
-  }
-
-  /** Puts the HUD back to a live round. */
-  clearRoundOver(): void {
-    this.roundOver = false;
-    this.scoreboardTitle.textContent = LIVE_SCOREBOARD_TITLE;
-    this.scoreboard.classList.remove('is-visible', 'is-final');
-    this.hint.textContent = LIVE_HINT;
-    this.hint.classList.add('is-hidden');
+  setPlayingChromeVisible(visible: boolean): void {
+    this.roundOver = !visible;
+    this.root.classList.toggle('is-round-over', !visible);
+    if (!visible) {
+      // Almost always "1 minute left!", which would otherwise sit under the card.
+      this.toastTimer = 0;
+      this.toast.classList.remove('is-visible');
+      this.scoreboard.classList.remove('is-visible');
+    }
   }
 
   setCounters(given: number, taken: number): void {

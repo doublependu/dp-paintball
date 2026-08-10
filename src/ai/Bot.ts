@@ -544,8 +544,16 @@ export class Bot {
     this.fireCooldown = ballisticsConfig.fireInterval * ctx.rng.range(1.6, 3.4);
   }
 
-  /** Feeds the animator and moves the visual body. */
+  /**
+   * Feeds the animator and moves the visual body.
+   *
+   * Skipped entirely once the round is over: the body has been reparented onto
+   * the results stage, and writing a park position into it would drag the figure
+   * off its plinth. The bot itself carries on wandering — its collider and
+   * navigation are unaffected — it just no longer drives anything you can see.
+   */
   private pose(_dt: number): void {
+    if (!isPlaying(this.match)) return;
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     this.animation.speed = speed;
     this.animation.aiming = this.state === 'engage' && this.target !== null;

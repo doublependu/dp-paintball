@@ -68,13 +68,16 @@
 
       const figures = POSES.map((pose, i) => {
         const rig = new VoxelRig();
-        const handle = createRigMaterial(new CharacterPaint(), atlas);
+        // Retained, not inlined: paint on a character is the thing this page is
+        // most useful for checking, and it needs a handle to stamp through.
+        const paint = new CharacterPaint();
+        const handle = createRigMaterial(paint, atlas);
         const mesh = new THREE.Mesh(rig.geometry, handle.material);
         rig.root.add(mesh);
         rig.root.position.set((i - 1.5) * 1.7, 0, 0);
         rig.root.rotation.y = YAW;
         scene.add(rig.root);
-        return { rig, handle, animator: new CharacterAnimator(), pose };
+        return { rig, handle, paint, animator: new CharacterAnimator(), pose };
       });
 
       const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);

@@ -29,6 +29,7 @@ export class RenderSystem {
 
   private resizeObserver?: ResizeObserver;
   private pipeline?: NprPipeline;
+  private overlay: { scene: Scene; camera: PerspectiveCamera } | null = null;
 
   constructor(container: HTMLElement) {
     this.canvas = document.createElement('canvas');
@@ -87,6 +88,10 @@ export class RenderSystem {
       this.renderer.setSize(width, height, false);
       this.camera.aspect = width / height;
       this.camera.updateProjectionMatrix();
+      if (this.overlay) {
+        this.overlay.camera.aspect = this.camera.aspect;
+        this.overlay.camera.updateProjectionMatrix();
+      }
       this.pipeline?.setSize(width, height, this.renderer.getPixelRatio());
     };
 
@@ -103,6 +108,25 @@ export class RenderSystem {
     return this.pipeline;
   }
 
+  /**
+   * A second scene drawn on top of the finished frame, or null for none.
+   *
+   * This is how the end-of-round showcase gets in front of the park without a
+   * second WebGL context. It is drawn *after* post-processing on purpose: the
+   * outline pass and the grade belong to the world, and running the showcase
+   * through them would ink and tint a presentation that is not part of it.
+   *
+   * Its own aspect is kept in step with the canvas here, so the overlay never
+   * has to watch for resizes itself.
+   */
+  setOverlay(overlay: { scene: Scene; camera: PerspectiveCamera } | null): void {
+    this.overlay = overlay;
+    if (overlay) {
+      overlay.camera.aspect = this.camera.aspect;
+      overlay.camera.updateProjectionMatrix();
+    }
+  }
+
   render(elapsed: number): void {
     this.renderer.info.reset();
     if (this.pipeline) {
@@ -110,6 +134,18 @@ export class RenderSystem {
     } else {
       this.renderer.render(this.scene, this.camera);
     }
+
+    const overlay = this.overlay;
+    if (!overlay) return;
+    // The composer's last pass leaves the default framebuffer bound, but say so
+    // explicitly rather than depending on it. `autoClear` off keeps the colour
+    // we just spent a frame producing; the depth buffer *is* cleared, or the
+    // world's depth would occlude a showcase that sits nowhere near it.
+    this.renderer.setRenderTarget(null);
+    this.renderer.autoClear = false;
+    this.renderer.clearDepth();
+    this.renderer.render(overlay.scene, overlay.camera);
+    this.renderer.autoClear = true;
   }
 
   dispose(): void {

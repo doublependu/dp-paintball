@@ -78,23 +78,21 @@ export class HudSystem implements System {
       );
     });
 
-    ctx.events.on('match:ended', ({ reason }) => {
-      this.hud?.showRoundOver(
-        reason === 'ammo' ? 'Out of paint. Everybody is messy.' : "Time! Everybody's messy.",
-        this.buildRows(),
-      );
+    // The round's ending is `ResultsSystem`'s: a line-up of everybody's paint
+    // with the scores over it. All the HUD does is get out of its way.
+    ctx.events.on('match:ended', () => {
+      this.hud?.setPlayingChromeVisible(false);
+      // Wipe the visor. Between rounds it is not the player's point of view any
+      // more, and paint on the lens sits over the line-up.
+      this.splash?.clear();
     });
+    ctx.events.on('match:started', () => this.hud?.setPlayingChromeVisible(true));
 
-    ctx.events.on('match:started', () => {
-      this.hud?.clearRoundOver();
-    });
-
-    // The hint is for the menu state; once you're playing, it's clutter — but
-    // the round-over hint is the instruction to start another one, so it owns
-    // the element until `clearRoundOver` gives it back.
+    // The hint is for the menu state; once you're playing, it's clutter. The
+    // results card carries its own "click to play again", so the hint stays down
+    // while a round is over even though the pointer is unlocked.
     ctx.events.on('input:lockChanged', ({ locked }) => {
-      if (this.match.phase === 'ended') return;
-      this.hud?.setHintVisible(!locked);
+      this.hud?.setHintVisible(!locked && this.match.phase === 'playing');
     });
   }
 

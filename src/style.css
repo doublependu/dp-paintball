@@ -239,29 +239,16 @@ body {
 }
 
 /*
- * The final board. Bigger, and it dims the park behind it through a scrim on
- * its own ::before rather than a separate overlay element — one box to show and
- * hide, and it cannot fall out of sync with the panel it belongs to.
- *
- * Phase E replaces this with the full-screen showcase; until then it is the
- * whole ending, so it earns a little more presence than the Tab board.
+ * Between rounds the results card is the only thing on screen. Everything that
+ * only means something mid-round goes with the round — hidden rather than
+ * removed, so a restart is one class away.
  */
-.hud__scoreboard.is-final {
-  min-width: 440px;
-  transform: translate(-50%, -50%) scale(1.06);
-}
-
-.hud__scoreboard.is-final::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: rgba(42, 36, 56, 0.42);
-}
-
-.hud__scoreboard.is-final .hud__scoreboard-title {
-  margin-bottom: 18px;
-  font-size: 19px;
+.hud.is-round-over .hud__clock,
+.hud.is-round-over .hud__counters,
+.hud.is-round-over .hud__viewport-crosshair,
+.hud.is-round-over .hud__hint {
+  opacity: 0;
+  transition: opacity 0.25s ease;
 }
 
 .hud__scoreboard-title {
@@ -318,3 +305,140 @@ body {
 
 .hud__score-given { color: #4e7a1f; }
 .hud__score-taken { color: #b3246a; }
+
+/*
+ * The end-of-round card.
+ *
+ * Pinned along the bottom rather than centred, because the line-up of painted
+ * characters is rendered behind it and a centred panel would sit across their
+ * legs. `ResultsStage.PANEL_SHARE` is the other half of this arrangement: it
+ * frames the figures above whatever share of the height this takes.
+ */
+.results {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 20px 22px;
+  opacity: 0;
+  transform: translateY(14px);
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.results.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.results__card {
+  width: min(760px, 100%);
+  padding: 16px 22px 14px;
+  border-radius: 18px;
+  border: 3px solid #2a2438;
+  background: rgba(252, 250, 245, 0.95);
+  box-shadow: 0 16px 44px rgba(42, 36, 56, 0.34);
+}
+
+.results__title {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-bottom: 10px;
+}
+
+.results__awards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.results__award {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 2px solid #2a2438;
+  background: #fff6d8;
+  font-size: 12px;
+}
+
+.results__award-label {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.results__award-detail {
+  color: rgba(42, 36, 56, 0.72);
+}
+
+.results__head,
+.results__row {
+  display: grid;
+  grid-template-columns: 1fr 100px 72px 92px;
+  align-items: center;
+  gap: 8px;
+}
+
+.results__head {
+  padding-bottom: 5px;
+  border-bottom: 2px solid rgba(42, 36, 56, 0.18);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(42, 36, 56, 0.55);
+}
+
+.results__head span + span,
+.results__row span + span {
+  text-align: right;
+}
+
+.results__row {
+  padding: 4px 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.results__row.is-player {
+  color: #c2185b;
+}
+
+/* An awarded row gets a tint, so the chips above have something to point at. */
+.results__row.is-awarded {
+  background: rgba(255, 210, 63, 0.22);
+  border-radius: 8px;
+  box-shadow: -6px 0 0 rgba(255, 210, 63, 0.22), 6px 0 0 rgba(255, 210, 63, 0.22);
+}
+
+.results__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.results__given { color: #4c8a20; }
+.results__taken { color: #d1356f; }
+.results__splats { color: rgba(42, 36, 56, 0.6); }
+
+.results__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 4px;
+  border: 2px solid #2a2438;
+  flex: 0 0 auto;
+}
+
+.results__again {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: rgba(42, 36, 56, 0.6);
+}

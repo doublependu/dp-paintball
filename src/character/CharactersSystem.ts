@@ -191,6 +191,14 @@ export class CharactersSystem implements System {
     const player = this.player;
     if (!player) return;
 
+    // Once the round is over the figures belong to the results stage, which owns
+    // their position and facing. Still animated, so they breathe and settle
+    // rather than freezing mid-stride — just not moved.
+    if (!isPlaying(this.match)) {
+      for (const character of this.allCharacters) character.update(dt, IDLE_POSE);
+      return;
+    }
+
     const { state } = this;
     player.setTransform(state.renderPosition, state.bodyYaw);
     player.setOpacity(state.avatarOpacity);
@@ -266,3 +274,16 @@ export class CharactersSystem implements System {
 }
 
 const PLAYER_CHEST = new Vector3();
+
+/** Standing still, for the results line-up. Shared: nothing writes to it. */
+const IDLE_POSE: AnimationInput = {
+  speed: 0,
+  runSpeed: playerConfig.sprintSpeed,
+  grounded: true,
+  crouching: false,
+  aiming: false,
+  verticalVelocity: 0,
+  moveLocalX: 0,
+  moveLocalY: 0,
+  aimPitch: 0,
+};
