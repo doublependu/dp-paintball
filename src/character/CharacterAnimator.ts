@@ -112,10 +112,16 @@ export class CharacterAnimator {
     // --- torso ------------------------------------------------------------
     const torso = rig.joints[JOINT.TORSO]!;
     const flinch = this.flinchCurve();
+    // Signs follow the same convention as the arm's aim pose: a rotation about
+    // +X carries the top of a joint toward +Z, and the character faces -Z, so
+    // *negative* is forward. These three read as their opposites when they were
+    // positive — a runner leaning away from the run, a crouch tipping backward,
+    // and a flinch rocking the character into the shot that just hit them.
+    // Measured, not argued: at speed the torso's own up axis had z = +0.20.
     torso.rotation.x =
-      this.leanAmount * 0.20 +
+      -this.leanAmount * 0.20 -
       this.crouchAmount * 0.24 +
-      breathe -
+      breathe +
       flinch * 0.28;
     torso.rotation.y = -this.strafeAmount * 0.18 + swing * 0.05 * this.armSwing;
     torso.rotation.z = flinch * 0.14;
@@ -125,7 +131,14 @@ export class CharacterAnimator {
     // Counter-rotate against the torso so the head stays level, then look along
     // the aim pitch. Heads staying level under body motion is most of what
     // makes a walk read as deliberate rather than floppy.
-    head.rotation.x = clamp(-input.aimPitch * 0.55 - torso.rotation.x * 0.7, -0.7, 0.7);
+    //
+    // The pitch term is positive for the same reason the torso's are negative:
+    // pitch is positive looking up, and it takes a positive rotation to tip the
+    // top of the head backward and the face up. Negated, it looked *down* when
+    // the player looked up — the head's facing had y = -0.27 at pitch +0.5. The
+    // counter-rotation term needs no sign of its own; it follows whatever the
+    // torso is doing.
+    head.rotation.x = clamp(input.aimPitch * 0.55 - torso.rotation.x * 0.7, -0.7, 0.7);
     head.rotation.y = -torso.rotation.y * 0.5;
     head.rotation.z = -torso.rotation.z * 0.6 + Math.sin(this.idleTime * 0.7) * 0.02;
 

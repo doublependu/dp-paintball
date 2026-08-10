@@ -371,13 +371,23 @@ time** — about 1.4 fps, so seven frames of `dt` clamped to `MAX_FRAME_DT` age 
 lens by ~1.75 s and nothing expires. The fix belongs in the test (wait on
 `simTime`), not the overlay.
 
-**Still inverted, deliberately left alone:** `torso.rotation.x` uses the same
-convention, so `leanAmount * 0.20` leans a *running* character backward and
-`crouchAmount * 0.24` leans a crouching one backward, while `- flinch * 0.28`
-rocks a character *into* the shot that hit them. Each is one sign, all three are
-outside items 1–6, and at 0.2 rad they are subtle enough that they may have been
-tuned by eye against the inverted convention. Worth deciding, not worth
-smuggling in.
+**The rest of the inverted family, fixed on request.** `torso.rotation.x` used
+the same convention, so `leanAmount * 0.20` leaned a *running* character
+backward, `crouchAmount * 0.24` tipped a crouching one backward, and
+`- flinch * 0.28` rocked a character *into* the shot that had just hit them. All
+three flipped. A fourth turned up while measuring: `head.rotation.x` negated its
+pitch term, so a character looked **down** when the player looked up — head
+facing `y = -0.27` at `aimPitch = +0.5`. The counter-rotation term beside it
+needs no sign of its own, since it derives from `torso.rotation.x` and follows
+whatever that does.
+
+Verified by probing the settled joint matrices rather than by eye: torso up-axis
+`z` now −0.20 running and −0.238 crouched (forward), +0.055 mid-flinch
+(backward), and head facing `y` +0.27 looking up, −0.275 looking down.
+
+Left alone, and genuinely arguable: both arms carry `- crouchAmount * 0.2`, which
+tucks them slightly *behind* the hip when crouched. At 11° that reads as bracing
+rather than as a defect, so it stays until someone dislikes it.
 
 ## 5. Rough order and size
 
