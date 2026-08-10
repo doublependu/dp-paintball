@@ -98,6 +98,37 @@ body {
   box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.45);
 }
 
+.hud__clock {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: #fdf6e3;
+  /* Same ink outline as the counters, so it reads over sky or foliage alike. */
+  -webkit-text-stroke: 2.5px #2a2438;
+  paint-order: stroke fill;
+  transition: color 0.2s ease;
+}
+
+.hud__clock.is-urgent {
+  color: #ff5757;
+  animation: hud-clock-tick 1s steps(1) infinite;
+}
+
+.hud__clock.is-hidden {
+  display: none;
+}
+
+@keyframes hud-clock-tick {
+  0%, 60% { transform: translateX(-50%) scale(1); }
+  70% { transform: translateX(-50%) scale(1.08); }
+  100% { transform: translateX(-50%) scale(1); }
+}
+
 .hud__counters {
   position: absolute;
   left: 26px;
@@ -205,6 +236,32 @@ body {
 .hud__scoreboard.is-visible {
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
+}
+
+/*
+ * The final board. Bigger, and it dims the park behind it through a scrim on
+ * its own ::before rather than a separate overlay element — one box to show and
+ * hide, and it cannot fall out of sync with the panel it belongs to.
+ *
+ * Phase E replaces this with the full-screen showcase; until then it is the
+ * whole ending, so it earns a little more presence than the Tab board.
+ */
+.hud__scoreboard.is-final {
+  min-width: 440px;
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+.hud__scoreboard.is-final::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: rgba(42, 36, 56, 0.42);
+}
+
+.hud__scoreboard.is-final .hud__scoreboard-title {
+  margin-bottom: 18px;
+  font-size: 19px;
 }
 
 .hud__scoreboard-title {

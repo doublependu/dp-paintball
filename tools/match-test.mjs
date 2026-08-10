@@ -46,17 +46,27 @@ async function openManual(target) {
   });
 }
 
-await openManual(url);
-
-// Fire input needs pointer lock, and lock needs a completed click.
-await page.mouse.click(512, 288);
-await page.waitForTimeout(400);
-const locked = await page.evaluate(() => window.__paintball.game.input.isLocked);
-if (!locked) {
-  console.error('FATAL: pointer lock was not granted; fire input cannot be tested');
+/**
+ * Clicks until the canvas has pointer lock, which fire input needs.
+ *
+ * Retried rather than clicked once, because Chrome refuses a lock request that
+ * comes too soon after the previous lock ended — and navigating away from a
+ * locked page ends one. A single click plus a fixed wait passes on the first
+ * page of a run and silently swallows every shot on the second.
+ */
+async function lockPointer(what) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await page.mouse.click(512, 288);
+    await page.waitForTimeout(500);
+    if (await page.evaluate(() => window.__paintball.game.input.isLocked)) return;
+  }
+  console.error(`FATAL: pointer lock was not granted on ${what}; fire input cannot be tested`);
   await browser.close();
   process.exit(1);
 }
+
+await openManual(url);
+await lockPointer('the park');
 
 const results = [];
 function check(name, pass, detail) {
@@ -242,6 +252,176 @@ check('a bot gives up on a crate it cannot reach',
       `${stranded.id} went "${whileTrying}" then "${afterGivingUp}"` +
         `${stranded.reachable ? ' (warning: the decoy spot was walkable)' : ''}`);
 
+// --- The round has a clock ------------------------------------------------
+// Driven by moving `timeLeft` rather than by stepping five minutes of
+// simulation: the rule under test is "counts down, warns, then ends", and
+// 18,000 fixed steps would prove nothing extra at a hundred times the cost.
+const clockStart = await page.evaluate(() => {
+  const { match } = window.__paintball;
+  match.timeLeft = 120;
+  return match.timeLeft;
+});
+await stepSim(2);
+const ticked = await page.evaluate(() => ({
+  left: window.__paintball.match.timeLeft,
+  shown: document.querySelector('[data-clock]').textContent,
+}));
+check('the clock counts down in simulated time',
+      Math.abs(clockStart - ticked.left - 2) < 0.1,
+      `${clockStart}s -> ${ticked.left.toFixed(2)}s`);
+
+// Checked from a deliberately non-integer time. 120 steps of 1/60 do not sum to
+// exactly 2, so `timeLeft` lands a hair above 118 and the displayed value —
+// rounded up, so the clock never reads 0:00 while there is still time — is
+// legitimately either 1:58 or 1:59. Asserting the format at 95.4s has one answer.
+await page.evaluate(() => { window.__paintball.match.timeLeft = 95.4; });
+await stepSim(1 / 60);
+const format = await page.evaluate(() => document.querySelector('[data-clock]').textContent);
+check('the HUD clock reads m:ss', format === '1:36', `95.4s left shows "${format}"`);
+
+// --- ...and warns before it runs out --------------------------------------
+await page.evaluate(() => {
+  window.__warned = [];
+  window.__paintball.game.events.on('match:warning', ({ secondsLeft }) => {
+    window.__warned.push(secondsLeft);
+  });
+  window.__paintball.match.timeLeft = 61;
+});
+await stepSim(2);
+const warned = await page.evaluate(() => window.__warned);
+check('a warning goes out once at the one-minute mark',
+      warned.length === 1 && warned[0] === 60, `warnings: ${JSON.stringify(warned)}`);
+
+// --- Time up ends the round ----------------------------------------------
+// Paint the player first, while hits still count, so the restart below has
+// something to prove it wiped.
+const wornBefore = await page.evaluate(() => {
+  const { characters, game, state } = window.__paintball;
+  const player = characters.playerCharacter;
+  player.tickGameplay(5);
+  const p = state.position;
+  const V = p.constructor;
+  game.events.emit('hit:character', {
+    targetId: 'player', shooterId: 'bot-a', color: 0x00d4e8,
+    point: new V(p.x, p.y + 1.2, p.z - 0.2), normal: new V(0, 0, -1), impactSpeed: 34,
+  });
+  return player.paint.splatCount;
+});
+check('the player wears the paint they were tagged with', wornBefore > 0,
+      `${wornBefore} splats`);
+
+await page.evaluate(() => {
+  window.__ended = null;
+  window.__paintball.game.events.on('match:ended', (e) => { window.__ended = e; });
+  window.__paintball.match.timeLeft = 0.5;
+});
+await stepSim(1.5);
+const ended = await page.evaluate(() => ({
+  event: window.__ended,
+  phase: window.__paintball.match.phase,
+  endedBy: window.__paintball.match.endedBy,
+  boardVisible: document.querySelector('[data-scoreboard]').classList.contains('is-visible'),
+  isFinal: document.querySelector('[data-scoreboard]').classList.contains('is-final'),
+  rows: document.querySelectorAll('.hud__score-row').length,
+  locked: window.__paintball.game.input.isLocked,
+  clock: document.querySelector('[data-clock]').textContent,
+}));
+check('running out of time ends the round',
+      ended.phase === 'ended' && ended.endedBy === 'time' && ended.event?.reason === 'time',
+      `phase=${ended.phase} by=${ended.endedBy}`);
+check('the final board is shown, with everyone on it',
+      ended.boardVisible && ended.isFinal && ended.rows === 7, `${ended.rows} rows`);
+check('the clock stops at 0:00', ended.clock === '0:00', `shows "${ended.clock}"`);
+check('the cursor is handed back so the board can be read', ended.locked === false);
+
+// --- Nothing counts after the whistle ------------------------------------
+const frozen = await page.evaluate(() => {
+  const { characters, game, match, state } = window.__paintball;
+  const before = characters.playerCharacter.hitsGiven;
+  const bot = characters.allBots[0];
+  const takenBefore = bot.character.hitsTaken;
+  match.ammo.set('player', 50);
+  const V = state.position.constructor;
+  // A hit event that would have scored during play.
+  bot.character.tickGameplay(5);
+  game.events.emit('hit:character', {
+    targetId: bot.id, shooterId: 'player', color: 0xff3d81,
+    point: new V(bot.position.x, bot.position.y + 1.2, bot.position.z),
+    normal: new V(0, 0, 1), impactSpeed: 34,
+  });
+  return { before, takenBefore, after: characters.playerCharacter.hitsGiven,
+           takenAfter: bot.character.hitsTaken };
+});
+check('hits stop scoring once the round is over',
+      frozen.after === frozen.before && frozen.takenAfter === frozen.takenBefore,
+      `given ${frozen.before}->${frozen.after}, taken ${frozen.takenBefore}->${frozen.takenAfter}`);
+
+const ammoBeforeIdle = await playerAmmo();
+await page.mouse.down();
+await stepSim(1.0);
+await page.mouse.up();
+const ammoAfterIdle = await playerAmmo();
+check('the trigger does nothing once the round is over',
+      ammoAfterIdle === ammoBeforeIdle, `${ammoBeforeIdle} -> ${ammoAfterIdle}`);
+
+// --- Clicking starts another round ---------------------------------------
+// Read with no simulation stepped in between, on purpose: the reset happens
+// synchronously in the lock handler, and half a second of live play is half a
+// second in which a bot can tag the player and put paint straight back on.
+await page.mouse.click(512, 288);
+await page.waitForTimeout(400);
+const restarted = await page.evaluate(() => ({
+  phase: window.__paintball.match.phase,
+  timeLeft: window.__paintball.match.timeLeft,
+  ammo: window.__paintball.match.ammo.get('player'),
+  given: window.__paintball.characters.playerCharacter.hitsGiven,
+  splats: window.__paintball.characters.playerCharacter.paint.splatCount,
+  crate: window.__paintball.loot.position !== null,
+  isFinal: document.querySelector('[data-scoreboard]').classList.contains('is-final'),
+}));
+check('clicking after the whistle starts a fresh round',
+      restarted.phase === 'playing' && restarted.timeLeft > 290,
+      `phase=${restarted.phase} clock=${restarted.timeLeft.toFixed(0)}s`);
+check('a fresh round refills, rescores and puts out a new crate',
+      restarted.ammo === 100 && restarted.given === 0 && restarted.splats === 0 && restarted.crate,
+      `ammo ${restarted.ammo}, given ${restarted.given}, splats ${restarted.splats},` +
+        ` crate ${restarted.crate}`);
+check('the final board is put away', restarted.isFinal === false);
+
+// --- The other ending: the last paintball in the park --------------------
+await page.evaluate(() => {
+  const { loot, match } = window.__paintball;
+  window.__ended = null;
+  for (const id of match.ammo.keys()) match.ammo.set(id, 0);
+  // Somebody has already taken the crate; its rounds no longer count.
+  loot.position = null;
+  loot.rounds = 0;
+});
+await stepSim(1.0);
+const ranDry = await page.evaluate(() => ({
+  phase: window.__paintball.match.phase,
+  endedBy: window.__paintball.match.endedBy,
+  timeLeft: window.__paintball.match.timeLeft,
+}));
+check('running out of paint ends the round early',
+      ranDry.phase === 'ended' && ranDry.endedBy === 'ammo',
+      `phase=${ranDry.phase} by=${ranDry.endedBy} with ${ranDry.timeLeft.toFixed(0)}s left`);
+
+// A crate still out there means the paint is not gone, only put down.
+await page.mouse.click(512, 288);
+await page.waitForTimeout(400);
+await stepSim(0.5);
+const withCrateOut = await page.evaluate(() => {
+  const { loot, match } = window.__paintball;
+  for (const id of match.ammo.keys()) match.ammo.set(id, 0);
+  return { crate: loot.position !== null, phase: match.phase };
+});
+await stepSim(1.0);
+const stillPlaying = await page.evaluate(() => window.__paintball.match.phase);
+check('an unclaimed crate keeps the round alive',
+      withCrateOut.crate === true && stillPlaying === 'playing',
+      `crate out: ${withCrateOut.crate}, phase after: ${stillPlaying}`);
+
 check('no console or page errors', consoleErrors.length === 0, consoleErrors[0] ?? 'clean');
 
 // --- The test course stays a sandbox ---------------------------------------
@@ -255,8 +435,7 @@ const sandbox = await page.evaluate(() => ({
 check('the test course is a sandbox', sandbox.sandbox === true);
 check('the sandbox has no crate to find', sandbox.crate === null);
 
-await page.mouse.click(512, 288);
-await page.waitForTimeout(300);
+await lockPointer('the test course');
 await page.mouse.down();
 await stepSim(1.0);
 await page.mouse.up();

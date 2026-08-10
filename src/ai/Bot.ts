@@ -13,7 +13,7 @@ import type { Character } from '../character/Character';
 import type { AnimationInput } from '../character/CharacterAnimator';
 import type { BallisticsSystem } from '../gameplay/Ballistics';
 import type { LootState } from '../gameplay/LootSystem';
-import { ammoOf, consume, type MatchState } from '../gameplay/MatchState';
+import { ammoOf, consume, isPlaying, type MatchState } from '../gameplay/MatchState';
 import type { NavGrid } from './NavGrid';
 import type { Personality } from './Personality';
 
@@ -488,6 +488,10 @@ export class Bot {
    * never miss would make this a tense game, and it is not meant to be one.
    */
   private aimAndFire(dt: number, ctx: GameContext, ballistics: BallisticsSystem): void {
+    // Bots keep wandering after the round ends — a park that freezes solid is a
+    // worse thing to look at than one still going about its business — but
+    // nobody scores after the whistle, so nobody shoots either.
+    if (!isPlaying(this.match)) return;
     if (this.state !== 'engage' || !this.target) return;
     if (this.reactionTimer > 0) {
       this.reactionTimer -= dt;

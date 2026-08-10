@@ -16,7 +16,15 @@ import { match as matchConfig } from '../core/Config';
  * the player's count from the bots' to work around that is exactly how the two
  * drift apart.
  */
+export type MatchPhase = 'playing' | 'ended';
+
 export interface MatchState {
+  /** Owned by `MatchSystem`; everything else only reads it. */
+  phase: MatchPhase;
+  /** Seconds left, counted down in *simulated* time. */
+  timeLeft: number;
+  /** Why the round finished, once it has. */
+  endedBy?: 'time' | 'ammo';
   /** Character id to paintballs remaining. */
   readonly ammo: Map<string, number>;
   /**
@@ -36,7 +44,17 @@ export function createMatchState(
 ): MatchState {
   const ammo = new Map<string, number>();
   for (const id of characterIds) ammo.set(id, matchConfig.startingAmmo);
-  return { ammo, sandbox: options.sandbox ?? false };
+  return {
+    phase: 'playing',
+    timeLeft: matchConfig.durationSeconds,
+    ammo,
+    sandbox: options.sandbox ?? false,
+  };
+}
+
+/** True while the round is live. The gate on shooting, moving and scoring. */
+export function isPlaying(match: MatchState): boolean {
+  return match.phase === 'playing';
 }
 
 /** Rounds left for `id`. `Infinity` in sandbox mode, and 0 for a stranger. */
@@ -73,7 +91,10 @@ export function totalAmmo(match: MatchState): number {
   return total;
 }
 
-/** Puts everyone back to a full load, for a fresh round. */
-export function resetAmmo(match: MatchState): void {
+/** Puts everyone back to a full load and restarts the clock. */
+export function resetMatch(match: MatchState): void {
   for (const id of match.ammo.keys()) match.ammo.set(id, matchConfig.startingAmmo);
+  match.phase = 'playing';
+  match.timeLeft = matchConfig.durationSeconds;
+  match.endedBy = undefined;
 }

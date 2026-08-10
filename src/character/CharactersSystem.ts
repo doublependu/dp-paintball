@@ -6,7 +6,7 @@ import { NavGrid } from '../ai/NavGrid';
 import { PERSONALITIES } from '../ai/Personality';
 import type { BallisticsSystem } from '../gameplay/Ballistics';
 import type { LootState } from '../gameplay/LootSystem';
-import type { MatchState } from '../gameplay/MatchState';
+import { isPlaying, type MatchState } from '../gameplay/MatchState';
 import type { PlayerState } from '../gameplay/PlayerState';
 import { SplatAtlas } from '../paint/SplatAtlas';
 import { Character } from './Character';
@@ -122,6 +122,11 @@ export class CharactersSystem implements System {
   ): void {
     const target = this.find(event.targetId);
     if (!target || !this.splatAtlas) return;
+    // Nothing counts after the whistle. Shots already in the air when the clock
+    // ran out land on the world and paint it as usual, but a person they reach
+    // is not tagged — the alternative is a scoreboard that keeps moving after
+    // it has been shown as final.
+    if (!isPlaying(this.match)) return;
 
     const registered = target.takeHit(
       event.point,
@@ -217,6 +222,18 @@ export class CharactersSystem implements System {
     }
 
     void ctx;
+  }
+
+  /**
+   * Wipes the scoreboard and the paint everybody is wearing, for a new round.
+   * The park keeps its own paint — see `MatchSystem.restart`.
+   */
+  resetScores(): void {
+    for (const character of this.allCharacters) {
+      character.hitsTaken = 0;
+      character.hitsGiven = 0;
+      character.paint.clear();
+    }
   }
 
   /** Triggers the player's shooting pose. Called when a shot is fired. */

@@ -35,6 +35,12 @@ export interface GameEventMap {
   'loot:taken': { characterId: string; rounds: number; position: Vector3 };
   /** Score counters changed for someone. */
   'score:changed': { characterId: string; hitsTaken: number; hitsGiven: number };
+  /** A round is under way. Fires on the first round and on every restart. */
+  'match:started': { duration: number };
+  /** The clock is running down — sent once per threshold, not per step. */
+  'match:warning': { secondsLeft: number };
+  /** Time up, or the last paintball in the park has been spent. */
+  'match:ended': { reason: 'time' | 'ammo' };
   /** Loading progress, 0..1. */
   'load:progress': { phase: string; progress: number };
   /** Everything is ready and the game is playable. */

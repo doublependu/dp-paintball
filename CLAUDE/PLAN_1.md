@@ -443,26 +443,63 @@ showed a red empty-marker zero for one frame at startup, now filled in from
 `lootRespawnSeconds` defaults to 0 — one crate per round, as specified. The dial
 is there; 45 is the number to try.
 
-**An unresolved flake in `bot-test`, recorded so the next person does not start
-from zero.** Twice it exited 1 with a node exception rather than a failed
-assertion — no `FAIL` line, no summary, just the tail of an uncaught error. Both
-times were inside a back-to-back run of several suites. It then passed 8
-consecutive isolated runs and a full 5-suite chain, so it did not reproduce and
-the trace was never captured.
+**A trap worth knowing about, which cost most of an afternoon: the bots suite is
+`tools/bot-test.mjs`, singular, while its npm script is `test:bots`, plural.**
+Every ad-hoc loop of the form `for t in … bots …; do node tools/$t-test.mjs`
+therefore fails with `MODULE_NOT_FOUND` on that one suite — and the signature is
+a convincing impostor for a crashing test: no `PASS` lines, no summary, exit 1,
+and a stack trace whose tail is `}` and the node version banner. It was diagnosed
+as an intermittent crash twice before the log was captured unpiped, at which
+point it was obviously a typo. `npm test` uses the real filename and has never
+had a problem with it. Run suites through `npm test` / `npm run test:bots`, or
+capture full output before believing a suite is flaky.
 
-What is known: whenever the suite runs to completion it passes 16/16, so its
-assertions are not the thing failing. The file has exactly two waits, both at
-boot — `waitForFunction` for `window.__paintball` at 30 s and for the loader at
-60 s — and a throw from either would produce precisely this signature: no
-assertions run, no summary, exit 1. It is not memory pressure (22 GB free,
-`/dev/shm` at 1%). Nothing in phase C plausibly touches it: bots start at 100
-rounds and `wantsRestock` is false until they are under 15, and a regression in
-`Bot` would surface as a failed assertion, not an exception.
+## 4c. What actually landed — phase D
 
-If it recurs, run `node tools/bot-test.mjs` alone with **full** output — every
-loop that caught it was piping through `grep`/`tail`, which is why the trace was
-lost each time. The cheap hardening, if it becomes a nuisance, is raising that
-30 s hook wait to match the 60 s loader wait beside it.
+Item 5: the round has a clock, two ways to end, and a way to start another.
+
+`MatchSystem` finally exists, and it owns exactly what C deferred: `timeLeft`
+counted down in **simulated** time, the two end conditions, and `restart()`.
+Everything else gates on one boolean, `isPlaying(match)` — the weapon, the bots'
+triggers, the player's legs, and scoring — rather than each being told to stop
+by name. That is the whole reason the phase lives in `MatchState` instead of in
+the system: five readers, one writer.
+
+**The end rule needs all three of its clauses**, and the suite covers each. Time
+up is obvious. Running dry is `totalAmmo() === 0` **and** the crate is gone
+**and** nothing is still in flight: without the crate clause a round ends while
+twenty rounds sit under the arcade, and without the in-flight clause the final
+shot lands after the board has been drawn as final.
+
+**Nothing counts after the whistle.** `CharactersSystem.onHit` returns early once
+the round is over, so a ball already in the air still paints the *world* on
+arrival but does not tag the person it reaches. The alternative — letting late
+hits score — means a final scoreboard that keeps moving after it has been shown.
+
+**Restart is the click that re-locks the pointer.** Ending a round calls
+`Input.releaseLock()` so the cursor comes back to read the board; the next click
+on the canvas is already wired to request the lock, so `MatchSystem` listens for
+`input:lockChanged` and treats "locked again while ended" as *play again*. No new
+key, and the existing hint element carries the instruction. `releaseLock` also
+clears held keys, without which a fire button still down as the round ends stays
+held forever — its keyup arrives while the document is no longer listening.
+
+A restart resets the clock, everyone's load, the scoreboard and the paint people
+are wearing, and puts a crate somewhere new. **World paint deliberately
+persists**: it is already bounded by oldest-first eviction, and a park carrying
+the day's mess suits this game better than one that wipes clean every five
+minutes.
+
+**Three things measured rather than assumed.** The clock is `Math.ceil`, so it
+reads 5:00 for the first second and never shows 0:00 while there is time left —
+which also means 120 steps of 1/60 leave `timeLeft` a hair above 118 and the
+display legitimately reads either 1:58 or 1:59, so the format assertion is taken
+at 95.4s where there is one answer. The urgent colour *does* apply below 30s;
+verifying it took 2.5s of wall clock, because a 200ms `color` transition spans
+one or two frames at 1.4fps — the same slow-frame effect behind the `ui` drip
+failure. And the sandbox section of the suite was silently firing nothing:
+navigating away from a pointer-locked page and re-locking too soon is refused by
+Chrome, so `lockPointer()` now retries and fails loudly instead.
 
 ## 5. Rough order and size
 

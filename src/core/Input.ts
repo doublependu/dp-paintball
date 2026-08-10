@@ -156,6 +156,23 @@ export class Input {
     void this.element.requestPointerLock();
   }
 
+  /**
+   * Hands the cursor back.
+   *
+   * Held keys are cleared with it. Without that, a key still down at the moment
+   * the lock goes — the fire button, or a movement key — stays "held" forever,
+   * because the keyup arrives while the document is no longer receiving input
+   * for it.
+   */
+  releaseLock(): void {
+    if (document.pointerLockElement === this.element) document.exitPointerLock();
+    this.held.clear();
+    this.pressedThisFrame.clear();
+    this.releasedThisFrame.clear();
+    this.mouseDx = 0;
+    this.mouseDy = 0;
+  }
+
   get isLocked(): boolean {
     return this.locked;
   }

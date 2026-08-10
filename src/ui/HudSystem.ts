@@ -42,6 +42,8 @@ export class HudSystem implements System {
     // empty marker — a red zero on a full one.
     this.lastAmmo = ammoOf(this.match, 'player');
     this.hud.setAmmo(this.lastAmmo);
+    this.hud.setClockVisible(!this.match.sandbox);
+    if (!this.match.sandbox) this.hud.setClock(this.match.timeLeft);
     // The splash reuses the same generated splat shapes as world and character
     // paint, so what lands on the lens matches what's on the wall.
     this.atlas = this.sharedAtlas;
@@ -67,8 +69,31 @@ export class HudSystem implements System {
       this.hud?.showToast(`+${rounds} paint!`, 0xa8e337, 1.6);
     });
 
-    // The hint is for the menu state; once you're playing, it's clutter.
+    ctx.events.on('match:warning', ({ secondsLeft }) => {
+      const minutes = Math.round(secondsLeft / 60);
+      this.hud?.showToast(
+        minutes >= 1 ? `${minutes} minute${minutes === 1 ? '' : 's'} left!` : `${secondsLeft}s left!`,
+        0xffd23f,
+        2.2,
+      );
+    });
+
+    ctx.events.on('match:ended', ({ reason }) => {
+      this.hud?.showRoundOver(
+        reason === 'ammo' ? 'Out of paint. Everybody is messy.' : "Time! Everybody's messy.",
+        this.buildRows(),
+      );
+    });
+
+    ctx.events.on('match:started', () => {
+      this.hud?.clearRoundOver();
+    });
+
+    // The hint is for the menu state; once you're playing, it's clutter — but
+    // the round-over hint is the instruction to start another one, so it owns
+    // the element until `clearRoundOver` gives it back.
     ctx.events.on('input:lockChanged', ({ locked }) => {
+      if (this.match.phase === 'ended') return;
       this.hud?.setHintVisible(!locked);
     });
   }
@@ -91,6 +116,9 @@ export class HudSystem implements System {
       this.lastAmmo = ammo;
       hud.setAmmo(ammo);
     }
+
+    // The sandbox has no clock to show.
+    if (!this.match.sandbox) hud.setClock(this.match.timeLeft);
 
     const wantScoreboard = ctx.input.isDown('scoreboard');
     if (wantScoreboard !== this.scoreboardOpen) {

@@ -1,5 +1,11 @@
 import { match as matchConfig } from '../core/Config';
 
+/** Kept in one place, because the round-over state swaps them and swaps back. */
+const LIVE_HINT =
+  'click to play &nbsp;·&nbsp; wasd move &nbsp;·&nbsp; click fire &nbsp;·&nbsp; ' +
+  'right-click aim &nbsp;·&nbsp; t wave &nbsp;·&nbsp; tab scores';
+const LIVE_SCOREBOARD_TITLE = 'Nobody wins. Everybody gets messy.';
+
 export interface ScoreRow {
   id: string;
   label: string;
@@ -22,15 +28,18 @@ export interface ScoreRow {
  */
 export class Hud {
   private root: HTMLDivElement;
+  private clock: HTMLDivElement;
   private ammoValue: HTMLSpanElement;
   private givenValue: HTMLSpanElement;
   private takenValue: HTMLSpanElement;
   private toast: HTMLDivElement;
   private scoreboard: HTMLDivElement;
+  private scoreboardTitle: HTMLDivElement;
   private scoreboardBody: HTMLDivElement;
   private hint: HTMLDivElement;
 
   private toastTimer = 0;
+  private roundOver = false;
 
   constructor(container: HTMLElement) {
     this.root = document.createElement('div');
@@ -38,6 +47,7 @@ export class Hud {
 
     this.root.innerHTML = `
       <div class="hud__viewport-crosshair" aria-hidden="true"></div>
+      <div class="hud__clock" data-clock>5:00</div>
       <div class="hud__counters">
         <div class="hud__counter hud__counter--ammo">
           <span class="hud__value" data-ammo>0</span>
@@ -53,9 +63,9 @@ export class Hud {
         </div>
       </div>
       <div class="hud__toast" data-toast></div>
-      <div class="hud__hint" data-hint>click to play &nbsp;·&nbsp; wasd move &nbsp;·&nbsp; click fire &nbsp;·&nbsp; right-click aim &nbsp;·&nbsp; t wave &nbsp;·&nbsp; tab scores</div>
+      <div class="hud__hint" data-hint>${LIVE_HINT}</div>
       <div class="hud__scoreboard" data-scoreboard>
-        <div class="hud__scoreboard-title">Nobody wins. Everybody gets messy.</div>
+        <div class="hud__scoreboard-title" data-scoreboard-title>${LIVE_SCOREBOARD_TITLE}</div>
         <div class="hud__scoreboard-head">
           <span>player</span><span>tagged them</span><span>tagged</span>
         </div>
@@ -65,6 +75,8 @@ export class Hud {
 
     container.append(this.root);
 
+    this.clock = this.root.querySelector('[data-clock]')!;
+    this.scoreboardTitle = this.root.querySelector('[data-scoreboard-title]')!;
     this.ammoValue = this.root.querySelector('[data-ammo]')!;
     this.givenValue = this.root.querySelector('[data-given]')!;
     this.takenValue = this.root.querySelector('[data-taken]')!;
@@ -85,6 +97,54 @@ export class Hud {
     this.ammoValue.classList.toggle('is-low', remaining > 0 && remaining <= matchConfig.lowAmmo);
     this.ammoValue.classList.toggle('is-empty', remaining <= 0);
     this.pulse(this.ammoValue);
+  }
+
+  /**
+   * The round clock, as m:ss.
+   *
+   * Rounded up, not down, so it reads 5:00 for the first second rather than
+   * 4:59, and never shows 0:00 while there is still time to play.
+   */
+  /** Hidden outright in the sandbox, where a frozen 5:00 would be a lie. */
+  setClockVisible(visible: boolean): void {
+    this.clock.classList.toggle('is-hidden', !visible);
+  }
+
+  setClock(secondsLeft: number): void {
+    const total = Math.max(0, Math.ceil(secondsLeft));
+    const text = `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+    if (this.clock.textContent === text) return;
+    this.clock.textContent = text;
+    this.clock.classList.toggle('is-urgent', total <= matchConfig.urgentAtSeconds && total > 0);
+  }
+
+  /**
+   * Locks the scoreboard open with a closing title.
+   *
+   * Phase D's whole ending: the board the player already knows from Tab,
+   * promoted to the final word. Phase E replaces this with the full-screen
+   * showcase of everybody's paint.
+   */
+  showRoundOver(title: string, rows: ScoreRow[]): void {
+    this.roundOver = true;
+    // The last toast is almost always "1 minute left!", which lingers behind the
+    // board it has just been overtaken by.
+    this.toastTimer = 0;
+    this.toast.classList.remove('is-visible');
+    this.scoreboardTitle.textContent = title;
+    this.updateScoreboard(rows);
+    this.scoreboard.classList.add('is-visible', 'is-final');
+    this.hint.textContent = 'click to play again';
+    this.hint.classList.remove('is-hidden');
+  }
+
+  /** Puts the HUD back to a live round. */
+  clearRoundOver(): void {
+    this.roundOver = false;
+    this.scoreboardTitle.textContent = LIVE_SCOREBOARD_TITLE;
+    this.scoreboard.classList.remove('is-visible', 'is-final');
+    this.hint.textContent = LIVE_HINT;
+    this.hint.classList.add('is-hidden');
   }
 
   setCounters(given: number, taken: number): void {
@@ -116,7 +176,9 @@ export class Hud {
     this.hint.classList.toggle('is-hidden', !visible);
   }
 
+  /** Ignored once the round is over: the final board does not close. */
   setScoreboardVisible(visible: boolean): void {
+    if (this.roundOver) return;
     this.scoreboard.classList.toggle('is-visible', visible);
   }
 

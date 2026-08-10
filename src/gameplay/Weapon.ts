@@ -4,7 +4,7 @@ import { DEG2RAD, clamp, damp } from '../core/MathUtils';
 import type { GameContext, System } from '../core/System';
 import { AimSolver, spreadConeRadius } from './Aim';
 import type { BallisticsSystem } from './Ballistics';
-import { consume, type MatchState } from './MatchState';
+import { consume, isPlaying, type MatchState } from './MatchState';
 import type { PlayerState } from './PlayerState';
 
 /** Pitch kick per shot, in radians. Deliberately tiny — this is a calm game. */
@@ -51,6 +51,13 @@ export class WeaponSystem implements System {
   fixedUpdate(dt: number, ctx: GameContext): void {
     this.cooldown = Math.max(0, this.cooldown - dt);
     this.recover(dt);
+
+    // No shooting after the whistle. Ahead of the input read so a trigger still
+    // held as the round ends does not click on the results screen.
+    if (!isPlaying(this.match)) {
+      this.dryClicked = false;
+      return;
+    }
 
     if (!ctx.input.isDown('fire')) {
       this.dryClicked = false;

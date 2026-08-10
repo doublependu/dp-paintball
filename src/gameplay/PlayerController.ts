@@ -3,6 +3,7 @@ import { Vector3 } from 'three';
 import { physics as physicsConfig, player as playerConfig } from '../core/Config';
 import { damp, dampAngle } from '../core/MathUtils';
 import type { GameContext, System } from '../core/System';
+import { isPlaying, type MatchState } from './MatchState';
 import type { PlayerState } from './PlayerState';
 
 /** Grace window after walking off a ledge during which a jump still works. */
@@ -11,6 +12,8 @@ const COYOTE_TIME = 0.12;
 const JUMP_BUFFER = 0.15;
 /** Downward bias kept while grounded so snap-to-ground keeps its contact. */
 const GROUND_STICK_SPEED = 2;
+/** Stand-still intent, for when the round is over. */
+const NO_MOVE = { x: 0, y: 0 } as const;
 
 /**
  * Kinematic character controller.
@@ -40,7 +43,10 @@ export class PlayerController implements System {
   private readonly right = new Vector3();
   private readonly desired = new Vector3();
 
-  constructor(private readonly state: PlayerState) {}
+  constructor(
+    private readonly state: PlayerState,
+    private readonly match: MatchState,
+  ) {}
 
   init(ctx: GameContext): void {
     const { physics } = ctx;
@@ -83,11 +89,15 @@ export class PlayerController implements System {
     this.prevPosition.copy(this.currPosition);
 
     // --- Intent ---------------------------------------------------------
-    const move = input.getMoveVector();
-    state.sprinting = input.isDown('sprint') && move.y > 0 && !state.crouching;
-    this.wantsCrouch = input.isDown('crouch');
+    // Hands off the controls once the round is over: the results are something
+    // to read, not to walk away from. Gravity and the ground contact below still
+    // run, so the character settles rather than freezing mid-air.
+    const playing = isPlaying(this.match);
+    const move = playing ? input.getMoveVector() : NO_MOVE;
+    state.sprinting = playing && input.isDown('sprint') && move.y > 0 && !state.crouching;
+    this.wantsCrouch = playing && input.isDown('crouch');
 
-    if (input.wasPressed('jump')) this.jumpBufferTimer = JUMP_BUFFER;
+    if (playing && input.wasPressed('jump')) this.jumpBufferTimer = JUMP_BUFFER;
     this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - dt);
     this.coyoteTimer = state.grounded
       ? COYOTE_TIME

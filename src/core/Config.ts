@@ -131,6 +131,12 @@ export const ballistics = {
  * bonus but the thing that keeps a round moving.
  */
 export const match = {
+  /** Round length. Ends early if every last paintball is gone first. */
+  durationSeconds: 300,
+  /** A toast goes out when this much time is left. */
+  warnAtSeconds: 60,
+  /** The clock turns urgent below this. */
+  urgentAtSeconds: 30,
   /** Paintballs everyone starts with. */
   startingAmmo: 100,
   /** Paint in one crate. */

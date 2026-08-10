@@ -12,6 +12,7 @@ import { PlayerController } from './gameplay/PlayerController';
 import { createPlayerState } from './gameplay/PlayerState';
 import { LootSystem, createLootState, type LootState } from './gameplay/LootSystem';
 import { createMatchState, type MatchState } from './gameplay/MatchState';
+import { MatchSystem } from './gameplay/MatchSystem';
 import { WeaponSystem } from './gameplay/Weapon';
 import { PaintSystem } from './paint/PaintSystem';
 import { SplatAtlas } from './paint/SplatAtlas';
@@ -43,7 +44,6 @@ const game = new Game(container);
 const playerState = createPlayerState(
   useTestCourse ? new Vector3(0, 2, 6) : new Vector3(0, 1.5, 10),
 );
-const player = new PlayerController(playerState);
 const surfaces = new SurfaceRegistry();
 // Generated once and shared: world paint, character paint and the lens splash
 // all stamp the same shapes.
@@ -87,6 +87,9 @@ const loot = createLootState();
 const seedParam = new URLSearchParams(location.search).get('seed');
 const lootSeed = seedParam !== null ? Number(seedParam) >>> 0 : Date.now() >>> 0;
 
+// Built after the match, whose roster needs the bot list and whose phase the
+// controller reads — a player does not drive once the round is over.
+const player = new PlayerController(playerState, match);
 const charactersSystem = new CharactersSystem(
   playerState,
   characterRegistry,
@@ -97,6 +100,7 @@ const charactersSystem = new CharactersSystem(
   bots,
 );
 const lootSystem = new LootSystem(match, loot, playerState, charactersSystem, lootSeed);
+const matchSystem = new MatchSystem(match, charactersSystem, ballistics, loot, lootSystem);
 const audio = new AudioSystem(playerState);
 const hud = new HudSystem(container, charactersSystem, splatAtlas, match);
 // One solver shared by the gun and the scene crosshair, so the mark on the
@@ -118,6 +122,9 @@ game
   .add(charactersSystem)
   // After characters, whose init builds the navgrid the crate is placed on.
   .add(lootSystem)
+  // After loot: the round can end on the last paintball in the park, and the
+  // crate's own rounds count until somebody has taken them.
+  .add(matchSystem)
   // After characters: the HUD reads their scores, and audio positions sounds
   // relative to the player's interpolated transform.
   .add(audio)
@@ -149,6 +156,7 @@ declare global {
       match: MatchState;
       loot: LootState;
       lootSystem: LootSystem;
+      matchSystem: MatchSystem;
       camera: () => { x: number; y: number; z: number };
       simTime: () => number;
       setManualSim: (on: boolean) => void;
@@ -188,6 +196,7 @@ window.__paintball = {
   match,
   loot,
   lootSystem,
+  matchSystem,
   camera: () => game.render.camera.position.clone(),
   simTime: () => game.simElapsed,
   setManualSim: (on) => game.setManualSim(on),
