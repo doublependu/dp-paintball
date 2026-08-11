@@ -340,11 +340,30 @@ body {
   box-shadow: 0 16px 44px rgba(42, 36, 56, 0.34);
 }
 
+.results__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
 .results__title {
   font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.02em;
-  margin-bottom: 10px;
+}
+
+/*
+ * The badge shares `.fork-badge` with the loading card, which is styled in the
+ * inlined block in index.html so it paints before this stylesheet is fetched.
+ * Only the bits that differ inside the results card live here — chiefly the
+ * pointer-events, since `.results` lets clicks through to the canvas so that
+ * clicking anywhere starts the next round. The link is the one exception.
+ */
+.results .fork-badge {
+  pointer-events: auto;
 }
 
 .results__awards {

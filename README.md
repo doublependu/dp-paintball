@@ -41,3 +41,6 @@ claude --dangerously-skip-permissions
 
 
 
+## Backed by
+
+Man & Bot ®
