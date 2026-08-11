@@ -45,9 +45,10 @@ import { TrunkLibrary, type Species } from './TreeGeometry';
 import { Water } from './Water';
 
 /**
- * Built from `BASE_URL` rather than written as a root-absolute path: on GitHub
- * Pages the app lives under `/dp-paintball/`, where a bare `/models/...` would
- * miss the deployment entirely. `BASE_URL` always carries a trailing slash.
+ * Built from `BASE_URL` rather than written as a root-absolute path. The
+ * deployment is at a domain root today, so the two are equivalent, but it was a
+ * project site under `/dp-paintball/` where a bare `/models/...` missed the
+ * build entirely. `BASE_URL` always carries a trailing slash.
  */
 const MODEL_URL = `${import.meta.env.BASE_URL}models/park-props.glb`;
 

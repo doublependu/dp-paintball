@@ -16,18 +16,12 @@ import wasm from 'vite-plugin-wasm';
  */
 export default defineConfig({
   /**
-   * GitHub Pages serves this repo as a project site, at
-   * `doublependu.github.io/dp-paintball/` rather than at a domain root, so every
-   * built URL needs the repo name in front of it.
-   *
-   * This is set unconditionally rather than only for the Pages build so dev and
-   * preview exercise the same paths production does — a base-relative bug that
-   * only appears once deployed is the whole reason this setting is easy to get
-   * wrong. Anything reading `import.meta.env.BASE_URL` therefore stays correct
-   * everywhere, and the `tools/*.mjs` harnesses still work against the preview
-   * server's root, which serves this same base-prefixed `index.html`.
+   * No `base` is set: GitHub Pages serves this from the custom domain
+   * `v0.maize.live`, so the app sits at the domain root and Vite's default `/`
+   * is correct. It used to be a project site under `/dp-paintball/`, which is
+   * why anything URL-building still goes through `import.meta.env.BASE_URL` —
+   * that keeps working whichever way this setting goes.
    */
-  base: '/dp-paintball/',
   plugins: [wasm()],
   build: {
     target: 'esnext',

@@ -11,7 +11,7 @@
 import { chromium } from 'playwright-core';
 import { existsSync } from 'node:fs';
 
-const url = process.argv[2] ?? 'http://localhost:4173/dp-paintball/';
+const url = process.argv[2] ?? 'http://localhost:4173/';
 const spotName = process.argv[3] ?? 'plaza-fountain';
 const EXECUTABLE =
   process.env.CHROME_PATH ??
