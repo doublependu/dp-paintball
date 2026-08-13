@@ -3,7 +3,7 @@ import { match as matchConfig } from '../core/Config';
 import type { GameContext, System } from '../core/System';
 import type { BallisticsSystem } from './Ballistics';
 import type { LootState, LootSystem } from './LootSystem';
-import { isPlaying, resetMatch, totalAmmo, type MatchState } from './MatchState';
+import { isPaused, isPlaying, resetMatch, totalAmmo, type MatchState } from './MatchState';
 
 /**
  * The round: a clock, an ending, and a way to start another one.
@@ -37,9 +37,36 @@ export class MatchSystem implements System {
     // is read here so it works whether or not the pointer is locked — which it
     // is not, once a round has ended and the cursor has been handed back.
     ctx.events.on('input:lockChanged', ({ locked }) => {
-      // Re-locking after the round is over is how you say "again".
-      if (locked && !isPlaying(this.match)) this.restart(ctx);
+      if (locked) {
+        // Getting the pointer back means one of two things, and which one it
+        // means is the phase we were in when we lost it.
+        if (isPaused(this.match)) this.resume(ctx);
+        else if (!isPlaying(this.match)) this.restart(ctx);
+        return;
+      }
+      // Esc, alt-tab, or anything else that takes the pointer away mid-round.
+      // Losing the mouse mid-fight and being shot while reading a browser
+      // dialog is not a game; the round waits.
+      if (isPlaying(this.match)) this.pause(ctx);
     });
+  }
+
+  /**
+   * Holds the round.
+   *
+   * Nothing is stopped by hand: the phase is the brake, and every system that
+   * matters — the clock below, the weapon, the bots, the player's legs — is
+   * already gated on `isPlaying`. Paint still in the air keeps flying and lands
+   * on the world, exactly as it does when the whistle goes.
+   */
+  private pause(ctx: GameContext): void {
+    this.match.phase = 'paused';
+    ctx.events.emit('match:paused', {});
+  }
+
+  private resume(ctx: GameContext): void {
+    this.match.phase = 'playing';
+    ctx.events.emit('match:resumed', {});
   }
 
   fixedUpdate(dt: number, ctx: GameContext): void {

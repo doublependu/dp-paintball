@@ -41,6 +41,10 @@ export interface GameEventMap {
   'match:warning': { secondsLeft: number };
   /** Time up, or the last paintball in the park has been spent. */
   'match:ended': { reason: 'time' | 'ammo' };
+  /** The round is on hold — the pointer was handed back mid-play. */
+  'match:paused': Record<string, never>;
+  /** Back in. Fires on the lock that ends a pause, never on a fresh round. */
+  'match:resumed': Record<string, never>;
   /** Loading progress, 0..1. */
   'load:progress': { phase: string; progress: number };
   /** Everything is ready and the game is playable. */

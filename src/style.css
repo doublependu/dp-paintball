@@ -306,6 +306,218 @@ body {
 .hud__score-given { color: #4e7a1f; }
 .hud__score-taken { color: #b3246a; }
 
+/* ---------------------------------------------------------------------------
+   The pause card.
+
+   Esc hands the pointer back, and the round stops with it. What goes over the
+   park is built from the two screens either side of it: the loading card's
+   tinted sky wash and centred stack, on the results card's ink border and
+   cream paper. Stopping mid-round should look like the same game.
+
+   This layer is the one overlay that *does* take clicks — it has to, since it
+   covers the canvas that would otherwise be granting pointer lock.
+   --------------------------------------------------------------------------- */
+
+.pause {
+  position: fixed;
+  inset: 0;
+  /* Over the HUD (25) and the lens splash (30): paint on the visor is not the
+     player's point of view while the game is held. */
+  z-index: 40;
+  /* Flex rather than grid: an auto grid track takes its width from the card's
+     max-content, which the wrapped key legend makes far wider than the screen,
+     and the card ends up sitting off to one side of a track nobody can see. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 24px;
+  /* The loader's gradient, thinned so the park still reads behind it. */
+  background: linear-gradient(
+    170deg,
+    rgba(234, 246, 251, 0.72) 0%,
+    rgba(207, 233, 242, 0.66) 45%,
+    rgba(185, 220, 198, 0.72) 100%
+  );
+  backdrop-filter: blur(5px) saturate(1.1);
+  font-family: ui-rounded, "Segoe UI Rounded", "Hiragino Maru Gothic ProN",
+    system-ui, -apple-system, sans-serif;
+  color: #2a2438;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.pause.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.pause__card {
+  box-sizing: border-box;
+  width: min(560px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 26px 30px 24px;
+  border-radius: 22px;
+  border: 3px solid #2a2438;
+  background: rgba(252, 250, 245, 0.96);
+  box-shadow: 0 18px 50px rgba(42, 36, 56, 0.34);
+  transform: translateY(10px) scale(0.98);
+  transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+.pause.is-visible .pause__card {
+  transform: translateY(0) scale(1);
+}
+
+.pause__eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: rgba(42, 36, 56, 0.5);
+}
+
+.pause__title {
+  margin: 0;
+  font-size: clamp(2rem, 6vw, 2.9rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.pause__subtitle {
+  margin: -8px 0 0;
+  font-size: 0.95rem;
+  color: rgba(42, 36, 56, 0.66);
+}
+
+/* The round, as it stands. Same colours as the counters it stands in for. */
+.pause__stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  width: 100%;
+  padding: 12px 0;
+  border-top: 2px solid rgba(42, 36, 56, 0.14);
+  border-bottom: 2px solid rgba(42, 36, 56, 0.14);
+}
+
+.pause__stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  line-height: 1;
+}
+
+.pause__stat-value {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.pause__stat--given .pause__stat-value { color: #4c8a20; }
+.pause__stat--taken .pause__stat-value { color: #d1356f; }
+.pause__stat--ammo .pause__stat-value { color: #0093a3; }
+
+.pause__stat-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  text-align: center;
+  color: rgba(42, 36, 56, 0.55);
+}
+
+.pause__resume {
+  width: min(320px, 100%);
+  padding: 14px 24px;
+  border: 3px solid #2a2438;
+  border-radius: 999px;
+  background: #00d4e8;
+  color: #2a2438;
+  font: inherit;
+  font-size: 1.05rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  box-shadow: 0 5px 0 rgba(42, 36, 56, 0.3);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.pause__resume:hover {
+  transform: translateY(-2px);
+  background: #4ce4f2;
+  box-shadow: 0 7px 0 rgba(42, 36, 56, 0.3);
+}
+
+.pause__resume:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 rgba(42, 36, 56, 0.3);
+}
+
+.pause__note {
+  margin-top: -6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  text-align: center;
+  color: rgba(42, 36, 56, 0.5);
+}
+
+/* The controls, written down somewhere at last. */
+.pause__keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.pause__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 2px solid rgba(42, 36, 56, 0.18);
+  font-size: 11px;
+  color: rgba(42, 36, 56, 0.7);
+}
+
+.pause__key kbd {
+  font: inherit;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #2a2438;
+}
+
+/*
+ * The badge is the shared `.fork-badge` from index.html — see the note below
+ * the results card. Here it is the second thing on the screen after the resume
+ * button, so it gets a size to match.
+ */
+.fork-badge--hero {
+  margin-top: 2px;
+  padding: 13px 26px;
+  font-size: 1rem;
+}
+
+.fork-badge--hero svg {
+  width: 24px;
+  height: 24px;
+}
+
 /*
  * The end-of-round card.
  *

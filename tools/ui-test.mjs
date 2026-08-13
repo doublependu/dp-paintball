@@ -215,6 +215,65 @@ const stillLocked = await page.evaluate(() => window.__paintball.game.input.isLo
 check('pointer lock survives Tab', stillLocked === true,
       'Tab would otherwise move focus and silently kill input');
 
+// --- Pause -----------------------------------------------------------------
+//
+// Esc is not pressed here. Leaving a pointer lock is browser UI rather than a
+// page event: headless Chrome ignores a synthetic Escape, and the real one is
+// never delivered to the page at all. Both end in the same place — the lock is
+// gone — which is what the pause actually keys off, so that is what is done.
+const beforePause = await page.evaluate(() => window.__paintball.match.timeLeft);
+await page.evaluate(() => document.exitPointerLock());
+await page.waitForTimeout(300);
+const paused = await page.evaluate(() => ({
+  phase: window.__paintball.match.phase,
+  card: document.querySelector('.pause')?.classList.contains('is-visible'),
+  clock: document.querySelector('[data-pause-clock]')?.textContent,
+  // The card has to take clicks; every other overlay must not.
+  events: getComputedStyle(document.querySelector('.pause')).pointerEvents,
+  hintHidden: document.querySelector('[data-hint]').classList.contains('is-hidden'),
+}));
+check('losing the pointer mid-round raises the pause card',
+      paused.phase === 'paused' && paused.card === true,
+      `phase=${paused.phase} card=${paused.card}`);
+check('the pause card takes clicks', paused.events === 'auto', paused.events);
+check('the pause card shows the clock it stopped', /^\d:\d\d$/.test(paused.clock ?? ''),
+      paused.clock);
+check('the HUD hint stays down behind the card', paused.hintHidden === true);
+
+// The whole point: a pause has to actually stop the round.
+await waitSim(5);
+const heldFor = await page.evaluate(() => window.__paintball.match.timeLeft);
+check('the clock does not run while paused', heldFor === beforePause,
+      `${beforePause.toFixed(2)}s -> ${heldFor.toFixed(2)}s over 5 simulated seconds`);
+
+// The repo link is the one thing on the card that must not resume — grabbing
+// the pointer as a new tab opens would be a small hostage situation.
+await page.evaluate(() => {
+  const link = document.querySelector('.pause .fork-badge');
+  link.removeAttribute('href');
+  link.click();
+});
+await page.waitForTimeout(150);
+check('the repo link does not resume the round',
+      (await page.evaluate(() => window.__paintball.match.phase)) === 'paused');
+
+// Clear of the second or so in which a browser refuses a lock after Esc.
+await page.waitForTimeout(1600);
+await page.click('[data-pause-resume]');
+await page.waitForTimeout(500);
+const resumed = await page.evaluate(() => ({
+  phase: window.__paintball.match.phase,
+  locked: window.__paintball.game.input.isLocked,
+  card: document.querySelector('.pause').classList.contains('is-visible'),
+}));
+check('clicking the card gives the pointer back and restarts the clock',
+      resumed.phase === 'playing' && resumed.locked === true && resumed.card === false,
+      `phase=${resumed.phase} locked=${resumed.locked} card=${resumed.card}`);
+await waitSim(2);
+const afterResume = await page.evaluate(() => window.__paintball.match.timeLeft);
+check('the round runs again once resumed', afterResume < heldFor,
+      `${heldFor.toFixed(2)}s -> ${afterResume.toFixed(2)}s`);
+
 check('no console or page errors', consoleErrors.length === 0, consoleErrors[0] ?? 'clean');
 
 await browser.close();

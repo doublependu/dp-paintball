@@ -16,7 +16,7 @@ import { match as matchConfig } from '../core/Config';
  * the player's count from the bots' to work around that is exactly how the two
  * drift apart.
  */
-export type MatchPhase = 'playing' | 'ended';
+export type MatchPhase = 'playing' | 'paused' | 'ended';
 
 export interface MatchState {
   /** Owned by `MatchSystem`; everything else only reads it. */
@@ -52,9 +52,21 @@ export function createMatchState(
   };
 }
 
-/** True while the round is live. The gate on shooting, moving and scoring. */
+/**
+ * True while the round is live. The gate on shooting, moving and scoring.
+ *
+ * A pause is deliberately not "playing", which is what makes it a real pause:
+ * every system already stops on this one boolean, so the clock, the bots, the
+ * triggers and the player's legs all hold still without being told to
+ * individually.
+ */
 export function isPlaying(match: MatchState): boolean {
   return match.phase === 'playing';
+}
+
+/** True while the round is on hold, waiting for the pointer to come back. */
+export function isPaused(match: MatchState): boolean {
+  return match.phase === 'paused';
 }
 
 /** Rounds left for `id`. `Infinity` in sandbox mode, and 0 for a stranger. */

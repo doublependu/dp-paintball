@@ -78,32 +78,54 @@
         opacity: 0.55;
         min-height: 1em;
       }
-      /* Shared with the end-of-round card — see the note in src/style.css. */
+      /*
+        Shared with the end-of-round and pause cards — see the note in
+        src/style.css. Sized to be found rather than to be tidy: this is the
+        one link on the page and it was previously a footnote, so it now
+        carries the game's yellow, a proper button's weight, and a slow nudge
+        that catches the eye without ever being in the way.
+      */
       .fork-badge {
         display: inline-flex;
         align-items: center;
-        gap: 7px;
-        padding: 6px 13px;
-        border: 2px solid #2a2438;
+        gap: 10px;
+        padding: 11px 22px;
+        border: 3px solid #2a2438;
         border-radius: 999px;
-        background: #fff6d8;
+        background: #ffd23f;
         color: #2a2438;
-        font-size: 0.72rem;
+        font-size: 0.92rem;
         font-weight: 800;
         text-decoration: none;
         text-transform: uppercase;
-        letter-spacing: 0.1em;
-        box-shadow: 0 3px 0 rgba(42, 36, 56, 0.22);
-        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        letter-spacing: 0.08em;
+        box-shadow: 0 4px 0 rgba(42, 36, 56, 0.3);
+        transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+        animation: fork-nudge 6s ease-in-out 2s infinite;
       }
       .fork-badge:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 0 rgba(42, 36, 56, 0.22);
+        transform: translateY(-2px) rotate(-1.5deg);
+        background: #ffdf6e;
+        box-shadow: 0 7px 0 rgba(42, 36, 56, 0.3);
+        animation: none;
+      }
+      .fork-badge:active {
+        transform: translateY(1px);
+        box-shadow: 0 2px 0 rgba(42, 36, 56, 0.3);
       }
       .fork-badge svg {
-        width: 15px;
-        height: 15px;
+        width: 22px;
+        height: 22px;
         fill: currentColor;
+      }
+      /* A wobble, not a throb: it should read as hand-drawn, not as an advert. */
+      @keyframes fork-nudge {
+        0%, 88%, 100% { transform: rotate(0deg); }
+        91% { transform: rotate(-3deg) scale(1.04); }
+        95% { transform: rotate(3deg) scale(1.04); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .fork-badge { animation: none; }
       }
     </style>
   </head>

@@ -89,12 +89,26 @@ export class HudSystem implements System {
     });
     ctx.events.on('match:started', () => this.hud?.setPlayingChromeVisible(true));
 
-    // The hint is for the menu state; once you're playing, it's clutter. The
-    // results card carries its own "click to play again", so the hint stays down
-    // while a round is over even though the pointer is unlocked.
+    // The hint is for the menu state before the first click; once you're
+    // playing, it's clutter. Every other unlocked state has a card of its own
+    // that says the same thing better — the results board, and the pause card
+    // — so the hint stays down for those even though the pointer is free.
     ctx.events.on('input:lockChanged', ({ locked }) => {
       this.hud?.setHintVisible(!locked && this.match.phase === 'playing');
     });
+    // A held round is the pause card's screen, the way a finished one is the
+    // results card's. The card carries the clock, the score and the paint
+    // count itself, so the live chrome underneath would only be the same
+    // numbers again, showing through it.
+    //
+    // The hint goes with them. That is belt and braces on the handler above:
+    // both hang off the same lock change, and this must not depend on the
+    // match having flipped the phase first.
+    ctx.events.on('match:paused', () => {
+      this.hud?.setHintVisible(false);
+      this.hud?.setPlayingChromeVisible(false);
+    });
+    ctx.events.on('match:resumed', () => this.hud?.setPlayingChromeVisible(true));
   }
 
   update(dt: number, _alpha: number, ctx: GameContext): void {

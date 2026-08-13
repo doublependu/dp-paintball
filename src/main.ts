@@ -18,6 +18,7 @@ import { PaintSystem } from './paint/PaintSystem';
 import { SplatAtlas } from './paint/SplatAtlas';
 import { SurfaceRegistry } from './paint/SurfaceRegistry';
 import { HudSystem } from './ui/HudSystem';
+import { PauseSystem } from './ui/PauseSystem';
 import { ResultsSystem } from './ui/ResultsSystem';
 import { ParkArenaSystem } from './world/ParkArena';
 import { TestCourseSystem } from './world/TestCourse';
@@ -132,6 +133,8 @@ game
   // relative to the player's interpolated transform.
   .add(audio)
   .add(hud)
+  // After the HUD, whose bottom hint it replaces while the round is held.
+  .add(new PauseSystem(container, charactersSystem, match))
   // Last: it draws over the finished frame, and it takes the characters out of
   // the world, which everything above expects to still be there while playing.
   .add(new ResultsSystem(container, charactersSystem, match, game.render));

@@ -152,8 +152,18 @@ export class Input {
     this.disposers = [];
   }
 
+  /**
+   * Asks for the pointer back.
+   *
+   * The refusal is swallowed on purpose. Browsers reject a lock requested in
+   * the second or so after the user pressed Esc to leave one — it is an
+   * anti-trap measure, not a fault, and an unhandled rejection in the console
+   * for it is noise. Callers that care whether it took should watch
+   * `input:lockChanged` and ask again.
+   */
   requestLock(): void {
-    void this.element.requestPointerLock();
+    const request = this.element.requestPointerLock() as unknown;
+    if (request instanceof Promise) request.catch(() => {});
   }
 
   /**
