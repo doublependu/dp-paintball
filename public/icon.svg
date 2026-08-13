@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!--
+    The home-screen icon: a splat on the game's own sky, drawn the way the game
+    draws paint — a lumpy blob with an ink line around it, not a circle.
+    Deliberately legible at 48px, which is what a home screen actually shows.
+  -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#eaf6fb"/>
+      <stop offset="55%" stop-color="#cfe9f2"/>
+      <stop offset="100%" stop-color="#b9dcc6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#sky)"/>
+
+  <!-- The main blob, off-centre so it reads as thrown rather than placed. -->
+  <path
+    fill="#ff3d81" stroke="#2a2438" stroke-width="18" stroke-linejoin="round"
+    d="M262 96c46-8 92 14 118 52 24 35 18 78 40 112 20 31 12 74-18 96-32 24-76 12-114 22-40 10-84 26-116 2-31-24-28-72-44-108-15-34-38-72-20-106 18-33 62-34 96-48 22-9 39-18 58-22z"
+  />
+
+  <!-- Two satellites, because paint never lands in one piece. -->
+  <path
+    fill="#ffd23f" stroke="#2a2438" stroke-width="14" stroke-linejoin="round"
+    d="M392 118c22-6 44 10 42 30-2 21-26 34-44 26-19-8-22-50 2-56z"
+  />
+  <path
+    fill="#00d4e8" stroke="#2a2438" stroke-width="14" stroke-linejoin="round"
+    d="M108 386c20-8 42 6 42 26 0 22-24 36-42 28-18-9-20-46 0-54z"
+  />
+
+  <!-- The highlight the cel shader would give it. -->
+  <path fill="#ffffff" opacity="0.45" d="M196 168c26-24 62-30 88-16-30 2-58 14-76 34-12 14-18 30-20 46-8-22-4-48 8-64z"/>
+</svg>

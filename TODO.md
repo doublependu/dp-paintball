@@ -33,3 +33,15 @@ button placement are all in the `touch` block of `src/core/Config.ts`, and none
 of them has been held in a hand yet. iOS in particular has never run this — it
 refuses both fullscreen and orientation lock, so it falls back to the rotate
 card, and that path is reasoned about rather than observed.
+
+# Iteration 4 — the playtest fixes
+
+All six items in `CLAUDE/FEEDBACK_3.md` are done: a trigger for each hand, aim
+back as a toggle, the other four buttons gone, and the selection wash killed.
+For iOS, where Safari has no fullscreen at all, the start card now offers to add
+the game to the home screen — one tap where the browser allows it, and the Share
+steps spelled out where it does not.
+
+Plan in `CLAUDE/PLAN_4.md`, consequences in `CLAUDE/NEXT_4.md`. The one worth
+reading before the next playtest: a phone player cannot jump any more, which
+autostep covers for stairs but not for benches and low walls.

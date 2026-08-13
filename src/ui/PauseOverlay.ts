@@ -33,20 +33,18 @@ const KEYS: ReadonlyArray<[string, string]> = [
 /**
  * The same legend for thumbs.
  *
- * Not a translation of the one above: the touch scheme is a different scheme.
- * There is no aim — one thumb cannot hold it and the trigger together — and
- * sprint has no button, because pushing the stick to its edge already asks for
- * one. Listing either would be listing a control that isn't there.
+ * Not a translation of the one above: the touch scheme is a different scheme,
+ * and a shorter one. Sprint has no button because pushing the stick to its edge
+ * already asks for one; jump, crouch and wave have none because playtesting
+ * found four extra buttons in the way of a game that needs two; and the
+ * scoreboard is this card, which is why it is not on it.
  */
 const TOUCH_KEYS: ReadonlyArray<[string, string]> = [
   ['left thumb', 'move'],
   ['push far', 'sprint'],
   ['drag right', 'look'],
-  ['fire', 'shoot'],
-  ['jump', 'jump'],
-  ['crouch', 'toggle crouch'],
-  ['wave', 'wave'],
-  ['scores', 'hold for board'],
+  ['fire', 'either hand'],
+  ['aim', 'tap on, tap off'],
   ['❚❚', 'pause'],
 ];
 

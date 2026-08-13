@@ -124,7 +124,7 @@ const state = () => page.evaluate(() => {
     phase: pb.match.phase,
     ammo: pb.match.ammo.get('player'),
     yaw: pb.state.yaw,
-    crouching: pb.state.crouching,
+    aiming: pb.state.aiming,
     sprinting: pb.state.sprinting,
     speed: pb.state.horizontalSpeed,
     position: { x: pb.state.position.x, y: pb.state.position.y, z: pb.state.position.z },
@@ -225,17 +225,51 @@ const idle = await state();
 check('releasing the trigger stops the marker', idle.ammo === afterRelease,
       `${afterRelease} -> ${idle.ammo}`);
 
-// --- Crouch is a toggle ------------------------------------------------------
+// --- Two triggers, one action ------------------------------------------------
 
-const crouch = await centerOf('.touch__btn--crouch');
-await tap(crouch.x, crouch.y, 5);
+// The left button exists so the right thumb can keep aiming while the game is
+// firing, which only works if letting go of one trigger does not release the
+// other.
+const fireRight = await centerOf('.touch__btn--fire');
+const fireLeft = await centerOf('.touch__btn--fire-left');
+await touchDown(10, fireRight.x, fireRight.y);
+await touchDown(11, fireLeft.x, fireLeft.y);
+await waitSim(0.4);
+const bothHeld = await state();
+check('the left trigger fires too', bothHeld.ammo < idle.ammo,
+      `${idle.ammo} -> ${bothHeld.ammo}`);
+
+await touchUp(10);
+await waitSim(0.4);
+const oneHeld = await state();
+check('releasing one trigger leaves the other firing', oneHeld.ammo < bothHeld.ammo,
+      `${bothHeld.ammo} -> ${oneHeld.ammo}`);
+
+await touchUp(11);
+await waitSim(0.4);
+const noneHeld = await state();
+check('releasing both stops the marker', noneHeld.ammo === oneHeld.ammo,
+      `${oneHeld.ammo} -> ${noneHeld.ammo}`);
+
+// --- Aim is a toggle ---------------------------------------------------------
+
+const aim = await centerOf('.touch__btn--aim');
+await tap(aim.x, aim.y, 5);
 await waitSim(0.2);
-const crouched = await state();
-await tap(crouch.x, crouch.y, 5);
+const aimed = await state();
+await tap(aim.x, aim.y, 5);
 await waitSim(0.2);
-const stoodUp = await state();
-check('crouch toggles on and off', crouched.crouching && !stoodUp.crouching,
-      `down=${crouched.crouching} up=${stoodUp.crouching}`);
+const unaimed = await state();
+check('aim toggles on and off', aimed.aiming && !unaimed.aiming,
+      `on=${aimed.aiming} off=${unaimed.aiming}`);
+
+// --- And the buttons playtesting removed are gone ----------------------------
+
+const removed = await page.evaluate(() =>
+  ['jump', 'crouch', 'wave', 'scores'].filter((name) =>
+    document.querySelector(`.touch__btn--${name}`)));
+check('jump, crouch, wave and scores are not on the phone', removed.length === 0,
+      removed.join(', '));
 
 // --- Pause and resume --------------------------------------------------------
 

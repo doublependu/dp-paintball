@@ -806,51 +806,46 @@ body {
 }
 
 /*
- * The arc, measured out from the bottom-right corner. Fire is the big one
- * under the pad of the thumb; jump and crouch sit either side of it at the
- * radius the same thumb reaches by rolling rather than stretching.
+ * A trigger per hand.
+ *
+ * The right one sits under the thumb that also turns the camera, and a thumb
+ * cannot drag and hold at the same time — so the left one, up in the corner
+ * where the index finger of the hand gripping the phone already rests, is what
+ * makes firing while aiming possible at all. Identical size, because they are
+ * the same button; both smaller than the single trigger they replace, because
+ * neither has to be found in a hurry on its own now.
  */
-.touch__btn--fire {
-  right: calc(22px + env(safe-area-inset-right));
-  bottom: calc(20px + env(safe-area-inset-bottom));
-  width: 96px;
-  height: 96px;
-  font-size: 13px;
+.touch__btn--fire,
+.touch__btn--fire-left {
+  width: 76px;
+  height: 76px;
+  font-size: 12px;
   background: rgba(255, 61, 129, 0.72);
   color: #fff6f9;
   -webkit-text-stroke: 0.6px #2a2438;
 }
 
-.touch__btn--jump {
-  right: calc(128px + env(safe-area-inset-right));
-  bottom: calc(30px + env(safe-area-inset-bottom));
-  width: 68px;
-  height: 68px;
+.touch__btn--fire {
+  right: calc(22px + env(safe-area-inset-right));
+  bottom: calc(20px + env(safe-area-inset-bottom));
 }
 
-.touch__btn--crouch {
-  right: calc(30px + env(safe-area-inset-right));
-  bottom: calc(126px + env(safe-area-inset-bottom));
-  width: 68px;
-  height: 68px;
-}
-
-.touch__btn--wave {
-  right: calc(126px + env(safe-area-inset-right));
-  bottom: calc(112px + env(safe-area-inset-bottom));
-  width: 56px;
-  height: 56px;
-  font-size: 10px;
-}
-
-/* The two that are not aiming or moving live along the top edge, out of the
-   way of both thumbs and clear of the clock in the middle. */
-.touch__btn--scores {
-  right: calc(78px + env(safe-area-inset-right));
+.touch__btn--fire-left {
+  left: calc(18px + env(safe-area-inset-left));
   top: calc(14px + env(safe-area-inset-top));
-  width: 54px;
-  height: 54px;
-  font-size: 10px;
+}
+
+/*
+ * Aim, inboard of the right trigger: a roll of the same thumb rather than a
+ * stretch. Deliberately nowhere near the pause button — one of these is
+ * pressed mid-fight and the other ends the fight.
+ */
+.touch__btn--aim {
+  right: calc(110px + env(safe-area-inset-right));
+  bottom: calc(26px + env(safe-area-inset-bottom));
+  width: 64px;
+  height: 64px;
+  font-size: 11px;
 }
 
 .touch__btn--pause {
@@ -874,8 +869,12 @@ body {
 .touch-start {
   z-index: 36;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 12px;
+  padding: 12px;
+  box-sizing: border-box;
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s ease;
@@ -919,6 +918,65 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .touch-start__card { animation: none; }
+}
+
+/*
+ * The install offer.
+ *
+ * On iOS this is not a nicety: Safari has no fullscreen on a phone, so the
+ * toolbars stay exactly where the triggers want to be, and a page saved to the
+ * home screen is the only way to be rid of them. Where the browser offers its
+ * own install flow it is one button instead of five words of instructions.
+ */
+.touch-install {
+  max-width: min(560px, 92vw);
+  padding: 10px 16px;
+  border-radius: 16px;
+  border: 3px solid #2a2438;
+  background: rgba(252, 250, 245, 0.92);
+  box-shadow: 0 8px 24px rgba(42, 36, 56, 0.26);
+  color: #2a2438;
+  text-align: center;
+  pointer-events: auto;
+}
+
+.touch-install[hidden] { display: none; }
+
+.touch-install__button {
+  display: block;
+  width: 100%;
+  padding: 9px 18px;
+  border: 3px solid #2a2438;
+  border-radius: 999px;
+  background: #a8e337;
+  color: #2a2438;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  box-shadow: 0 4px 0 rgba(42, 36, 56, 0.3);
+}
+
+.touch-install__button:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 rgba(42, 36, 56, 0.3);
+}
+
+.touch-install__note {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: rgba(42, 36, 56, 0.72);
+}
+
+/* Sits on the text baseline, at the size of the words around it. */
+.touch-install__glyph {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.15em;
+  fill: currentColor;
 }
 
 /*
@@ -987,6 +1045,31 @@ body {
    pull the chrome inward, off the safe-area edges, and shrink the cards enough
    to fit without turning any of them into a scrolling list.
    --------------------------------------------------------------------------- */
+
+/*
+ * No selecting, no callout, no blue wash.
+ *
+ * Two thumbs sliding around a page look, to a browser, exactly like somebody
+ * trying to select something — and the answer is a blue highlight over half the
+ * screen, or a magnifier, or a callout bubble, none of which a game can dismiss
+ * and all of which land mid-fight. Applied to everything rather than to the
+ * control layer alone, because the wash appears over whatever the browser
+ * decided the gesture meant, which is usually the HUD text behind the thumb.
+ * `TouchControls` cancels the matching gesture events; this is the other half.
+ */
+.is-touch,
+.is-touch * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.is-touch body {
+  touch-action: none;
+  /* No rubber-banding the page when a drag reaches the edge of the screen. */
+  overscroll-behavior: none;
+}
 
 .is-touch .game-canvas { cursor: default; }
 

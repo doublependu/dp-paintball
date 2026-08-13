@@ -1,37 +1,63 @@
 import { touch as touchConfig } from '../core/Config';
-import { isTouchDevice } from '../core/Device';
+import { isIos, isTouchDevice } from '../core/Device';
+import { installOffer, onInstallOfferChange, promptInstall } from '../core/Install';
 import type { Action } from '../core/Input';
 import type { GameContext, System } from '../core/System';
 import type { MatchState } from '../gameplay/MatchState';
 
-/** One button in the right-hand thumb arc. */
+/** One button on the touch layer. */
 interface ButtonSpec {
   action: Action;
   label: string;
   /** `hold` is down while touched; `toggle` flips and stays. */
   mode: 'hold' | 'toggle';
-  /** Modifier suffix for the element's class. */
+  /** Its own name, and the modifier suffix for its class. Unique per button. */
   key: string;
 }
 
 /**
- * The buttons, in the order they are laid out from the corner outward.
+ * The buttons, as playtesting on a phone left them.
  *
- * No aim button, deliberately. One thumb cannot hold aim and fire at once, so
- * an aim control would be a control that costs you the trigger — touch play is
- * hip-fire, and `state.aiming` simply never goes true.
+ * **Two fire buttons, one per hand.** The right thumb is the one that turns the
+ * camera, and a thumb that is dragging cannot also be holding a trigger — so
+ * the whole reason to fire from the left is that it leaves the right free to
+ * aim while shooting. The left one sits in the top corner, where the index
+ * finger of the hand holding the phone already rests; the right one is under
+ * the thumb. Same size, and smaller than the single button they replace, since
+ * neither is now the only trigger on screen.
  *
- * Crouch is the one toggle. Holding a crouch is a second thumb the player does
- * not have, and unlike the rest it is a state you sit in rather than a thing
- * you do.
+ * **Aim is a toggle.** Held, it would cost a thumb the layout does not have.
+ *
+ * Everything else is gone: jump, crouch, wave and the scoreboard were four
+ * buttons in the way of a game that needs two. The scoreboard is no loss — the
+ * pause card carries the same numbers — and the rest are keyboard luxuries.
  */
 const BUTTONS: readonly ButtonSpec[] = [
   { action: 'fire', label: 'fire', mode: 'hold', key: 'fire' },
-  { action: 'jump', label: 'jump', mode: 'hold', key: 'jump' },
-  { action: 'crouch', label: 'crouch', mode: 'toggle', key: 'crouch' },
-  { action: 'taunt', label: 'wave', mode: 'hold', key: 'wave' },
-  { action: 'scoreboard', label: 'scores', mode: 'hold', key: 'scores' },
+  { action: 'fire', label: 'fire', mode: 'hold', key: 'fire-left' },
+  { action: 'aim', label: 'aim', mode: 'toggle', key: 'aim' },
 ];
+
+/**
+ * What the start card promises.
+ *
+ * Not fullscreen on an iPhone, because Safari will not give it — saying so
+ * there would be a promise the browser breaks a second later. The install
+ * offer below the card is what covers that case.
+ */
+const START_HINT = isIos()
+  ? 'landscape &nbsp;·&nbsp; two thumbs'
+  : 'landscape &nbsp;·&nbsp; fullscreen';
+
+/**
+ * iOS's Share mark, inline so the instruction can point at the actual button
+ * rather than describe it. A box with an arrow leaving the top.
+ */
+const SHARE_GLYPH =
+  `<svg class="touch-install__glyph" viewBox="0 0 24 24" aria-label="Share" role="img">` +
+  `<path d="M12 3.2 8.4 6.8l1.1 1.1 1.7-1.7v8.3h1.6V6.2l1.7 1.7 1.1-1.1L12 3.2Z"/>` +
+  `<path d="M6 10.4h2.2V12H7.6v7.2h8.8V12h-.6v-1.6H18a.8.8 0 0 1 .8.8v9.2a.8.8 0 0 1-.8.8H6a.8.8 0 0 1-.8-.8v-9.2a.8.8 0 0 1 .8-.8Z"/>` +
+  `</svg>`;
 
 /**
  * The phone build: two thumbs, landscape, fullscreen.
@@ -59,7 +85,12 @@ export class TouchControlsSystem implements System {
   private knob?: HTMLElement;
 
   private engaged = false;
-  private crouched = false;
+  /** Whether a round has been started yet, which retires the install offer. */
+  private hasPlayed = false;
+  /** Buttons currently held, by key. Two of them share the `fire` action. */
+  private downButtons = new Set<string>();
+  /** Toggle buttons currently latched on, by key. */
+  private toggledButtons = new Set<string>();
 
   /** Pointer driving the stick, and where it first landed. */
   private movePointer: number | null = null;
@@ -69,7 +100,10 @@ export class TouchControlsSystem implements System {
   private lookLast = { x: 0, y: 0 };
   /** Every pointer currently holding a button down, and which one. */
   private buttonPointers = new Map<number, ButtonSpec>();
+  /** Button elements by key — not by action, since `fire` has two of them. */
   private buttonElements = new Map<string, HTMLElement>();
+  private installPanel?: HTMLElement;
+  private stopWatchingInstall?: () => void;
 
   private portraitQuery?: MediaQueryList;
   private disposers: Array<() => void> = [];
@@ -107,7 +141,7 @@ export class TouchControlsSystem implements System {
       <div class="touch__stick" data-stick><span class="touch__knob" data-knob></span></div>
       ${BUTTONS.map(
         (button) =>
-          `<div class="touch__btn touch__btn--${button.key}" data-action="${button.action}">` +
+          `<div class="touch__btn touch__btn--${button.key}" data-button="${button.key}">` +
           `${button.label}</div>`,
       ).join('')}
       <div class="touch__btn touch__btn--pause" data-pause aria-label="pause">❚❚</div>
@@ -118,10 +152,7 @@ export class TouchControlsSystem implements System {
     this.stick = root.querySelector('[data-stick]')!;
     this.knob = root.querySelector('[data-knob]')!;
     for (const button of BUTTONS) {
-      this.buttonElements.set(
-        button.action,
-        root.querySelector(`[data-action="${button.action}"]`)!,
-      );
+      this.buttonElements.set(button.key, root.querySelector(`[data-button="${button.key}"]`)!);
     }
 
     // The start prompt is a sibling, not a child: it covers the controls it
@@ -132,12 +163,14 @@ export class TouchControlsSystem implements System {
     start.innerHTML = `
       <div class="touch-start__card">
         <div class="touch-start__label" data-start-label>tap to play</div>
-        <div class="touch-start__hint">landscape &nbsp;·&nbsp; fullscreen</div>
+        <div class="touch-start__hint">${START_HINT}</div>
       </div>
+      <div class="touch-install" data-install hidden></div>
     `;
     this.container.append(start);
     this.startLayer = start;
     this.startLabel = start.querySelector('[data-start-label]')!;
+    this.installPanel = start.querySelector('[data-install]')!;
 
     const gate = document.createElement('div');
     gate.className = 'rotate-gate';
@@ -192,7 +225,28 @@ export class TouchControlsSystem implements System {
     portrait.addEventListener('change', onOrientation);
     this.portraitQuery = portrait;
 
+    // The selection the player never asked for.
+    //
+    // Two thumbs moving over a page is, to a browser, a plausible attempt to
+    // select something — and iOS answers with a blue wash over whatever it
+    // decided you meant, plus a callout bubble if a thumb rests too long.
+    // Neither is dismissable from inside a game. The CSS turns selection off;
+    // these turn off the *gestures* that start one, which the CSS alone does
+    // not always reach.
+    const suppress = (event: Event) => event.preventDefault();
+    document.addEventListener('selectstart', suppress);
+    document.addEventListener('dragstart', suppress);
+    // Safari's pinch-zoom, which is not a standard event and is the other way
+    // a two-thumb game gets away from the player.
+    document.addEventListener('gesturestart', suppress);
+
+    this.stopWatchingInstall = onInstallOfferChange(() => this.renderInstallOffer());
+    this.renderInstallOffer();
+
     this.disposers = [
+      () => document.removeEventListener('selectstart', suppress),
+      () => document.removeEventListener('dragstart', suppress),
+      () => document.removeEventListener('gesturestart', suppress),
       () => start.removeEventListener('pointerdown', onStart),
       () => root.removeEventListener('pointerdown', onDown),
       () => window.removeEventListener('pointermove', onMove),
@@ -201,6 +255,56 @@ export class TouchControlsSystem implements System {
       () => document.removeEventListener('visibilitychange', onVisibility),
       () => portrait.removeEventListener('change', onOrientation),
     ];
+  }
+
+  // -- Installing -----------------------------------------------------------
+
+  /**
+   * Offers to put the game on the home screen.
+   *
+   * This is the whole answer to iOS. Safari on an iPhone has no Fullscreen API
+   * — the toolbars stay, and they take a third of a landscape screen and sit
+   * exactly where the fire buttons want to be. A page added to the home screen
+   * runs without them, which is the only way to get a full screen there.
+   *
+   * Where the browser has its own install flow (Chrome and friends) it is one
+   * tap. Where it does not, the steps are spelled out, because "add to home
+   * screen" is a thing everybody has heard of and nobody remembers the path to.
+   */
+  private renderInstallOffer(): void {
+    const panel = this.installPanel;
+    if (!panel) return;
+
+    const offer = installOffer();
+    // Once only. It belongs on the screen a player meets before their first
+    // round, not on the one between every round after it.
+    if (this.hasPlayed || offer === 'none') {
+      panel.hidden = true;
+      panel.innerHTML = '';
+      return;
+    }
+
+    panel.hidden = false;
+    panel.innerHTML =
+      offer === 'prompt'
+        ? `<button class="touch-install__button" type="button" data-install-go>
+             add to home screen
+           </button>
+           <div class="touch-install__note">plays full screen, without the browser bars</div>`
+        : `<div class="touch-install__note">
+             <strong>iPhone?</strong> Safari cannot go full screen. Tap
+             ${SHARE_GLYPH} <strong>Share</strong>, then
+             <strong>Add to Home Screen</strong> — the game then runs without
+             the browser bars.
+           </div>`;
+
+    // Its own handler, and it stops there: the layer underneath starts the
+    // round on any tap, and installing the game is not asking to play it.
+    panel.onpointerdown = (event: PointerEvent) => {
+      event.stopPropagation();
+      const button = (event.target as HTMLElement | null)?.closest('[data-install-go]');
+      if (button) void promptInstall();
+    };
   }
 
   // -- Session --------------------------------------------------------------
@@ -249,6 +353,10 @@ export class TouchControlsSystem implements System {
 
   private setEngaged(engaged: boolean): void {
     this.engaged = engaged;
+    if (engaged && !this.hasPlayed) {
+      this.hasPlayed = true;
+      this.renderInstallOffer();
+    }
     this.root?.classList.toggle('is-live', engaged);
     this.releaseEverything();
 
@@ -273,11 +381,12 @@ export class TouchControlsSystem implements System {
     this.movePointer = null;
     this.lookPointer = null;
     this.buttonPointers.clear();
-    this.crouched = false;
+    this.downButtons.clear();
+    this.toggledButtons.clear();
     input?.clearTouchMove();
     for (const button of BUTTONS) {
       input?.setTouchAction(button.action, false);
-      this.buttonElements.get(button.action)?.classList.remove('is-down');
+      this.buttonElements.get(button.key)?.classList.remove('is-down');
     }
     this.stick?.classList.remove('is-visible');
   }
@@ -308,12 +417,12 @@ export class TouchControlsSystem implements System {
       return;
     }
 
-    const buttonElement = target.closest<HTMLElement>('[data-action]');
+    const buttonElement = target.closest<HTMLElement>('[data-button]');
     if (buttonElement) {
-      const spec = BUTTONS.find((b) => b.action === buttonElement.dataset.action);
+      const spec = BUTTONS.find((b) => b.key === buttonElement.dataset.button);
       if (!spec) return;
       event.preventDefault();
-      this.pressButton(spec, buttonElement);
+      this.pressButton(spec);
       if (spec.mode === 'hold') this.buttonPointers.set(event.pointerId, spec);
       return;
     }
@@ -372,19 +481,40 @@ export class TouchControlsSystem implements System {
     const spec = this.buttonPointers.get(event.pointerId);
     if (!spec) return;
     this.buttonPointers.delete(event.pointerId);
-    this.ctx?.input.setTouchAction(spec.action, false);
-    this.buttonElements.get(spec.action)?.classList.remove('is-down');
+    this.downButtons.delete(spec.key);
+    this.buttonElements.get(spec.key)?.classList.remove('is-down');
+    this.applyAction(spec.action);
   }
 
-  private pressButton(spec: ButtonSpec, element: HTMLElement): void {
+  private pressButton(spec: ButtonSpec): void {
+    const element = this.buttonElements.get(spec.key);
     if (spec.mode === 'toggle') {
-      this.crouched = !this.crouched;
-      this.ctx?.input.setTouchAction(spec.action, this.crouched);
-      element.classList.toggle('is-down', this.crouched);
-      return;
+      const on = !this.toggledButtons.has(spec.key);
+      if (on) this.toggledButtons.add(spec.key);
+      else this.toggledButtons.delete(spec.key);
+      element?.classList.toggle('is-down', on);
+    } else {
+      this.downButtons.add(spec.key);
+      element?.classList.add('is-down');
     }
-    this.ctx?.input.setTouchAction(spec.action, true);
-    element.classList.add('is-down');
+    this.applyAction(spec.action);
+  }
+
+  /**
+   * Republishes an action from every button bound to it.
+   *
+   * The two fire buttons are why this is not a straight write: letting go of
+   * one while the other is still held would otherwise release the trigger, and
+   * firing with both hands — which is the entire point of the second button —
+   * would be worse than firing with one.
+   */
+  private applyAction(action: Action): void {
+    const down = BUTTONS.some(
+      (button) =>
+        button.action === action &&
+        (this.downButtons.has(button.key) || this.toggledButtons.has(button.key)),
+    );
+    this.ctx?.input.setTouchAction(action, down);
   }
 
   // -- Stick ----------------------------------------------------------------
@@ -423,6 +553,7 @@ export class TouchControlsSystem implements System {
   }
 
   dispose(): void {
+    this.stopWatchingInstall?.();
     for (const dispose of this.disposers) dispose();
     this.disposers = [];
     this.releaseEverything();
