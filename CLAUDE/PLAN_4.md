@@ -14,10 +14,16 @@ camera, so it could aim *or* shoot, never both. Hence:
   the left hand can hold the trigger while the right thumb keeps dragging. Both
   buttons drive the same `fire` action, reference-counted, so releasing one
   while the other is held does not stop the marker.
-- **Jump, crouch, wave and scores removed.** Four buttons in the way of a game
-  that needs two. The scoreboard is no loss — the pause card carries the same
-  numbers — and the rest are keyboard luxuries. This does mean a phone player
-  cannot jump; see the note in `NEXT_4.md`.
+- **Crouch, wave and scores removed.** Three buttons in the way of a game that
+  needs a few. The scoreboard is no loss — the pause card carries the same
+  numbers — and the other two are keyboard luxuries.
+- **Jump removed, then put back.** It went with the other three, on the same
+  argument. It came back because the argument does not survive the park: there
+  is a great deal of it between the 0.45m the character controller steps up
+  unaided and the 1.15m a jump clears — benches, low walls, the lip of the
+  fountain basin — and without a jump a bench is a wall. It sits above the right
+  trigger, a thumb's roll from it. See `NEXT_4.md` for the auto-hop that was
+  briefly tried in its place and dropped.
 - **Aim, as a toggle.** Reversing the call made before iteration 3, which was
   made on the theory that a thumb cannot hold aim and fire together. That was
   true and is now beside the point: with a trigger under the other hand, aim

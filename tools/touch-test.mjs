@@ -125,6 +125,8 @@ const state = () => page.evaluate(() => {
     ammo: pb.match.ammo.get('player'),
     yaw: pb.state.yaw,
     aiming: pb.state.aiming,
+    grounded: pb.state.grounded,
+    y: pb.state.position.y,
     sprinting: pb.state.sprinting,
     speed: pb.state.horizontalSpeed,
     position: { x: pb.state.position.x, y: pb.state.position.y, z: pb.state.position.z },
@@ -263,12 +265,25 @@ const unaimed = await state();
 check('aim toggles on and off', aimed.aiming && !unaimed.aiming,
       `on=${aimed.aiming} off=${unaimed.aiming}`);
 
+// --- Jump --------------------------------------------------------------------
+
+const jump = await centerOf('.touch__btn--jump');
+await touchDown(12, jump.x, jump.y);
+// Held across the step rather than tapped: a press is edge-triggered, and the
+// step that reads it has to happen while the thumb is still down.
+await waitSim(0.25);
+const jumping = await state();
+await touchUp(12);
+check('the jump button leaves the ground', !jumping.grounded || jumping.y > 0.3,
+      `grounded=${jumping.grounded} y=${jumping.y.toFixed(2)}`);
+await waitSim(1.2);
+
 // --- And the buttons playtesting removed are gone ----------------------------
 
 const removed = await page.evaluate(() =>
-  ['jump', 'crouch', 'wave', 'scores'].filter((name) =>
+  ['crouch', 'wave', 'scores'].filter((name) =>
     document.querySelector(`.touch__btn--${name}`)));
-check('jump, crouch, wave and scores are not on the phone', removed.length === 0,
+check('crouch, wave and scores are not on the phone', removed.length === 0,
       removed.join(', '));
 
 // --- Pause and resume --------------------------------------------------------

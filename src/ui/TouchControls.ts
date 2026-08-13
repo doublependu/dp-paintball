@@ -28,13 +28,20 @@ interface ButtonSpec {
  *
  * **Aim is a toggle.** Held, it would cost a thumb the layout does not have.
  *
- * Everything else is gone: jump, crouch, wave and the scoreboard were four
- * buttons in the way of a game that needs two. The scoreboard is no loss — the
- * pause card carries the same numbers — and the rest are keyboard luxuries.
+ * **Jump stays.** It was cut once, on the argument that four extra buttons were
+ * in the way of a game that needs two — but the park is full of things between
+ * the 0.45m the controller steps up on its own and the 1.15m a jump clears, and
+ * without it a bench is a wall. It sits above the right trigger, a thumb's roll
+ * away from it.
+ *
+ * Crouch, wave and the scoreboard are gone and stay gone. The scoreboard is no
+ * loss — the pause card carries the same numbers — and the other two are
+ * keyboard luxuries.
  */
 const BUTTONS: readonly ButtonSpec[] = [
   { action: 'fire', label: 'fire', mode: 'hold', key: 'fire' },
   { action: 'fire', label: 'fire', mode: 'hold', key: 'fire-left' },
+  { action: 'jump', label: 'jump', mode: 'hold', key: 'jump' },
   { action: 'aim', label: 'aim', mode: 'toggle', key: 'aim' },
 ];
 

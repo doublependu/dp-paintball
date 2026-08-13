@@ -37,11 +37,14 @@ card, and that path is reasoned about rather than observed.
 # Iteration 4 — the playtest fixes
 
 All six items in `CLAUDE/FEEDBACK_3.md` are done: a trigger for each hand, aim
-back as a toggle, the other four buttons gone, and the selection wash killed.
+back as a toggle, crouch, wave and scores gone, and the selection wash killed.
 For iOS, where Safari has no fullscreen at all, the start card now offers to add
 the game to the home screen — one tap where the browser allows it, and the Share
 steps spelled out where it does not.
 
-Plan in `CLAUDE/PLAN_4.md`, consequences in `CLAUDE/NEXT_4.md`. The one worth
-reading before the next playtest: a phone player cannot jump any more, which
-autostep covers for stairs but not for benches and low walls.
+Jump went with the other buttons and then came back: without it, anything
+between an autostep and a jump — a bench, a low wall, the fountain lip — is a
+wall on a phone. It now sits above the right trigger. An auto-hop was tried in
+its place first; `CLAUDE/NEXT_4.md` records why the button won.
+
+Plan in `CLAUDE/PLAN_4.md`, consequences in `CLAUDE/NEXT_4.md`.

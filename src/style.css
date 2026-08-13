@@ -836,13 +836,22 @@ body {
 }
 
 /*
- * Aim, inboard of the right trigger: a roll of the same thumb rather than a
- * stretch. Deliberately nowhere near the pause button — one of these is
- * pressed mid-fight and the other ends the fight.
+ * Aim inboard of the right trigger and jump above it: two rolls of the same
+ * thumb, in different directions, rather than a stretch for either. Both
+ * deliberately nowhere near the pause button — these are pressed mid-fight and
+ * that one ends the fight.
  */
 .touch__btn--aim {
   right: calc(110px + env(safe-area-inset-right));
   bottom: calc(26px + env(safe-area-inset-bottom));
+  width: 64px;
+  height: 64px;
+  font-size: 11px;
+}
+
+.touch__btn--jump {
+  right: calc(30px + env(safe-area-inset-right));
+  bottom: calc(112px + env(safe-area-inset-bottom));
   width: 64px;
   height: 64px;
   font-size: 11px;

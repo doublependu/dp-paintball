@@ -8,15 +8,24 @@ latches, and the four removed buttons are gone.
 
 ## Consequences worth knowing about
 
-**A phone player cannot jump.** That follows directly from removing the button,
-and it is mostly fine: the character controller autosteps 0.45m, so kerbs,
-stairs and terrace edges are walked up without noticing. What is now closed on a
-phone is anything between 0.45m and the 1.15m a jump clears — a bench, a low
-wall, the lip of the fountain basin. Nothing in the park *traps* a player who
-cannot jump, but a few shortcuts are gone. If that turns out to matter, the fix
-that costs no buttons is a small auto-hop: jump automatically when walking into
-something short enough to clear, which reads as vaulting rather than as a
-missing control.
+**Jump was removed and then put back, and the detour is worth recording.** With
+no jump button, everything between the 0.45m the controller autosteps and the
+1.15m a jump clears becomes a wall — a bench, a low wall, the lip of the
+fountain basin. The fix tried first was an auto-hop: when a step was blocked,
+probe forward at hop height and down beyond the obstacle, and jump for the
+player if it was short enough with somewhere to land. It worked, and it was
+dropped anyway in favour of simply giving the button back.
+
+Why the button won: an auto-hop is a movement rule the player cannot see, and it
+fires exactly when they walk into something — which is also what they do when
+they mean to take cover behind it. Walking into the back of a bench to hide put
+them on top of it, in the open. A button that does nothing until it is pressed
+has no such failure mode, and a fourth button turned out to be affordable.
+
+If auto-hop is ever wanted again, the probe pair is the part worth keeping: a
+forward ray at hop height separates a bench from a wall without caring how thick
+it is, and a downward ray past it is what stops a hop over a railing into the
+lake.
 
 **Waving is gone on a phone.** No gameplay cost, but it was the one purely
 social gesture in a game whose whole premise is that nobody dies. A double-tap
