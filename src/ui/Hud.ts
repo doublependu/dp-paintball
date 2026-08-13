@@ -1,6 +1,14 @@
 import { match as matchConfig } from '../core/Config';
+import { isTouchDevice } from '../core/Device';
 
-/** Kept in one place, because the round-over state swaps them and swaps back. */
+/**
+ * Kept in one place, because the round-over state swaps them and swaps back.
+ *
+ * The hint is only ever on screen while the player is *not* playing, which on a
+ * phone is exactly when the tap-to-play card is up saying the same thing in
+ * larger type. So there is no touch wording here: the hint is left out of that
+ * build entirely and `TouchControls` carries the message.
+ */
 const LIVE_HINT =
   'click to play &nbsp;·&nbsp; wasd move &nbsp;·&nbsp; click fire &nbsp;·&nbsp; ' +
   'right-click aim &nbsp;·&nbsp; t wave &nbsp;·&nbsp; tab scores';
@@ -82,6 +90,9 @@ export class Hud {
     this.scoreboard = this.root.querySelector('[data-scoreboard]')!;
     this.scoreboardBody = this.root.querySelector('[data-scoreboard-body]')!;
     this.hint = this.root.querySelector('[data-hint]')!;
+    // See the note on LIVE_HINT. The reference is kept so the setters below
+    // stay unconditional; they simply operate on a node nobody can see.
+    if (isTouchDevice()) this.hint.remove();
   }
 
   /**

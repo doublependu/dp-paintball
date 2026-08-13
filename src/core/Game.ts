@@ -124,10 +124,15 @@ export class Game {
 
     this.input.attach();
     // Clicking the canvas is the user gesture that grants pointer lock; browsers
-    // won't hand it over without one.
-    this.render.canvas.addEventListener('click', () => {
-      if (!this.input.isLocked) this.input.requestLock();
-    });
+    // won't hand it over without one. On a touch device there is no lock to
+    // grant and `TouchControls` owns the tap that starts a round — it has to,
+    // because the same gesture is the one fullscreen and orientation lock
+    // require, and a second handler here would race it.
+    if (!this.input.isTouch) {
+      this.render.canvas.addEventListener('click', () => {
+        if (!this.input.isLocked) this.input.requestLock();
+      });
+    }
 
     for (let i = 0; i < this.systems.length; i++) {
       const system = this.systems[i]!;

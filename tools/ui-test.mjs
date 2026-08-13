@@ -248,10 +248,13 @@ check('the clock does not run while paused', heldFor === beforePause,
 
 // The repo link is the one thing on the card that must not resume — grabbing
 // the pointer as a new tab opens would be a small hostage situation.
+// A pointerdown, because that is what the card listens for — see the note on
+// PauseOverlay.onPointerDown. A synthetic click would sail past the guard
+// without ever touching it.
 await page.evaluate(() => {
   const link = document.querySelector('.pause .fork-badge');
   link.removeAttribute('href');
-  link.click();
+  link.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
 });
 await page.waitForTimeout(150);
 check('the repo link does not resume the round',

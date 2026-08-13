@@ -80,6 +80,40 @@ export const camera = {
   collisionOutLambda: 6,
 } as const;
 
+/** Phones and tablets. See `src/ui/TouchControls.ts` for the layout itself. */
+export const touch = {
+  /**
+   * Drag pixels to mouse counts.
+   *
+   * The camera converts whatever `Input` hands it at `camera.sensitivity`
+   * radians per count, so this is expressed in the same currency rather than in
+   * radians: 4.6 counts per CSS pixel works out at about 0.010 rad/px, which
+   * turns a thumb's comfortable ~120px drag into a little over a right angle.
+   * Any less and looking behind you needs three swipes.
+   */
+  lookScale: 4.6,
+  /**
+   * How far the thumb travels from where it landed for full stick deflection,
+   * in CSS pixels. Sized for a thumb pivoting at the base, not for the ring
+   * drawn under it.
+   */
+  stickRadius: 58,
+  /** Movement inside this fraction of the radius is treated as holding still. */
+  stickDeadzone: 0.16,
+  /** Past this fraction of full deflection, the stick also asks for a sprint. */
+  sprintThreshold: 0.85,
+  /**
+   * Pixel-ratio cap on a touch device.
+   *
+   * A phone's DPR is 3 and its fill rate is not a desktop's. 1.5 keeps the ink
+   * outlines crisp — they are measured in pixels, so they are what a low ratio
+   * spoils first — while costing a quarter of the fragments DPR 3 would.
+   */
+  maxPixelRatio: 1.5,
+  /** Halved from the desktop map: the shadow is a soft shape, not a texture. */
+  shadowMapSize: 1024,
+} as const;
+
 export const ballistics = {
   /**
    * Muzzle speed.

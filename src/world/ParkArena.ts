@@ -14,13 +14,14 @@ import {
   Vector3,
 } from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { palette, render as renderConfig } from '../core/Config';
+import { palette } from '../core/Config';
 import type { Rng } from '../core/Random';
 import type { GameContext, System } from '../core/System';
 import type { SurfaceRegistry } from '../paint/SurfaceRegistry';
 import { createCelMaterial } from '../render/CelMaterial';
 import { NO_OUTLINE_LAYER } from '../render/NprPipeline';
 import { PLAQUE_ASPECT, createSignPlaqueTexture } from '../render/SignPlaque';
+import { shadowMapSize } from '../render/Renderer';
 import { Sky } from '../render/Sky';
 import { Birds } from './Birds';
 import { Cityscape } from './Cityscape';
@@ -263,7 +264,7 @@ export class ParkArenaSystem implements System {
 
     const sun = new DirectionalLight(palette.sunWarm, 2.4);
     sun.castShadow = true;
-    sun.shadow.mapSize.setScalar(renderConfig.shadowMapSize);
+    sun.shadow.mapSize.setScalar(shadowMapSize());
     sun.shadow.camera.near = 10;
     sun.shadow.camera.far = 420;
     sun.shadow.camera.left = -SHADOW_EXTENT;

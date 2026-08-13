@@ -1,3 +1,5 @@
+import { touch as touchConfig } from './Config';
+import { isTouchDevice } from './Device';
 import type { EventBus } from './Events';
 
 /** Logical actions, so key bindings live in exactly one place. */
@@ -44,11 +46,17 @@ const MOUSE_BINDINGS: Record<number, Action> = {
 };
 
 /**
- * Keyboard + mouse state with pointer lock.
+ * Keyboard + mouse state with pointer lock, and the same three surfaces fed by
+ * touch on a phone.
  *
  * Mouse movement accumulates between frames and is drained by `consumeMouseDelta`
  * — reading it as a per-frame delta rather than sampling the last event avoids
  * dropping motion when the browser coalesces events.
+ *
+ * Touch enters through `setTouchAction`, `setTouchMove` and `addTouchLook`,
+ * which write into those same buffers. Everything downstream — the controller,
+ * the camera, the weapon, the HUD — asks the same questions and never learns
+ * which kind of machine it is running on.
  */
 export class Input {
   private held = new Set<Action>();
@@ -60,6 +68,11 @@ export class Input {
 
   private locked = false;
   private disposers: Array<() => void> = [];
+
+  /** Whether the pointer-lock APIs are in play at all. See `requestLock`. */
+  private readonly touch = isTouchDevice();
+  /** Stick deflection, or null while no thumb is on it. */
+  private touchMove: { x: number; y: number } | null = null;
 
   constructor(
     private readonly element: HTMLElement,
@@ -86,8 +99,12 @@ export class Input {
       this.releasedThisFrame.add(action);
     };
 
+    // Browsers synthesise a mouse event pair from a tap, so on a touch device
+    // these have to stand down entirely: a tap anywhere in the look zone would
+    // otherwise read as a trigger pull, and the whole point of the dedicated
+    // fire button is that repositioning a thumb costs no paint.
     const onMouseDown = (e: MouseEvent) => {
-      if (!this.locked) return;
+      if (this.touch || !this.locked) return;
       const action = MOUSE_BINDINGS[e.button];
       if (!action) return;
       this.held.add(action);
@@ -95,6 +112,7 @@ export class Input {
     };
 
     const onMouseUp = (e: MouseEvent) => {
+      if (this.touch) return;
       const action = MOUSE_BINDINGS[e.button];
       if (!action) return;
       this.held.delete(action);
@@ -102,7 +120,7 @@ export class Input {
     };
 
     const onMouseMove = (e: MouseEvent) => {
-      if (!this.locked) return;
+      if (this.touch || !this.locked) return;
       this.mouseDx += e.movementX;
       this.mouseDy += e.movementY;
     };
@@ -153,7 +171,14 @@ export class Input {
   }
 
   /**
-   * Asks for the pointer back.
+   * Asks for the pointer back — or, on a touch device, takes the controls.
+   *
+   * There is no pointer to lock on a phone, but there is exactly the same
+   * question underneath: is the player at the controls right now? The round
+   * pauses when the answer goes false and resumes when it comes back, and
+   * `MatchSystem` and `PauseSystem` both read that from `input:lockChanged`.
+   * Answering it here rather than inventing a second kind of session is what
+   * keeps those two files ignorant of phones.
    *
    * The refusal is swallowed on purpose. Browsers reject a lock requested in
    * the second or so after the user pressed Esc to leave one — it is an
@@ -162,6 +187,10 @@ export class Input {
    * `input:lockChanged` and ask again.
    */
   requestLock(): void {
+    if (this.touch) {
+      this.setEngaged(true);
+      return;
+    }
     const request = this.element.requestPointerLock() as unknown;
     if (request instanceof Promise) request.catch(() => {});
   }
@@ -175,16 +204,96 @@ export class Input {
    * for it.
    */
   releaseLock(): void {
-    if (document.pointerLockElement === this.element) document.exitPointerLock();
+    if (this.touch) this.setEngaged(false);
+    else if (document.pointerLockElement === this.element) document.exitPointerLock();
     this.held.clear();
     this.pressedThisFrame.clear();
     this.releasedThisFrame.clear();
+    this.touchMove = null;
     this.mouseDx = 0;
     this.mouseDy = 0;
   }
 
+  /**
+   * The touch equivalent of a pointer-lock change. Emitted synchronously,
+   * where the real one arrives as a document event — every listener treats it
+   * as a fact about the present, so there is nothing to wait for.
+   */
+  private setEngaged(engaged: boolean): void {
+    if (this.locked === engaged) return;
+    this.locked = engaged;
+    if (!engaged) {
+      this.held.clear();
+      this.touchMove = null;
+      this.mouseDx = 0;
+      this.mouseDy = 0;
+    }
+    this.events.emit('input:lockChanged', { locked: engaged });
+  }
+
   get isLocked(): boolean {
     return this.locked;
+  }
+
+  /** Whether this machine is being played with thumbs. */
+  get isTouch(): boolean {
+    return this.touch;
+  }
+
+  /**
+   * Presses or releases an action from the touch overlay.
+   *
+   * Buttons write into the very sets the keyboard writes into, which is why
+   * `wasPressed('jump')` works for a thumb without `PlayerController` knowing
+   * one exists.
+   */
+  setTouchAction(action: Action, down: boolean): void {
+    if (down === this.held.has(action)) return;
+    if (down) {
+      this.held.add(action);
+      this.pressedThisFrame.add(action);
+    } else {
+      this.held.delete(action);
+      this.releasedThisFrame.add(action);
+    }
+  }
+
+  /**
+   * Stick deflection, already clamped to the unit disc, or null when the thumb
+   * has left it. Sprint rides along on the same gesture: pushed past
+   * `sprintThreshold` the stick asks for one, so the layout needs no button for
+   * it.
+   */
+  setTouchMove(x: number, y: number): void {
+    const lengthSq = x * x + y * y;
+    if (lengthSq <= 1e-6) {
+      this.touchMove = null;
+      this.setTouchAction('sprint', false);
+      return;
+    }
+    if (lengthSq > 1) {
+      const inv = 1 / Math.sqrt(lengthSq);
+      x *= inv;
+      y *= inv;
+    }
+    this.touchMove = { x, y };
+    this.setTouchAction('sprint', Math.hypot(x, y) >= touchConfig.sprintThreshold);
+  }
+
+  /** Ends the current stick gesture. */
+  clearTouchMove(): void {
+    this.touchMove = null;
+    this.setTouchAction('sprint', false);
+  }
+
+  /**
+   * Feeds a look drag, in CSS pixels, into the same buffer mouse motion uses —
+   * scaled into mouse counts, because the camera converts counts to radians and
+   * a pixel is worth several of them. See `touch.lookScale`.
+   */
+  addTouchLook(dxPx: number, dyPx: number): void {
+    this.mouseDx += dxPx * touchConfig.lookScale;
+    this.mouseDy += dyPx * touchConfig.lookScale;
   }
 
   isDown(action: Action): boolean {
@@ -199,8 +308,15 @@ export class Input {
     return this.releasedThisFrame.has(action);
   }
 
-  /** Normalized WASD vector. x is strafe (+right), y is forward (+forward). */
+  /**
+   * Normalized movement intent. x is strafe (+right), y is forward (+forward).
+   *
+   * The stick wins while a thumb is on it, and the keys answer otherwise —
+   * which is not only for `?touch=1` on a desktop: a phone with a keyboard
+   * attached should take either, and neither should cancel the other out.
+   */
   getMoveVector(): { x: number; y: number } {
+    if (this.touchMove) return this.touchMove;
     let x = 0;
     let y = 0;
     if (this.isDown('right')) x += 1;

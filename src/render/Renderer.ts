@@ -6,8 +6,35 @@ import {
   Scene,
   WebGLRenderer,
 } from 'three';
-import { camera as cameraConfig, render as renderConfig } from '../core/Config';
+import {
+  camera as cameraConfig,
+  render as renderConfig,
+  touch as touchConfig,
+} from '../core/Config';
+import { isTouchDevice } from '../core/Device';
 import { NO_OUTLINE_LAYER, NprPipeline } from './NprPipeline';
+
+/**
+ * How much of the device's pixel ratio we are willing to pay for.
+ *
+ * A phone reports 3 and has nothing like the fill rate to back it. Asked here
+ * rather than baked into the config so both the constructor and the resize
+ * path get the same answer.
+ */
+function pixelRatioCap(): number {
+  return isTouchDevice() ? touchConfig.maxPixelRatio : renderConfig.maxPixelRatio;
+}
+
+/**
+ * Sun shadow map resolution, halved on a phone.
+ *
+ * Lives here beside the pixel-ratio cap because they are the same decision —
+ * what this machine can afford — and the two arenas that light a sun both ask
+ * for it rather than reading the desktop number.
+ */
+export function shadowMapSize(): number {
+  return isTouchDevice() ? touchConfig.shadowMapSize : renderConfig.shadowMapSize;
+}
 
 export interface RenderTargets {
   renderer: WebGLRenderer;
@@ -46,7 +73,7 @@ export class RenderSystem {
       stencil: false,
     });
 
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, renderConfig.maxPixelRatio));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap()));
     this.renderer.outputColorSpace = SRGBColorSpace;
     // ACES crushes saturated flats, which is exactly what cel shading is made
     // of. Neutral keeps the paint colors popping while still taming highlights.
@@ -84,7 +111,7 @@ export class RenderSystem {
     const applySize = () => {
       const width = container.clientWidth || window.innerWidth;
       const height = container.clientHeight || window.innerHeight;
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, renderConfig.maxPixelRatio));
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, pixelRatioCap()));
       this.renderer.setSize(width, height, false);
       this.camera.aspect = width / height;
       this.camera.updateProjectionMatrix();

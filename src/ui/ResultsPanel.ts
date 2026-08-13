@@ -1,3 +1,4 @@
+import { isTouchDevice } from '../core/Device';
 import type { ScoreRow } from './Hud';
 
 const REPO_URL = 'https://github.com/doublependu/dp-paintball';
@@ -48,7 +49,7 @@ export class ResultsPanel {
           </div>
           <div class="results__body" data-results-body></div>
         </div>
-        <div class="results__again">click to play again</div>
+        <div class="results__again">${isTouchDevice() ? 'tap' : 'click'} to play again</div>
       </div>
     `;
     container.append(this.root);

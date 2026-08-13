@@ -20,3 +20,16 @@ wandered into the undercroft. It casts from a metre over the head now.
 
 What is left is in `CLAUDE/NEXT_2.md`. The one item that needs a human rather
 than a machine is the ammo economy — see its P0.
+
+# Iteration 3 — the phone
+
+The game plays on a phone now: two thumbs, landscape only, fullscreen on the
+first tap. Plan in `CLAUDE/PLAN_3.md`, follow-ups in `CLAUDE/NEXT_3.md`,
+tests in `npm run test:touch` (`?touch=1` forces the touch build in a desktop
+browser, which is how to try it without a phone).
+
+The item that needs a human here is the *feel*: stick radius, look speed and
+button placement are all in the `touch` block of `src/core/Config.ts`, and none
+of them has been held in a hand yet. iOS in particular has never run this — it
+refuses both fullscreen and orientation lock, so it falls back to the rotate
+card, and that path is reasoned about rather than observed.

@@ -9,10 +9,11 @@ import {
   Vector3,
 } from 'three';
 import { DEG2RAD } from '../core/MathUtils';
-import { palette, player as playerConfig, render as renderConfig } from '../core/Config';
+import { palette, player as playerConfig } from '../core/Config';
 import type { GameContext, System } from '../core/System';
 import type { SurfaceRegistry } from '../paint/SurfaceRegistry';
 import { createCelMaterial } from '../render/CelMaterial';
+import { shadowMapSize } from '../render/Renderer';
 import { Sky } from '../render/Sky';
 
 /**
@@ -64,7 +65,7 @@ export class TestCourseSystem implements System {
     const sun = new DirectionalLight(palette.sunWarm, 2.4);
     sun.position.copy(SUN_DIRECTION).multiplyScalar(60);
     sun.castShadow = true;
-    sun.shadow.mapSize.setScalar(renderConfig.shadowMapSize);
+    sun.shadow.mapSize.setScalar(shadowMapSize());
     sun.shadow.camera.near = 1;
     sun.shadow.camera.far = 140;
     sun.shadow.camera.left = -50;

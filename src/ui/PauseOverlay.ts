@@ -1,4 +1,9 @@
+import { isTouchDevice } from '../core/Device';
+
 const REPO_URL = 'https://github.com/doublependu/dp-paintball';
+
+/** What the card says under the button. Anywhere on it resumes, either way. */
+const RESUME_NOTE = isTouchDevice() ? 'or tap anywhere' : 'or click anywhere';
 
 /** GitHub's mark, as a path on a 16×16 viewBox. Inlined so it costs no request. */
 const GITHUB_MARK =
@@ -23,6 +28,26 @@ const KEYS: ReadonlyArray<[string, string]> = [
   ['t', 'wave'],
   ['tab', 'scores'],
   ['esc', 'pause'],
+];
+
+/**
+ * The same legend for thumbs.
+ *
+ * Not a translation of the one above: the touch scheme is a different scheme.
+ * There is no aim — one thumb cannot hold it and the trigger together — and
+ * sprint has no button, because pushing the stick to its edge already asks for
+ * one. Listing either would be listing a control that isn't there.
+ */
+const TOUCH_KEYS: ReadonlyArray<[string, string]> = [
+  ['left thumb', 'move'],
+  ['push far', 'sprint'],
+  ['drag right', 'look'],
+  ['fire', 'shoot'],
+  ['jump', 'jump'],
+  ['crouch', 'toggle crouch'],
+  ['wave', 'wave'],
+  ['scores', 'hold for board'],
+  ['❚❚', 'pause'],
 ];
 
 /** What the card shows about the round it is holding. */
@@ -85,10 +110,10 @@ export class PauseOverlay {
         </div>
 
         <button class="pause__resume" type="button" data-pause-resume>Back to it</button>
-        <div class="pause__note" data-pause-note>or click anywhere</div>
+        <div class="pause__note" data-pause-note>${RESUME_NOTE}</div>
 
         <div class="pause__keys">
-          ${KEYS.map(
+          ${(isTouchDevice() ? TOUCH_KEYS : KEYS).map(
             ([key, action]) =>
               `<div class="pause__key"><kbd>${key}</kbd><span>${action}</span></div>`,
           ).join('')}
@@ -113,20 +138,28 @@ export class PauseOverlay {
     this.ammo = this.root.querySelector('[data-pause-ammo]')!;
     this.note = this.root.querySelector('[data-pause-note]')!;
 
-    this.root.addEventListener('click', this.onClick);
+    this.root.addEventListener('pointerdown', this.onPointerDown);
   }
 
   /**
-   * Any click resumes — except one on the repo link, which is the single thing
-   * here a player might want without giving up the pause. Grabbing the pointer
-   * as a new tab opens would be a small hostage situation.
+   * Anywhere on the card resumes — except the repo link, which is the single
+   * thing here a player might want without giving up the pause. Grabbing the
+   * pointer as a new tab opens would be a small hostage situation.
+   *
+   * `pointerdown` rather than `click`, and that is a phone fix rather than a
+   * preference. Tapping the on-screen pause button raises this card *under the
+   * finger that is still down*, and the browser then delivers that tap's click
+   * to whatever now sits beneath it — this card — resuming the round in the
+   * same gesture that held it. A pointerdown cannot arrive that way: the one
+   * that paused the game was spent on the pause button, before this card
+   * existed. The link still works, because a link is followed on click.
    */
-  private onClick = (event: MouseEvent): void => {
+  private onPointerDown = (event: PointerEvent): void => {
     if ((event.target as HTMLElement | null)?.closest('a')) return;
     this.onResume?.();
   };
 
-  /** Registers what a click on the card means. */
+  /** Registers what a press on the card means. */
   setResumeHandler(handler: () => void): void {
     this.onResume = handler;
   }
@@ -137,7 +170,7 @@ export class PauseOverlay {
     this.given.textContent = String(stats.hitsGiven);
     this.taken.textContent = String(stats.hitsTaken);
     this.ammo.textContent = Number.isFinite(stats.ammo) ? String(stats.ammo) : '∞';
-    this.setNote('or click anywhere');
+    this.setNote(RESUME_NOTE);
     this.root.classList.add('is-visible');
   }
 
@@ -155,7 +188,7 @@ export class PauseOverlay {
   }
 
   dispose(): void {
-    this.root.removeEventListener('click', this.onClick);
+    this.root.removeEventListener('pointerdown', this.onPointerDown);
     this.root.remove();
   }
 }
