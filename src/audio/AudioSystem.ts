@@ -25,6 +25,9 @@ export class AudioSystem implements System {
   private wind?: { source: AudioBufferSourceNode; filter: BiquadFilterNode; gain: GainNode };
   private nextBirdAt = 0;
   private nextNoteAt = 0;
+  private nextWaterAt = 0;
+  /** The round started before audio was unlocked; blow the whistle on unlock. */
+  private pendingStartWhistle = false;
   private strideAccumulator = 0;
   private scaleIndex = 0;
 
@@ -67,6 +70,21 @@ export class AudioSystem implements System {
       if (shooterId === 'player') this.synth?.dryFire(0.9, 0);
     });
 
+    // The two moments the round has, and the only two that were silent.
+    // `match:started` fires during init, before the audio context has been
+    // unlocked by a click, so the opening whistle is scheduled by `start()`
+    // instead — every other beat in the game is audible from the first frame
+    // and the one that says "go" cannot be the exception.
+    ctx.events.on('match:started', () => {
+      if (this.engine.isReady) this.synth?.whistle(0.9, true);
+      else this.pendingStartWhistle = true;
+    });
+    ctx.events.on('match:ended', () => {
+      // Two blasts, falling: unmistakably the end of something.
+      this.synth?.whistle(0.95, false, 0.32);
+      window.setTimeout(() => this.synth?.whistle(0.95, false, 0.8), 380);
+    });
+
     ctx.events.on('loot:taken', ({ characterId, position }) => {
       if (characterId === 'player') {
         // Two bells, a fifth apart: unmistakably a reward, and it needs no new
@@ -87,6 +105,11 @@ export class AudioSystem implements System {
     this.startWind();
     this.nextBirdAt = ctx.elapsed + 1.5;
     this.nextNoteAt = ctx.elapsed + 4;
+    this.nextWaterAt = ctx.elapsed + 0.5;
+    if (this.pendingStartWhistle) {
+      this.pendingStartWhistle = false;
+      this.synth?.whistle(0.9, true);
+    }
   }
 
   /** A continuous filtered-noise bed, slowly opening and closing. */
@@ -168,6 +191,19 @@ export class AudioSystem implements System {
       this.nextBirdAt = ctx.elapsed + ctx.rng.range(1.8, 6.5);
     }
 
+    // The fountain, heard from anywhere on the plaza. Scheduled rather than
+    // looped: a one-shot wash every second or so overlaps into a continuous
+    // bed, and it costs nothing when nobody is near enough to hear it.
+    if (ctx.elapsed >= this.nextWaterAt) {
+      const position = this.state.renderPosition;
+      const distance = Math.hypot(position.x, position.z);
+      if (distance < FOUNTAIN_AUDIBLE) {
+        const near = 1 - distance / FOUNTAIN_AUDIBLE;
+        this.playAt(FOUNTAIN_POSITION, (g, p) => this.synth?.water(g * near * 0.5, p));
+      }
+      this.nextWaterAt = ctx.elapsed + ctx.rng.range(0.8, 1.3);
+    }
+
     if (ctx.elapsed >= this.nextNoteAt) {
       // A wandering pentatonic line: steps of at most a third keep it calm.
       this.scaleIndex = Math.max(
@@ -203,3 +239,8 @@ export class AudioSystem implements System {
 }
 
 const FORWARD = new Vector3();
+
+/** The Bethesda Fountain stands at the origin, and you can hear it running. */
+const FOUNTAIN_POSITION = new Vector3(0, 1.5, 0);
+/** Beyond this the fountain is inaudible under the wind. */
+const FOUNTAIN_AUDIBLE = 26;

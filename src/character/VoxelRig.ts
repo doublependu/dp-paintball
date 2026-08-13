@@ -17,9 +17,19 @@ export const JOINT = {
   ARM_R: 5,
   LEG_L: 6,
   LEG_R: 7,
+  /**
+   * The marker, held in the right hand.
+   *
+   * A joint of its own rather than boxes riding on the arm, so the gun can be
+   * *aimed* — the animator counter-rotates this joint against the arm and the
+   * torso so the barrel points along the player's line of sight whatever the
+   * shoulder happens to be doing. Boxes on the arm can only ever point where
+   * the arm points, which is what made the old marker read as a limb extension.
+   */
+  GUN: 8,
 } as const;
 
-export const JOINT_COUNT = 8;
+export const JOINT_COUNT = 9;
 
 export interface RigPart {
   name: string;
@@ -51,29 +61,56 @@ export const HUMAN_PARTS: RigPart[] = [
   { name: 'eyeR', joint: JOINT.HEAD, size: [0.09, 0.09, 0.03], offset: [0.1, 0.27, -0.225], color: 0x2a2438 },
   { name: 'armL', joint: JOINT.ARM_L, size: [0.17, 0.62, 0.22], offset: [0, -0.31, 0], color: 0x3f8fd0 },
   { name: 'armR', joint: JOINT.ARM_R, size: [0.17, 0.62, 0.22], offset: [0, -0.31, 0], color: 0x3f8fd0 },
+  // Fists. Small, but they are what turns "a gun stuck to an arm" into "a gun
+  // held in a hand": the marker hangs off the GUN joint at its own angle now,
+  // so without a fist there is a visible kink where the arm stops and the
+  // grip starts. The left one exists for the same reason in the aim pose,
+  // where it comes across to brace the fore-end.
+  { name: 'handR', joint: JOINT.ARM_R, size: [0.19, 0.15, 0.23], offset: [-0.04, -0.62, -0.01], color: 0x2b3140 },
+  { name: 'handL', joint: JOINT.ARM_L, size: [0.19, 0.15, 0.23], offset: [0.02, -0.62, -0.01], color: 0x2b3140 },
   { name: 'legL', joint: JOINT.LEG_L, size: [0.2, 0.75, 0.24], offset: [0, -0.375, 0], color: 0x2f3f5e },
   { name: 'legR', joint: JOINT.LEG_R, size: [0.2, 0.75, 0.24], offset: [0, -0.375, 0], color: 0x2f3f5e },
 
   // --- the marker ---------------------------------------------------------
   //
   // Parts of the rig rather than a child mesh on a hand bone. The whole figure
-  // is one merged geometry indexed by joint, so four more boxes cost four boxes
-  // of vertices and *no* extra draw call — where a separate mesh would cost one
+  // is one merged geometry indexed by joint, so these boxes cost their own
+  // vertices and *no* extra draw call — where a separate mesh would cost one
   // per character in each of the colour, prepass and hull passes. It also picks
   // up the inverted-hull ink and the animated pose for free.
   //
-  // Laid out along the arm's own -Y, continuing past the hand, which is the one
-  // orientation that reads right in both poses without a second joint: the arm
-  // hangs at rest so the marker points at the ground, and the aim pose swings
-  // the shoulder forward so the marker comes up level. In that pose the arm's
-  // local -Z points up, so the hopper sits on -Z and the grip on +Z.
-  { name: 'gunBody', joint: JOINT.ARM_R, size: [0.1, 0.2, 0.14], offset: [0, -0.64, -0.02], color: 0x39404f },
-  { name: 'gunBarrel', joint: JOINT.ARM_R, size: [0.06, 0.28, 0.06], offset: [0, -0.86, -0.02], color: 0x2f3542 },
-  { name: 'gunGrip', joint: JOINT.ARM_R, size: [0.07, 0.15, 0.08], offset: [0, -0.63, 0.08], color: 0x2f3542 },
+  // Laid out in the GUN joint's own frame: origin at the fist, -Z down the
+  // barrel, +Y up. That frame is aimed by the animator rather than inherited
+  // from the arm, so these numbers describe a marker lying on a bench and
+  // nothing here has to compromise for the pose.
+  //
+  // Proportioned from a real marker: grip under the receiver, hopper standing
+  // proud on top and set back, barrel a little over a third of the length, and
+  // an air tank behind the grip — which is the silhouette that says "paintball"
+  // rather than "rifle", and the whole reason the hopper is worth four boxes.
+  { name: 'gunGrip', joint: JOINT.GUN, size: [0.07, 0.17, 0.09], offset: [0, -0.05, 0.03], color: 0x2f3542 },
+  { name: 'gunBody', joint: JOINT.GUN, size: [0.085, 0.14, 0.28], offset: [0, 0.085, -0.09], color: 0x39404f },
+  { name: 'gunNeck', joint: JOINT.GUN, size: [0.07, 0.05, 0.09], offset: [0, 0.175, -0.05], color: 0x2f3542 },
+  { name: 'gunSight', joint: JOINT.GUN, size: [0.045, 0.035, 0.09], offset: [0, 0.175, -0.2], color: 0x2f3542 },
+  { name: 'gunBarrel', joint: JOINT.GUN, size: [0.05, 0.05, 0.28], offset: [0, 0.09, -0.37], color: 0x2f3542 },
+  { name: 'gunMuzzle', joint: JOINT.GUN, size: [0.066, 0.066, 0.05], offset: [0, 0.09, -0.53], color: 0x39404f },
+  { name: 'gunTank', joint: JOINT.GUN, size: [0.075, 0.075, 0.2], offset: [0, -0.005, 0.15], color: 0x39404f },
   // Team colour, assigned in Character — the hopper is the one part of the
   // marker you can read from across the plaza.
-  { name: 'gunHopper', joint: JOINT.ARM_R, size: [0.12, 0.11, 0.13], offset: [0, -0.61, -0.13], color: 0xff3d81 },
+  { name: 'gunHopper', joint: JOINT.GUN, size: [0.14, 0.13, 0.16], offset: [0, 0.23, -0.05], color: 0xff3d81 },
 ];
+
+/**
+ * Where the marker's muzzle sits in the GUN joint's frame — the end of
+ * `gunBarrel` plus the muzzle block.
+ *
+ * `AimSolver` cannot read this: it spawns projectiles from `fixedUpdate`, a
+ * frame before the rig is posed, so it carries its own analytic muzzle in the
+ * *body's* frame instead. The two are therefore free to drift, and did when the
+ * marker moved onto its own joint — so `character-test` fires a real shot and
+ * asserts the ball leaves within 18cm of the axis this point defines.
+ */
+export const GUN_MUZZLE_LOCAL = new Vector3(0, 0.09, -0.56);
 
 /** Rest-pose pivot offsets, each relative to its parent joint. */
 const JOINT_REST: Record<number, { parent: number; offset: Vector3 }> = {
@@ -84,6 +121,11 @@ const JOINT_REST: Record<number, { parent: number; offset: Vector3 }> = {
   [JOINT.ARM_R]: { parent: JOINT.TORSO, offset: new Vector3(0.315, 0.58, 0) },
   [JOINT.LEG_L]: { parent: JOINT.PELVIS, offset: new Vector3(-0.11, 0, 0) },
   [JOINT.LEG_R]: { parent: JOINT.PELVIS, offset: new Vector3(0.11, 0, 0) },
+  // The fist. Set in a little from the arm's own axis so the marker carries on
+  // the body's centre line rather than out at the shoulder — a gun held at
+  // arm's length to the right of the chest cannot be aimed convincingly at
+  // something the camera is looking at over the *left* shoulder.
+  [JOINT.GUN]: { parent: JOINT.ARM_R, offset: new Vector3(-0.08, -0.6, 0) },
 };
 
 /** Box face order, matching the order faces are emitted below. */
@@ -160,6 +202,22 @@ export class VoxelRig {
    * the shader projects the splat along `outNormal` and lets it fall across
    * however many faces it reaches, which is what makes a splat wrap a corner
    * instead of being stamped onto each face separately.
+   *
+   * ## Why the point and the normal are both corrected
+   *
+   * Impacts arrive from the *capsule*, which is a good deal more generous than
+   * the figure inside it: it is 0.35m in radius where the torso is 0.13m deep,
+   * so an ordinary square hit on the chest lands about 0.2m clear of the body
+   * it is supposed to paint. Handed to the shader raw, that splat fails the
+   * `abs( along ) > radius` test against a 0.2m radius on every face and
+   * silently disappears — score up, no paint, which is exactly the complaint.
+   * The same geometry tilts the capsule's normal away from any box face near a
+   * shoulder or the crown, where the grazing-angle guard then drops it.
+   *
+   * So the anchor is snapped onto the nearest box's surface, and the projection
+   * axis is tipped back toward that surface's own face normal when the two
+   * disagree. Neither changes where a splat lands to the eye; both are the
+   * difference between a splat that draws and one that does not.
    */
   resolvePaintAnchor(
     worldPoint: Vector3,
@@ -197,9 +255,45 @@ export class VoxelRig {
     }
 
     // Well clear of every part — a miss, or a hit on something else entirely.
+    // The bound is a capsule radius plus slack: anything nearer than that is a
+    // shot that struck this body, however awkwardly, and gets painted.
     if (bestPart < 0 || bestDistance > 0.5) return -1;
 
-    const joint = this.parts[bestPart]!.joint;
+    const part = this.parts[bestPart]!;
+    const joint = part.joint;
+
+    // Snap onto the struck box, and work out which face that landed on.
+    //
+    // The winning axis is the one with the least room left between the point
+    // and its face, measured as a fraction of the half-extent so a thin box's
+    // broad faces win over its narrow ones. For a point outside the box that
+    // slack is negative on whichever axis it overshot, and most negative on the
+    // axis it overshot furthest — which is the face it is in front of.
+    let faceAxis = 0;
+    let faceSign = 1;
+    let leastSlack = Infinity;
+    for (let axis = 0; axis < 3; axis++) {
+      const half = part.size[axis]! / 2;
+      const centre = part.offset[axis]!;
+      const value = axis === 0 ? outPoint.x : axis === 1 ? outPoint.y : outPoint.z;
+      const relative = value - centre;
+      const clamped = Math.min(half, Math.max(-half, relative));
+      if (axis === 0) outPoint.x = centre + clamped;
+      else if (axis === 1) outPoint.y = centre + clamped;
+      else outPoint.z = centre + clamped;
+
+      const slack = (half - Math.abs(relative)) / half;
+      if (slack < leastSlack) {
+        leastSlack = slack;
+        faceAxis = axis;
+        faceSign = relative >= 0 ? 1 : -1;
+      }
+    }
+    FACE_NORMAL.set(0, 0, 0);
+    if (faceAxis === 0) FACE_NORMAL.x = faceSign;
+    else if (faceAxis === 1) FACE_NORMAL.y = faceSign;
+    else FACE_NORMAL.z = faceSign;
+
     // A direction, so only the rotation applies — transformDirection uses the
     // upper 3x3, which is what the joint matrices carry.
     outNormal
@@ -207,6 +301,14 @@ export class VoxelRig {
       .transformDirection(SCRATCH_M.copy(worldMatrix).invert())
       .transformDirection(SCRATCH_M2.copy(this.jointMatrices[joint]!).invert())
       .normalize();
+
+    // Tip a disagreeing axis back toward the face. Blended rather than
+    // replaced: the residual tilt is what lets a splat wrap onto the
+    // neighbouring face, and snapping to the face normal exactly would flatten
+    // every splat onto one plane and undo that.
+    if (outNormal.dot(FACE_NORMAL) < 0.55) {
+      outNormal.multiplyScalar(0.4).add(FACE_NORMAL).normalize();
+    }
     return joint;
   }
 
@@ -301,5 +403,6 @@ export class VoxelRig {
 
 const SCRATCH_V = new Vector3();
 const SCRATCH_V2 = new Vector3();
+const FACE_NORMAL = new Vector3();
 const SCRATCH_M = new Matrix4();
 const SCRATCH_M2 = new Matrix4();

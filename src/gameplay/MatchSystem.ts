@@ -108,6 +108,7 @@ export class MatchSystem implements System {
 
     resetMatch(this.match);
     this.characters.resetScores();
+    this.characters.respawnAll();
     this.lootSystem.respawn();
     this.pendingWarnings = [matchConfig.warnAtSeconds];
     ctx.events.emit('match:started', { duration: this.match.timeLeft });

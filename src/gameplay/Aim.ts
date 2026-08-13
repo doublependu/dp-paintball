@@ -9,6 +9,9 @@ export const AIM_RANGE = 200;
 
 const UP = new Vector3(0, 1, 0);
 
+/** How far down the barrel from the breech the ball is spawned, in metres. */
+const BARREL_STEP = 0.15;
+
 /**
  * Tangent of the current spread cone's half-angle.
  *
@@ -81,22 +84,24 @@ export class AimSolver {
   /**
    * Muzzle sits on the marker's barrel, facing where the player looks.
    *
-   * These numbers sit on the barrel's own axis, extended back into the
-   * receiver. Measured, not guessed: in the aim pose the barrel runs from
-   * (0.12, 1.17, 0.67) to (0.04, 1.09, 0.93) in body-relative metres, which is
-   * much closer to the centre line than the shoulder it hangs from — the aim
-   * pose tucks the arm inward across the chest (`armR.rotation.z`), so a muzzle
-   * placed at the shoulder would be 0.18m to the right of the gun.
+   * These numbers sit on the barrel's own axis. Measured, not guessed: with the
+   * marker on its own joint the animator solves the barrel to the body's
+   * forward axis at the view pitch, and the breech ends up at (0.14, 1.29,
+   * -0.53) in body-relative metres whatever the arm is doing — see
+   * `CharacterAnimator.aimMarker`. The lateral offset is small because the gun
+   * joint is set in from the shoulder, not because of anything the arm's pose
+   * happens to do.
    *
-   * Deliberately *not* the barrel tip. Spawning a projectile 0.93m in front of
-   * the body lets a player hugging cover fire from the far side of it, so the
-   * muzzle stays just inside the receiver instead — on the same line, close
-   * enough to the capsule to keep that from happening.
+   * Deliberately *not* the barrel tip, which is a further 0.6m out. Spawning a
+   * projectile that far in front of the body lets a player hugging cover fire
+   * from the far side of it, so the muzzle sits a quarter of the way down the
+   * barrel instead — on the same line, close enough to the capsule to keep that
+   * from happening.
    *
    * It stays analytic rather than reading the posed joint matrix: the rig is
    * posed in `update()` and shots are fired from `fixedUpdate()`, so a matrix
    * read here would be a frame stale, and the scene crosshair traces from this
-   * same point every step.
+   * same point every step. `character-test` asserts the two agree.
    */
   private computeMuzzle(state: PlayerState): void {
     const yaw = state.yaw;
@@ -109,8 +114,13 @@ export class AimSolver {
     // the interpolated visual transform is a frame stale.
     this.muzzle
       .copy(state.position)
-      .addScaledVector(UP, 1.18 * heightRatio)
-      .addScaledVector(this.lateral, 0.15)
-      .addScaledVector(this.forward, 0.56);
+      .addScaledVector(UP, 1.29 * heightRatio)
+      .addScaledVector(this.lateral, 0.14)
+      .addScaledVector(this.forward, 0.53);
+
+    // Then a step along the barrel itself, which the view pitch swings.
+    this.muzzle
+      .addScaledVector(this.forward, Math.cos(state.pitch) * BARREL_STEP)
+      .addScaledVector(UP, Math.sin(state.pitch) * BARREL_STEP);
   }
 }

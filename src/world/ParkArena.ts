@@ -22,8 +22,10 @@ import { createCelMaterial } from '../render/CelMaterial';
 import { NO_OUTLINE_LAYER } from '../render/NprPipeline';
 import { PLAQUE_ASPECT, createSignPlaqueTexture } from '../render/SignPlaque';
 import { Sky } from '../render/Sky';
+import { Birds } from './Birds';
 import { Cityscape } from './Cityscape';
 import { Foliage, type TreeSpec } from './Foliage';
+import { Fountain } from './Fountain';
 import {
   ARCADE,
   BRIDGE,
@@ -69,6 +71,67 @@ const SHADOW_EXTENT = 88;
 
 /** Perimeter wall: stone base plus railing. Enough that nobody jumps it. */
 const WALL_HEIGHT = 3.4;
+
+/**
+ * The grand stairs, from the fountain plaza up to the terrace.
+ *
+ * They used to be placed on the plateau *south* of the terrace, climbing
+ * northward down a slope that rises from 0.9m to 3.8m over the same ground: the
+ * bottom flight was buried whole, the middle one half sunk, and the top one
+ * stood in mid-air — three flights that led nowhere and could not be climbed.
+ *
+ * The real arrangement is the fix. Bethesda's stairs flank the arcade on the
+ * *plaza* side and climb south onto the terrace, which is the one route the map
+ * was missing: the terrace slab is a walkable roof 4.2m up, and until now the
+ * only way onto it was to walk round to the plateau behind it.
+ *
+ * `stair_flight` is 8m wide and rises 1.68m over 2.58m of tread. Three of them
+ * overshoot the terrace, so the prop is scaled to fit exactly rather than left
+ * at 1:1 with a step at the top — see `placeStairs`.
+ */
+const STAIRS = {
+  /** Distance either side of the centre line. Clear of the arcade bays. */
+  x: 19,
+  flights: 3,
+  /** Prop dimensions at 1:1, from the GLB. */
+  propRise: 1.68,
+  propDepth: 2.58,
+  propWidth: 8,
+};
+
+/**
+ * Ground level at the foot of the stairs.
+ *
+ * The plaza paving is dead flat at y=0 but only out to a radius of 20m around
+ * (0, 2); the stair foot at (±19, 9) is just outside it, on ground that
+ * `heightAt` puts at -0.4 to -0.55. Taken as a constant rather than sampled per
+ * side so both flights of stairs are identical, and set to the low end so the
+ * bottom step is slightly buried rather than slightly floating.
+ */
+const STAIR_BASE_Y = -0.55;
+
+/**
+ * Approach ramps at both ends of Bow Bridge.
+ *
+ * The bridge's abutments are solid blocks with their tops 2.4m above its own
+ * origin — 2.5m in world terms — while the ground the corridor levels for it
+ * sits at 0.5m at the south end and dips to 1.0m at the north. Both ends were
+ * therefore a two-metre wall you could see a bridge on top of and not get onto.
+ * These are the stone embankments that carry the approach up to the deck.
+ *
+ * Each runs from `fromZ` to `toZ` and both must be written north to south —
+ * `fromZ < toZ` — because the slab's pitch is solved with `atan2` and a run
+ * given backwards comes out near pi, which turns the ramp upside down.
+ */
+const BRIDGE_RAMPS = [
+  // North, into the Ramble, where the hillside already climbs to meet the deck
+  // — this one is a causeway across the dip rather than a ramp.
+  { fromZ: -48.2, fromY: 2.62, toZ: -45.0, toY: 2.5, thickness: 2.8 },
+  // South, off the lakeside walk: 2.25m over 7.5m, about 17 degrees.
+  { fromZ: -15.0, fromY: 2.5, toZ: -7.5, toY: 0.25, thickness: 2.4 },
+] as const;
+/** Ramp width, matching the bridge deck between its parapets. */
+const BRIDGE_RAMP_WIDTH = 4.6;
 
 /**
  * The dedication sign.
@@ -130,6 +193,8 @@ export class ParkArenaSystem implements System {
 
   private terrain?: Terrain;
   private water?: Water;
+  private fountain?: Fountain;
+  private birds?: Birds;
   private foliage?: Foliage;
   private sky?: Sky;
   private city?: Cityscape;
@@ -169,6 +234,12 @@ export class ParkArenaSystem implements System {
     await this.loadProps(ctx);
 
     scene.add(this.group);
+    // Gunfire puts the nearby birds up. Subscribed here rather than inside
+    // Birds so the flock stays a piece of scenery with no idea a game is going
+    // on around it.
+    ctx.events.on('shot:fired', ({ origin }) => {
+      this.birds?.scatter(origin.x, origin.z);
+    });
     this.placeArchitecture(ctx);
     this.placeFurniture(ctx, rng);
     this.placeNature(ctx, rng);
@@ -331,28 +402,36 @@ export class ParkArenaSystem implements System {
     mesh.instanceMatrix.needsUpdate = true;
   }
 
-  /** A plain box with matching collider — used for slabs and walls. */
+  /**
+   * A plain box with matching collider — used for slabs, walls and ramps.
+   *
+   * `pitch` tilts it about X, which is all a ramp needs and keeps the collider
+   * exactly the thing that was drawn: a sloped surface built from stacked
+   * axis-aligned boxes would be a staircase you could catch a toe on.
+   */
   private placeBox(
     ctx: GameContext,
     size: Vector3,
     position: Vector3,
     color: number,
     paintable = true,
+    pitch = 0,
   ): Mesh {
     const geometry = new BoxGeometry(size.x, size.y, size.z);
     const material = createCelMaterial({ color });
     const mesh = new Mesh(geometry, material);
     mesh.position.copy(position);
+    mesh.rotation.x = pitch;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.group.add(mesh);
     this.disposables.push(geometry, material);
 
-    const collider = ctx.physics.createStaticBox(position, {
-      x: size.x / 2,
-      y: size.y / 2,
-      z: size.z / 2,
-    });
+    const collider = ctx.physics.createStaticBox(
+      position,
+      { x: size.x / 2, y: size.y / 2, z: size.z / 2 },
+      pitch === 0 ? undefined : new Quaternion().setFromAxisAngle(RIGHT, pitch),
+    );
     if (paintable) this.surfaces.registerMesh(collider.handle, mesh);
     return mesh;
   }
@@ -377,58 +456,49 @@ export class ParkArenaSystem implements System {
       this.placeSingle(ctx, 'arcade_bay', new Vector3(x, 0, ARCADE.z), 0, palette.stoneLit);
     }
 
-    // Side walls closing the undercroft, either side of the colonnade.
+    // Side walls closing the undercroft, either side of the colonnade — in two
+    // segments, because the grand stairs now land on the terrace between them.
+    // The gap is not a hole: the top flight fills it from the plaza floor to
+    // the slab.
+    const stairGap = this.stairFootprint();
     for (const side of [-1, 1]) {
-      const innerX = side * (half + ARCADE.bayWidth / 2 + 0.6);
-      const outerX = side * TERRACE.halfWidth;
-      const width = Math.abs(outerX - innerX);
-      this.placeBox(
-        ctx,
-        new Vector3(width, TERRACE.y, 1.2),
-        new Vector3((innerX + outerX) / 2, TERRACE.y / 2, ARCADE.z),
-        palette.stoneShade,
-      );
-    }
-
-    // Grand stairs, flanking the arcade, climbing to the terrace.
-    for (const side of [-1, 1]) {
-      for (let flight = 0; flight < 3; flight++) {
-        this.placeSingle(
+      const innerX = half + ARCADE.bayWidth / 2 + 0.6;
+      const outerX = TERRACE.halfWidth;
+      for (const [from, to] of [
+        [innerX, stairGap.from],
+        [stairGap.to, outerX],
+      ] as const) {
+        if (to - from < 0.4) continue;
+        this.placeBox(
           ctx,
-          'stair_flight',
-          new Vector3(side * 19, flight * 1.68, 27 + flight * 2.4),
-          Math.PI,
-          palette.stoneLit,
+          new Vector3(to - from, TERRACE.y, 1.2),
+          new Vector3((side * (from + to)) / 2, TERRACE.y / 2, ARCADE.z),
+          palette.stoneShade,
         );
       }
     }
 
+    this.placeStairs(ctx);
+
     // Balustrade along the terrace's north edge, with a gap over the arcade so
-    // the view down to the fountain stays open.
+    // the view down to the fountain stays open, and another at each stair head.
     const balustrades: Placement[] = [];
     for (let x = -TERRACE.halfWidth + 1; x < TERRACE.halfWidth; x += 2) {
       if (Math.abs(x) < half + ARCADE.bayWidth / 2) continue;
+      if (Math.abs(x) > stairGap.from - 1 && Math.abs(x) < stairGap.to + 1) continue;
       balustrades.push({
         position: new Vector3(x, TERRACE.y, TERRACE.northZ + 0.4),
         rotationY: 0,
         scale: 1,
       });
     }
-    // And around the plaza's lakeside edge.
-    for (let a = -1.15; a <= 1.15; a += 0.12) {
-      const r = 21;
-      const x = Math.sin(a) * r;
-      const z = -Math.cos(a) * r - 4;
-      balustrades.push({
-        position: new Vector3(x, heightAt(x, z), z),
-        rotationY: -a,
-        scale: 1,
-      });
-    }
+    this.placeShoreRailing(balustrades);
     this.placeInstanced(ctx, 'balustrade', balustrades, palette.stoneLit);
 
     // Bethesda Fountain, at the origin.
     this.placeSingle(ctx, 'bethesda_fountain', new Vector3(0, 0, 0), 0, 0xc8bda4);
+    this.fountain = new Fountain();
+    ctx.scene.add(this.fountain.group);
 
     // Bow Bridge, rotated a quarter turn so its span runs north-south across
     // the lake's western arm.
@@ -439,44 +509,193 @@ export class ParkArenaSystem implements System {
       Math.PI / 2,
       0xd9cfba,
     );
+    for (const ramp of BRIDGE_RAMPS) {
+      // A ramp is one tilted slab: the top face is the walking surface, and the
+      // slab is thick enough that its low end buries itself in the bank rather
+      // than leaving a lip to trip over.
+      const run = ramp.toZ - ramp.fromZ;
+      const rise = ramp.toY - ramp.fromY;
+      const pitch = -Math.atan2(rise, run);
+      const normalY = Math.cos(pitch);
+      const normalZ = Math.sin(pitch);
+      this.placeBox(
+        ctx,
+        new Vector3(BRIDGE_RAMP_WIDTH, ramp.thickness, Math.hypot(run, rise)),
+        new Vector3(
+          BRIDGE.x,
+          (ramp.fromY + ramp.toY) / 2 - (normalY * ramp.thickness) / 2,
+          (ramp.fromZ + ramp.toZ) / 2 - (normalZ * ramp.thickness) / 2,
+        ),
+        0xd9cfba,
+        true,
+        pitch,
+      );
+    }
+  }
+
+  /** The x band the stairs occupy on each side, as positive distances. */
+  private stairFootprint(): { from: number; to: number } {
+    const scale = this.stairScale();
+    const halfWidth = (STAIRS.propWidth * scale) / 2;
+    return { from: STAIRS.x - halfWidth - 0.2, to: STAIRS.x + halfWidth + 0.2 };
+  }
+
+  /**
+   * Scale that makes `STAIRS.flights` flights climb exactly from the plaza to
+   * the terrace slab, so neither end needs a step to finish the job.
+   */
+  private stairScale(): number {
+    const rise = TERRACE.y - STAIR_BASE_Y;
+    return rise / (STAIRS.flights * STAIRS.propRise);
+  }
+
+  /**
+   * The grand stairs: three flights a side, plus the solid mass beneath them.
+   *
+   * The vault matters. A flight is a stepped solid from its own base upward, so
+   * flights two and three would otherwise float over an open void with the
+   * undercroft visible through it — the stairs read as a stone mass from the
+   * plaza, and a stone mass is what stops shots as well.
+   */
+  private placeStairs(ctx: GameContext): void {
+    const scale = this.stairScale();
+    const rise = STAIRS.propRise * scale;
+    const depth = STAIRS.propDepth * scale;
+    const width = STAIRS.propWidth * scale;
+    // Local +Z is the top of the flight, so no rotation: they climb south.
+    const topEdge = (STAIRS.propDepth / 2) * scale;
+
+    for (const side of [-1, 1]) {
+      for (let flight = 0; flight < STAIRS.flights; flight++) {
+        const z = TERRACE.northZ - topEdge - (STAIRS.flights - 1 - flight) * depth;
+        const y = STAIR_BASE_Y + flight * rise;
+        this.placeSingle(
+          ctx,
+          'stair_flight',
+          new Vector3(side * STAIRS.x, y, z),
+          0,
+          palette.stoneLit,
+          scale,
+        );
+        if (flight === 0) continue;
+        // Fill from below the ground up to this flight's own base.
+        const vaultTop = y;
+        const vaultBottom = STAIR_BASE_Y - 1.2;
+        this.placeBox(
+          ctx,
+          new Vector3(width, vaultTop - vaultBottom, depth),
+          new Vector3(side * STAIRS.x, (vaultTop + vaultBottom) / 2, z),
+          palette.stoneShade,
+        );
+      }
+    }
+  }
+
+  /**
+   * The railing along the plaza's lakeside edge.
+   *
+   * Placed by walking the actual waterline rather than by sweeping an arc of
+   * fixed radius, which is what put a run of balustrade 25m out into the lake,
+   * standing on the bed 3.4m under the surface. The shoreline here is a noise
+   * -wobbled ellipse whose radius from the plaza varies between 12m and 20m
+   * over the same sweep, so no single radius can follow it.
+   */
+  private placeShoreRailing(into: Placement[]): void {
+    const points: Array<{ x: number; z: number }> = [];
+    for (let a = -1.2; a <= 1.2; a += 0.03) {
+      let radius = 21;
+      for (let r = 8; r <= 24; r += 0.25) {
+        if (lakeMask(Math.sin(a) * r, -Math.cos(a) * r - 4) > 0.03) {
+          radius = r;
+          break;
+        }
+      }
+      // Stood back from the water so the railing is on the bank, not in it.
+      radius = Math.max(8, radius - 1.1);
+      points.push({ x: Math.sin(a) * radius, z: -Math.cos(a) * radius - 4 });
+    }
+
+    // Then step along that polyline at the prop's own width, so the run is
+    // evenly spaced whatever the shoreline does.
+    const SPAN = 2;
+    let carried = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i]!;
+      const b = points[i + 1]!;
+      const length = Math.hypot(b.x - a.x, b.z - a.z);
+      carried += length;
+      if (carried < SPAN) continue;
+      carried = 0;
+      const x = (a.x + b.x) / 2;
+      const z = (a.z + b.z) / 2;
+      into.push({
+        position: new Vector3(x, heightAt(x, z), z),
+        // The prop runs along its own X, and +X swings toward -Z as yaw rises.
+        rotationY: Math.atan2(-(b.z - a.z), b.x - a.x),
+        scale: 1,
+      });
+    }
+  }
+
+  /**
+   * Whether a piece of park furniture may stand here.
+   *
+   * Benches and lamps were laid out on rings and polylines with no knowledge of
+   * the buildings those rings pass through, so the plaza ring put two benches
+   * inside the arcade's side walls and two lamp posts under the terrace slab —
+   * a 4.7m post in a 3.5m undercroft. The rings are still the right way to lay
+   * furniture out; they just have to be told what is already there.
+   *
+   * Read as "is this square metre free", not "is this a good spot": tree
+   * planting has its own predicate with its own rules, and merging the two
+   * would give the benches a horror of Sheep Meadow.
+   */
+  private isClearForFurniture(x: number, z: number): boolean {
+    // Not in the water, and not out on the lake bed pretending to be.
+    if (lakeMask(x, z) > 0.05) return false;
+    // Not inside the fountain basin, which is 6m across at the rim.
+    if (Math.hypot(x, z) < 7.5) return false;
+    // Not under the terrace, on it, or inside the arcade's colonnade.
+    if (Math.abs(x) < TERRACE.halfWidth + 1.5 && z > ARCADE.z - 2.5 && z < TERRACE.southZ + 2) {
+      return false;
+    }
+    // Not on the grand stairs or the ground they climb from.
+    const stairs = this.stairFootprint();
+    if (Math.abs(x) > stairs.from - 1 && Math.abs(x) < stairs.to + 1 && z > 7 && z < ARCADE.z) {
+      return false;
+    }
+    // Not on the sign, which is its own three colliders on the paving.
+    if (Math.hypot(x - SIGN.x, z - SIGN.z) < 2.2) return false;
+    return true;
   }
 
   private placeFurniture(ctx: GameContext, rng: Rng): void {
     const benches: Placement[] = [];
     const lamps: Placement[] = [];
+    const bench = (x: number, z: number, rotationY: number): void => {
+      if (!this.isClearForFurniture(x, z)) return;
+      benches.push({ position: new Vector3(x, heightAt(x, z), z), rotationY, scale: 1 });
+    };
+    const lamp = (x: number, z: number): void => {
+      if (!this.isClearForFurniture(x, z)) return;
+      lamps.push({ position: new Vector3(x, heightAt(x, z), z), rotationY: 0, scale: 1 });
+    };
 
     // Down both sides of the Mall, facing the path.
     for (let z = 30; z <= 82; z += 7) {
       for (const side of [-1, 1]) {
-        const x = side * 8.5;
-        benches.push({
-          position: new Vector3(x, heightAt(x, z), z),
-          rotationY: side > 0 ? -Math.PI / 2 : Math.PI / 2,
-          scale: 1,
-        });
+        bench(side * 8.5, z, side > 0 ? -Math.PI / 2 : Math.PI / 2);
       }
-      const lx = 15.0;
-      lamps.push({ position: new Vector3(-lx, heightAt(-lx, z), z), rotationY: 0, scale: 1 });
-      lamps.push({ position: new Vector3(lx, heightAt(lx, z), z), rotationY: 0, scale: 1 });
+      lamp(-15, z);
+      lamp(15, z);
     }
 
     // Around the plaza rim, looking in at the fountain.
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2 + 0.4;
       const r = 16;
-      const x = Math.cos(a) * r;
-      const z = Math.sin(a) * r + 2;
-      if (lakeMask(x, z) > 0.1) continue;
-      benches.push({
-        position: new Vector3(x, heightAt(x, z), z),
-        rotationY: -a + Math.PI / 2,
-        scale: 1,
-      });
-      lamps.push({
-        position: new Vector3(Math.cos(a) * 20, heightAt(Math.cos(a) * 20, Math.sin(a) * 20 + 2), Math.sin(a) * 20 + 2),
-        rotationY: 0,
-        scale: 1,
-      });
+      bench(Math.cos(a) * r, Math.sin(a) * r + 2, -a + Math.PI / 2);
+      lamp(Math.cos(a) * 20, Math.sin(a) * 20 + 2);
     }
 
     // Benches along the made walks, facing whatever the walk looks out at.
@@ -484,12 +703,7 @@ export class ParkArenaSystem implements System {
       [-14, -14], [18, -16], [-52, -14], [30, -13], [-30, 26], [-28, 46],
       [36, 30], [36, 52], [-64, 30], [-70, 52], [-46, 74], [8, -76],
     ] as const) {
-      if (lakeMask(x, z) > 0.05) continue;
-      benches.push({
-        position: new Vector3(x, heightAt(x, z), z),
-        rotationY: Math.atan2(x, z) + Math.PI,
-        scale: 1,
-      });
+      bench(x, z, Math.atan2(x, z) + Math.PI);
     }
 
     // Lamps down the made walks. The park's cast-iron posts are its other
@@ -500,7 +714,7 @@ export class ParkArenaSystem implements System {
       [26, 12], [36, 28], [38, 46], [35, 62], [42, 78],
       [12, -15], [-16, -16], [-36, -16], [-44, -22], [-44, -40],
     ] as const) {
-      lamps.push({ position: new Vector3(x, heightAt(x, z), z), rotationY: 0, scale: 1 });
+      lamp(x, z);
     }
 
     void rng;
@@ -866,6 +1080,30 @@ export class ParkArenaSystem implements System {
 
     this.foliage = new Foliage(canopies, rng);
     ctx.scene.add(this.foliage.mesh);
+
+    // Birds perch in the crowns, so they are placed from the same list the
+    // canopies are built from — a bird sitting in mid-air where a tree used to
+    // be is the one failure mode worth designing out.
+    //
+    // Only trees inside the play area: the belt is a backdrop, and a bird that
+    // flits between two trees 150m away is a pixel nobody will ever see moving.
+    const perches = plans
+      .filter((plan) => !plan.far && Math.hypot(plan.x, plan.z) < 96)
+      .map((plan) => ({
+        // The crown's own centre, which is where the canopy cards are hung —
+        // see the `crownHeight` given to `TreeSpec` a few lines above. Birds
+        // are placed from the same numbers so one can never sit in the air
+        // where a tree used to be.
+        point: new Vector3(
+          plan.x,
+          heightAt(plan.x, plan.z)
+            + plan.height * (plan.species === 'elm' ? 0.8 : plan.species === 'oak' ? 0.66 : 0.58),
+          plan.z,
+        ),
+        radius: plan.canopyRadius,
+      }));
+    this.birds = new Birds(perches, rng);
+    ctx.scene.add(this.birds.mesh);
   }
 
   /**
@@ -896,10 +1134,12 @@ export class ParkArenaSystem implements System {
     }
   }
 
-  update(_dt: number, _alpha: number, ctx: GameContext): void {
+  update(dt: number, _alpha: number, ctx: GameContext): void {
     this.sky?.update(ctx.camera, ctx.elapsed);
     this.water?.update(ctx.elapsed);
+    this.fountain?.update(ctx.elapsed);
     this.foliage?.update(ctx.elapsed);
+    this.birds?.update(dt, ctx.elapsed);
 
     // Keep the shadow frustum over the player. Snapped to whole metres, because
     // sliding it continuously makes every shadow edge crawl as you walk.
@@ -921,6 +1161,10 @@ export class ParkArenaSystem implements System {
     this.terrain?.dispose();
     this.water?.mesh.removeFromParent();
     this.water?.dispose();
+    this.fountain?.group.removeFromParent();
+    this.fountain?.dispose();
+    this.birds?.mesh.removeFromParent();
+    this.birds?.dispose();
     this.foliage?.mesh.removeFromParent();
     this.foliage?.dispose();
     this.sky?.mesh.removeFromParent();
@@ -933,3 +1177,4 @@ export class ParkArenaSystem implements System {
 }
 
 const UP = new Vector3(0, 1, 0);
+const RIGHT = new Vector3(1, 0, 0);

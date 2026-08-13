@@ -89,7 +89,7 @@ const rig = await page.evaluate(() => {
   };
 });
 check('rig geometry is one skinned mesh',
-      rig.hasJoint && rig.hasColor && !rig.hasUv && rig.joints === 8
+      rig.hasJoint && rig.hasColor && !rig.hasUv && rig.joints === 9
         && rig.verts === rig.tris * 2,
       `${rig.verts} verts, ${rig.tris} tris, ${rig.joints} joints`);
 
@@ -294,6 +294,300 @@ check('crouch lowers the pelvis', crouchedPelvis < standingPelvis - 0.2,
 check('standing back up restores the pelvis',
       recoveredPelvis > crouchedPelvis + 0.2,
       `${crouchedPelvis.toFixed(3)} -> ${recoveredPelvis.toFixed(3)}`);
+
+// --- Paint that is recorded is paint that is drawn ---------------------------
+//
+// The oldest complaint in FEEDBACK_0: the score moves and no paint appears.
+// `splatCount` cannot see it — that counts what went into the buffer, and every
+// candidate cause dropped the splat *after* that, in the shader. So this reads
+// the framebuffer: paint the body, photograph it, take the paint off, photograph
+// it again, and count the pixels that changed. Angles are swept one at a time
+// because the failure was never all-or-nothing — impacts arrive on the capsule,
+// which is 0.35m in radius where the torso is 0.13m deep, so how far off the
+// body a splat landed depended entirely on which way the shot came in.
+/**
+ * Photographs the frame, then reports how much of the next one differs.
+ *
+ * A difference, not a colour match: paint is cel-shaded and fogged like
+ * everything else, so its hue on screen is the paint colour times a warm sun
+ * and a blue sky, and a hue window tight enough to exclude the park excludes
+ * half the splat with it. Measured that way, a clearly visible splat scored
+ * 0.02% of the frame against a 0.22% background — worse than useless.
+ *
+ * The catch with differencing is that everything in this park moves, so the
+ * pair of frames is taken one *simulation step* apart — 16ms, during which the
+ * canopies and the fountain move a pixel or two — and that residue is measured
+ * once as a noise floor and required to be small.
+ */
+const snap = () => page.evaluate(() => new Promise((resolve) => {
+  requestAnimationFrame(() => {
+    const probe = document.createElement('canvas');
+    probe.width = 320;
+    probe.height = 180;
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(document.querySelector('canvas.game-canvas'), 0, 0, 320, 180);
+    window.__ref = ctx.getImageData(0, 0, 320, 180).data;
+    resolve(true);
+  });
+}));
+
+const diffSnap = () => page.evaluate(() => new Promise((resolve) => {
+  requestAnimationFrame(() => {
+    const probe = document.createElement('canvas');
+    probe.width = 320;
+    probe.height = 180;
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(document.querySelector('canvas.game-canvas'), 0, 0, 320, 180);
+    const now = ctx.getImageData(0, 0, 320, 180).data;
+    const before = window.__ref;
+    let changed = 0;
+    for (let i = 0; i < now.length; i += 4) {
+      if (Math.abs(now[i] - before[i]) +
+          Math.abs(now[i + 1] - before[i + 1]) +
+          Math.abs(now[i + 2] - before[i + 2]) > 60) changed++;
+    }
+    resolve(+(changed / (now.length / 4)).toFixed(4));
+  });
+}));
+
+/** One fixed step: enough for a paint change to reach the shader, and no more. */
+const stepOnce = () => page.evaluate(() => window.__paintball.stepSim(1 / 60));
+
+/**
+ * Takes the paint off the player and reports how much of the frame that
+ * removed. Removal rather than addition, because taking paint off animates
+ * nothing — where landing a hit flinches the whole body.
+ */
+async function clearAndDiff() {
+  await page.evaluate(() => window.__paintball.characters.playerCharacter.paint.clear());
+  await stepOnce();
+  return diffSnap();
+}
+
+// Facing the terrace across the plaza, which is the only backdrop on this map
+// made entirely of things that hold still: the fountain runs, the lake ripples
+// and every canopy sways, and all three land in a frame-to-frame difference as
+// noise. The camera sits behind the player, so this puts their back to it.
+await page.evaluate(() => {
+  const { player, state, characters } = window.__paintball;
+  const V = state.position.constructor;
+  player.teleport(new V(0, 1.5, 10));
+  state.yaw = Math.PI;
+  // Looking down a little, so the shoulders and the top of the head are in
+  // frame. A level camera cannot see the crown at all, and a splat there is
+  // then correctly drawn and correctly invisible, which no measurement can
+  // tell apart from a splat that was dropped.
+  state.pitch = 0.32;
+  characters.playerCharacter.paint.clear();
+
+  // And the park to itself. Six bots wander this map with live triggers, and
+  // over the eight simulated seconds this sweep takes they will find the
+  // player, shoot them, and flinch them mid-measurement. Sent to the far
+  // corner rather than frozen: there is no freeze switch, and respawn() is
+  // exactly the "put this bot somewhere and forget what it was doing" call.
+  for (const bot of characters.allBots) {
+    bot.respawn(new V(bot.position.x + 260, bot.position.y, bot.position.z + 260));
+  }
+});
+await waitSim(1.2);
+
+// The sweep covers the *capsule*, cap included, because that is the surface
+// impacts are reported on and its shape is the whole problem: a shot into the
+// upper cap comes back with a normal tilted 40 degrees skyward, which agrees
+// with no face of the blocky head underneath it.
+//
+// Yaw is kept inside +-75 degrees of straight behind so everything measured is
+// on the half of the body the third-person camera can see.
+const SPOTS = [
+  { name: 'chest-left', yaw: -55, height: 1.15, tilt: 0 },
+  { name: 'chest', yaw: 0, height: 1.15, tilt: 0 },
+  { name: 'chest-right', yaw: 55, height: 1.15, tilt: 0 },
+  { name: 'hip', yaw: -20, height: 0.95, tilt: 0 },
+  // Not lower than this: the aimed camera crops the shins out of frame, and a
+  // splat off the bottom edge is invisible for reasons that are nothing to do
+  // with paint.
+  { name: 'thigh', yaw: 15, height: 0.72, tilt: 0 },
+  { name: 'shoulder', yaw: -40, height: 1.25, tilt: 0 },
+  // On the cap: `tilt` is degrees up from horizontal, and the point rides the
+  // sphere the normal belongs to.
+  { name: 'neck-cap', yaw: 0, height: 1.25, tilt: 30 },
+  { name: 'head-cap', yaw: 30, height: 1.25, tilt: 45 },
+  { name: 'crown', yaw: -15, height: 1.25, tilt: 58 },
+];
+
+// Aiming, held for the whole sweep. It pulls the camera in from 3.6m to 2.2m
+// and narrows the field of view, which roughly quadruples the character's area
+// on screen — and the thing being measured here is a mark a few centimetres
+// across on a body that is otherwise 80 pixels tall.
+await page.mouse.down({ button: 'right' });
+await waitSim(1.0);
+
+// The noise floor: one step of park animation with no paint involved at all.
+await page.evaluate(() => window.__paintball.characters.playerCharacter.paint.clear());
+await waitSim(0.3);
+await snap();
+await stepOnce();
+const floor = await diffSnap();
+const threshold = Math.max(0.0028, floor * 3);
+check('a still frame of the park is nearly still',
+      floor < 0.01, `${(floor * 100).toFixed(3)}% of frame moves per step`);
+
+const paintBySpot = [];
+for (const spot of SPOTS) {
+  const splats = await page.evaluate((spot) => {
+    const { game, state, characters } = window.__paintball;
+    const V = state.position.constructor;
+    const character = characters.playerCharacter;
+    character.tickGameplay(5);
+
+    // Measured from directly behind the character, whichever way they face.
+    // Three hits in a cluster rather than one. A single splat covers about a
+    // tenth of a percent of the frame at this range, which is only twice the
+    // noise floor — visible to a person, but not a number to assert on.
+    for (const nudge of [-9, 0, 9]) {
+      const yaw = state.yaw + ((spot.yaw + nudge) * Math.PI) / 180;
+      const tilt = (spot.tilt * Math.PI) / 180;
+      const nx = Math.sin(yaw) * Math.cos(tilt);
+      const ny = Math.sin(tilt);
+      const nz = Math.cos(yaw) * Math.cos(tilt);
+      character.tickGameplay(5);
+      game.events.emit('hit:character', {
+        targetId: 'player',
+        shooterId: 'dummy-a',
+        color: 0x9b5de5,
+        point: new V(
+          state.position.x + nx * 0.35,
+          state.position.y + spot.height + ny * 0.35,
+          state.position.z + nz * 0.35,
+        ),
+        normal: new V(nx, ny, nz),
+        impactSpeed: 40,
+      });
+    }
+    return character.paint.splatCount;
+  }, spot);
+  // Long enough for the flinch the hit triggers to play out. Snapping before
+  // it settles measures the *animation*, which moves about half a percent of
+  // the frame whether or not any paint was drawn — every spot scored an
+  // identical 0.5% that way, including ones drawing nothing at all.
+  await waitSim(0.7);
+  await snap();
+  const visible = await clearAndDiff();
+  paintBySpot.push({ ...spot, splats, visible });
+}
+
+// --- and the impact that has no surface to speak of --------------------------
+//
+// This is the one the complaint was about. `sweep()` casts the ball's shape
+// with `stopAtPenetration`, so a shot that starts a step already overlapping
+// its target — which is what point-blank means at 63 m/s and a 1.05m step —
+// comes back with time_of_impact 0 and a *degenerate* contact normal. The hit
+// is real, the score moves, and the splat is recorded with an axis of zero
+// length, against which every face of the body fails the grazing-angle guard.
+// Nothing anywhere reports a problem; the paint simply is not there.
+for (const nasty of [
+  { name: 'zero-normal', normal: [0, 0, 0], inside: 0 },
+  { name: 'point-blank', normal: [0, 0, 0], inside: 0.3 },
+  { name: 'normal-from-behind', normal: 'reversed', inside: 0.2 },
+]) {
+  const splats = await page.evaluate((nasty) => {
+    const { game, state, characters } = window.__paintball;
+    const V = state.position.constructor;
+    const character = characters.playerCharacter;
+    character.paint.clear();
+    character.tickGameplay(5);
+    // Straight into the chest from behind, from `inside` metres past the
+    // surface — the deeper the overlap, the more the cast degenerates.
+    const nx = Math.sin(state.yaw);
+    const nz = Math.cos(state.yaw);
+    const normal = nasty.normal === 'reversed'
+      ? new V(-nx, 0, -nz)
+      : new V(nasty.normal[0], nasty.normal[1], nasty.normal[2]);
+    for (const height of [1.0, 1.15, 1.3]) {
+      character.tickGameplay(5);
+      game.events.emit('hit:character', {
+        targetId: 'player',
+        shooterId: 'dummy-a',
+        color: 0x9b5de5,
+        point: new V(
+          state.position.x + nx * (0.35 - nasty.inside),
+          state.position.y + height,
+          state.position.z + nz * (0.35 - nasty.inside),
+        ),
+        normal,
+        impactSpeed: 55,
+      });
+    }
+    return character.paint.splatCount;
+  }, nasty);
+  await waitSim(0.7);
+  await snap();
+  const visible = await clearAndDiff();
+  paintBySpot.push({ ...nasty, splats, visible });
+}
+
+await page.mouse.up({ button: 'right' });
+
+const missingSplat = paintBySpot.filter((r) => r.splats !== 3);
+const invisible = paintBySpot.filter((r) => r.visible < threshold);
+check('every impact on the capsule records its splats', missingSplat.length === 0,
+      paintBySpot.map((r) => `${r.name}:${r.splats}`).join(' '));
+check('every recorded splat is actually drawn', invisible.length === 0,
+      `floor ${(floor * 100).toFixed(2)}% | ` +
+      paintBySpot.map((r) => `${r.name}:${(r.visible * 100).toFixed(2)}%`).join(' '));
+
+// --- The ball leaves the barrel we drew --------------------------------------
+//
+// `AimSolver.computeMuzzle` is analytic — it runs a frame ahead of the pose, so
+// it cannot read the rig — which means the two can drift apart silently, and did
+// once already when the marker moved onto its own joint. Nothing in the game
+// notices; it just looks like paint coming out of a shoulder.
+await page.evaluate(() => {
+  window.__shotOrigin = null;
+  window.__paintball.game.events.on('shot:fired', ({ origin, shooterId }) => {
+    if (shooterId === 'player' && !window.__shotOrigin) window.__shotOrigin = origin.clone();
+  });
+});
+
+// Held down through the measurement, both of them: the aim pose is what brings
+// the marker level, and reading the rig after the trigger is released measures
+// a gun that has already dropped back to the hip.
+await page.mouse.down({ button: 'right' });
+await page.mouse.down();
+await waitSim(0.5);
+
+const agreement = await page.evaluate(() => {
+  const { state, characters } = window.__paintball;
+  const V = state.position.constructor;
+  const character = characters.playerCharacter;
+  const origin = window.__shotOrigin;
+  if (!origin) return null;
+
+  // The marker's own barrel, read off the posed rig: joint 8 is GUN, and the
+  // muzzle sits at (0, 0.09, -0.56) in its frame.
+  const jointMatrix = character.rig.jointMatrices[8];
+  const muzzle = character.rig.root.localToWorld(
+    new V(0, 0.09, -0.56).applyMatrix4(jointMatrix));
+  const breech = character.rig.root.localToWorld(
+    new V(0, 0.09, 0).applyMatrix4(jointMatrix));
+
+  // Distance from the shot's origin to the barrel's axis. Not to the muzzle
+  // itself: the ball is deliberately spawned partway down the barrel so a
+  // player hugging cover cannot shoot through it.
+  const axis = muzzle.clone().sub(breech).normalize();
+  const toOrigin = origin.clone().sub(breech);
+  const along = toOrigin.dot(axis);
+  const offAxis = toOrigin.addScaledVector(axis, -along).length();
+  return { offAxis: +offAxis.toFixed(3), along: +along.toFixed(3) };
+});
+
+await page.mouse.up();
+await page.mouse.up({ button: 'right' });
+await waitSim(0.2);
+check('the ball leaves the barrel the marker is drawn with',
+      agreement !== null && agreement.offAxis < 0.18 && agreement.along > 0,
+      agreement ? `${agreement.offAxis}m off the barrel axis, ${agreement.along}m along it`
+                : 'no shot observed');
 
 check('no console or page errors', consoleErrors.length === 0, consoleErrors[0] ?? 'clean');
 

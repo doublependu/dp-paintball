@@ -1,4 +1,5 @@
 import type { CharactersSystem } from '../character/CharactersSystem';
+import { displayName } from '../character/Names';
 import type { GameContext, System } from '../core/System';
 import { ammoOf, type MatchState } from '../gameplay/MatchState';
 import { SplatAtlas } from '../paint/SplatAtlas';
@@ -137,7 +138,7 @@ export class HudSystem implements System {
   private buildRows(): ScoreRow[] {
     return this.characters.allCharacters.map((character) => ({
       id: character.id,
-      label: character.id === 'player' ? 'you' : character.id.replace('bot-', 'bot '),
+      label: displayName(character.id),
       color: character.color,
       hitsGiven: character.hitsGiven,
       hitsTaken: character.hitsTaken,

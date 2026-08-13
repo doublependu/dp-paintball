@@ -99,6 +99,8 @@ const charactersSystem = new CharactersSystem(
   match,
   loot,
   bots,
+  // Only used to put the player back at their spawn when a round restarts.
+  player,
 );
 const lootSystem = new LootSystem(match, loot, playerState, charactersSystem, lootSeed);
 const matchSystem = new MatchSystem(match, charactersSystem, ballistics, loot, lootSystem);

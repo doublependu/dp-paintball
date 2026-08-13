@@ -237,8 +237,14 @@ export const paint = {
    * combat range — where a character is 40-80 pixels tall — landing three or
    * four shots left no visible mark at all, and the paint read as broken.
    * A hit should be obvious from across the plaza.
+   *
+   * Trimmed from 0.2 when splats started landing where they were aimed.
+   * `resolvePaintAnchor` used to hand the shader the raw capsule impact point,
+   * about 0.2m clear of the torso it was meant to paint, so most of a splat's
+   * radius was spent reaching the surface at all; on the corrected anchor the
+   * same number covered a whole torso face and scissored into a rectangle.
    */
-  characterSplatRadius: 0.2,
+  characterSplatRadius: 0.15,
   /** Splats scale up with impact speed, within these bounds. */
   minSplatScale: 0.7,
   maxSplatScale: 1.5,

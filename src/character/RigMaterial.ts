@@ -191,7 +191,7 @@ export function createRigMaterial(
       );
   };
 
-  material.customProgramCacheKey = () => `voxel-rig-v2-${paint.max}`;
+  material.customProgramCacheKey = () => `voxel-rig-v3-${JOINT_COUNT}-${paint.max}`;
 
   // The normal variant shares the *same* jointUniform array, so a single
   // setJoints() keeps the colour pass and the prepass in lockstep. Two separate

@@ -92,6 +92,15 @@ async function retreat() {
   await stepSim(0.4);
 }
 
+// Where everybody stands before a shot has been fired. Kept for the restart
+// check at the bottom: a second round that leaves seven people wherever the
+// whistle caught them is not a second round.
+const spawnPositions = await page.evaluate(() =>
+  Object.fromEntries(window.__paintball.characters.allBots
+    .map((b) => [b.id, [b.position.x, b.position.z]])
+    .concat([['player', [window.__paintball.state.position.x,
+                         window.__paintball.state.position.z]]])));
+
 // --- Everyone starts with a finite load ------------------------------------
 const start = await page.evaluate(() => ({
   entries: [...window.__paintball.match.ammo.entries()],
@@ -412,6 +421,19 @@ check('a fresh round refills, rescores and puts out a new crate',
 check('the results card is put away', restarted.cardVisible === false);
 check('the characters go back into the world',
       restarted.inWorld === 7, `${restarted.inWorld}/7 back in the park`);
+
+// --- and back to where they started ----------------------------------------
+const displaced = await page.evaluate((spawns) => {
+  const { characters, state } = window.__paintball;
+  const now = { player: [state.position.x, state.position.z] };
+  for (const bot of characters.allBots) now[bot.id] = [bot.position.x, bot.position.z];
+  return Object.entries(spawns).map(([id, [x, z]]) => ({
+    id, away: +Math.hypot(now[id][0] - x, now[id][1] - z).toFixed(1),
+  }));
+}, spawnPositions);
+const strays = displaced.filter((d) => d.away > 2.5);
+check('everyone is back at their spawn for the new round', strays.length === 0,
+      displaced.map((d) => `${d.id}:${d.away}m`).join(' '));
 
 // --- The other ending: the last paintball in the park --------------------
 await page.evaluate(() => {

@@ -132,6 +132,31 @@ export class Bot {
     return this.eye.set(this.position.x, this.position.y + 1.25, this.position.z);
   }
 
+  /**
+   * Puts this bot back where it started, for a fresh round.
+   *
+   * Everything derived from where it *was* has to go with it: a path across the
+   * park from the old position walks the bot straight back to the fight that
+   * just ended, and a retained target makes it open fire on someone it can no
+   * longer see.
+   */
+  respawn(spawn: Vector3): void {
+    this.position.copy(spawn);
+    this.body.setTranslation(
+      { x: spawn.x, y: spawn.y + playerConfig.height / 2, z: spawn.z },
+      true,
+    );
+    this.velocity.set(0, 0, 0);
+    this.path = [];
+    this.pathIndex = 0;
+    this.target = null;
+    this.state = 'wander';
+    this.stateTimer = 0;
+    this.repathTimer = 0;
+    this.lastSeenTargetAt = -Infinity;
+    this.restockBlockedUntil = -Infinity;
+  }
+
   /** Called when this bot is hit, to make it react. */
   onHit(rng: Rng): void {
     this.state = 'startled';

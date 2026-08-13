@@ -145,8 +145,16 @@ check('the splash renders to the canvas', afterHit > 0, `${afterHit} painted pix
 // retreat to a quiet corner first — otherwise fresh splashes keep arriving and
 // the measurement never sees an empty lens.
 await page.evaluate(() => {
-  const { player, state } = window.__paintball;
-  player.teleport(new (state.position.constructor)(-58, 3, -58));
+  const { player, state, characters } = window.__paintball;
+  const V = state.position.constructor;
+  player.teleport(new V(-58, 3, -58));
+  // And the bots to the far corner. The drip below is measured over five
+  // simulated seconds, and a bot that finds the player inside that window puts
+  // *new* blobs on the lens — the count comes back unchanged and the check
+  // fails claiming paint never fades.
+  for (const bot of characters.allBots) {
+    bot.respawn(new V(bot.position.x + 260, bot.position.y, bot.position.z + 260));
+  }
 });
 await waitSim(2.5);
 await page.evaluate(() => {

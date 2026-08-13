@@ -245,9 +245,13 @@ const onTarget = await page.evaluate(() => {
   const V = state.position.constructor;
   const out = ballistics.newPrediction();
   const bot = characters.allBots[0];
-  // Straight down onto the bot from just above: deterministic, and it does not
-  // care where the bot has wandered to.
-  const origin = new V(bot.chest.x, bot.chest.y + 4, bot.chest.z);
+  // Straight down onto the bot from a metre over its head. Deterministic, and
+  // close enough that nothing can get between the two — from four metres up it
+  // could, and did: a bot that wandered into the arcade undercroft was under a
+  // terrace slab whose underside is 3.5m up, so the trace reported the ceiling
+  // and the check failed for a reason that had nothing to do with what it was
+  // testing. The head tops out at 1.94m, the chest reference is 1.25m.
+  const origin = new V(bot.chest.x, bot.chest.y + 1.0, bot.chest.z);
   ballistics.predict(game.physics, origin, new V(0, -1, 0), out);
   return { hit: out.hit, characterId: out.characterId, expected: bot.id };
 });

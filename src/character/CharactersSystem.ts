@@ -35,6 +35,8 @@ export class CharactersSystem implements System {
   private bots: Bot[] = [];
   private splatAtlas?: SplatAtlas;
   private nav?: NavGrid;
+  /** Where everyone stood at boot, so a restart can put them back. */
+  private readonly spawns = new Map<string, Vector3>();
   /** Rebuilt each step; bots read it to find someone to shoot at. */
   private targets: BotTarget[] = [];
 
@@ -58,6 +60,11 @@ export class CharactersSystem implements System {
     private readonly match: MatchState,
     private readonly loot: LootState,
     private readonly botSpecs: BotSpec[] = [],
+    /**
+     * Only used to put the player back at their spawn between rounds. Optional
+     * because the test course builds this system without one.
+     */
+    private readonly controller?: { teleport(feetPosition: Vector3): void },
   ) {}
 
   init(ctx: GameContext): void {
@@ -103,8 +110,12 @@ export class CharactersSystem implements System {
       const bot = new Bot(spec.id, PERSONALITIES[spec.personality % PERSONALITIES.length]!,
                           character, grounded, ctx, this.match, this.loot);
       this.characters.register(bot.collider.handle, spec.id);
+      this.spawns.set(spec.id, grounded.clone());
       this.bots.push(bot);
     }
+
+    // Captured after the arena is built and before anything has moved.
+    this.spawns.set('player', this.state.position.clone());
 
     ctx.events.on('hit:character', (event) => this.onHit(event, ctx));
   }
@@ -241,6 +252,27 @@ export class CharactersSystem implements System {
       character.hitsTaken = 0;
       character.hitsGiven = 0;
       character.paint.clear();
+    }
+  }
+
+  /**
+   * Puts everybody back where the round started.
+   *
+   * Without this a restart left seven people standing wherever the whistle
+   * caught them — which for the player is usually face-down in the fight that
+   * just ended, next to the three bots who were shooting at them, with a fresh
+   * five minutes on the clock. Resetting the scoreboard but not the board is
+   * half a restart.
+   */
+  respawnAll(): void {
+    const playerSpawn = this.spawns.get('player');
+    if (playerSpawn && this.controller) {
+      this.controller.teleport(playerSpawn);
+      this.state.velocity.set(0, 0, 0);
+    }
+    for (const bot of this.bots) {
+      const spawn = this.spawns.get(bot.id);
+      if (spawn) bot.respawn(spawn);
     }
   }
 

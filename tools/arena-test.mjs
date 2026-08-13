@@ -110,10 +110,20 @@ check('Bow Bridge deck is standable', onBridge.grounded && onBridge.y > 1.5,
 // --- The arcade undercroft has standing headroom ---------------------------
 // Must be walked into through an arch. Dropping from above just lands on the
 // terrace slab that forms its roof, which proves nothing about the passage.
+//
+// The bots go to the far corner of the park first. This is the one probe in
+// this suite that has to walk a specific line rather than fall straight down,
+// and five bots spawn within twenty metres of the arch: one standing in the
+// bay is a wall, and the walk stops short of the undercroft for reasons that
+// have nothing to do with the architecture being tested.
 await page.evaluate(() => {
-  const { player, state } = window.__paintball;
+  const { player, state, characters } = window.__paintball;
+  const V = state.position.constructor;
+  for (const bot of characters.allBots) {
+    bot.respawn(new V(bot.position.x + 260, bot.position.y, bot.position.z + 260));
+  }
   state.yaw = Math.PI;  // face south, toward the colonnade at z=16
-  player.teleport(new (state.position.constructor)(0, 1, 11));
+  player.teleport(new V(0, 1, 11));
 });
 await waitSim(1.2);
 await page.keyboard.down('w');
@@ -124,6 +134,40 @@ const undercroft = await read();
 check('arcade undercroft is walkable through an arch',
       undercroft.grounded && undercroft.y < 1.5 && undercroft.z > 16.5,
       `reached z=${undercroft.z.toFixed(1)} at y=${undercroft.y.toFixed(2)}, under a 4.2m slab`);
+
+// --- The grand stairs actually climb ---------------------------------------
+// They did not. Three flights were placed on the plateau *behind* the terrace,
+// climbing down a slope that rises to meet them: the bottom flight was buried,
+// the top one stood in the air, and the terrace could only be reached by
+// walking the long way round. Walking up them is the only check that catches
+// that, because every individual flight was exactly where it was asked to be.
+async function walkFrom(x, z, yaw, seconds, drop = 1) {
+  await page.evaluate(({ x, z, yaw, drop }) => {
+    const { player, state } = window.__paintball;
+    state.yaw = yaw;
+    player.teleport(new (state.position.constructor)(x, drop, z));
+  }, { x, z, yaw, drop });
+  await waitSim(1.0);
+  await page.keyboard.down('w');
+  await waitSim(seconds);
+  await page.keyboard.up('w');
+  await waitSim(0.4);
+  return read();
+}
+
+const climbed = await walkFrom(19, 4, Math.PI, 5.0);
+check('the grand stairs climb from the plaza to the terrace',
+      climbed.grounded && climbed.y > 3.9 && climbed.z > 15,
+      `reached (${climbed.x.toFixed(1)}, ${climbed.y.toFixed(2)}, ${climbed.z.toFixed(1)})`);
+
+// --- And the bridge can be got onto ----------------------------------------
+// Bow Bridge's abutments top out 2m above the ground its approach corridor is
+// levelled to, so both ends were a wall with a bridge on top until the ramps
+// went in.
+const onRamp = await walkFrom(-44, -5, 0, 4.5);
+check('Bow Bridge is reachable from its southern approach',
+      onRamp.grounded && onRamp.y > 2.0 && onRamp.z < -15,
+      `reached (${onRamp.x.toFixed(1)}, ${onRamp.y.toFixed(2)}, ${onRamp.z.toFixed(1)})`);
 
 // --- Containment -----------------------------------------------------------
 // Sprint at each wall for long enough to cross the map, and confirm we are

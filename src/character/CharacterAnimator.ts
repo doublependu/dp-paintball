@@ -1,3 +1,4 @@
+import { Matrix4 } from 'three';
 import { clamp, damp, lerp, saturate } from '../core/MathUtils';
 import { JOINT, type VoxelRig } from './VoxelRig';
 
@@ -163,13 +164,22 @@ export class CharacterAnimator {
     const taunt = this.tauntCurve();
     const aimBlend = Math.max(input.aiming ? 1 : 0, shoot);
 
-    // Left arm swings with the gait unless taunting.
+    // Left arm swings with the gait, comes across to brace the marker while
+    // aiming, and goes up to taunt. It cannot literally reach the fore-end —
+    // these arms are 0.6m of straight box with no elbow, and the fore-end is
+    // 0.9m from the left shoulder — but bringing it forward and inward across
+    // the chest reads as a two-handed hold at a glance, which is the whole job.
+    const braceX = 1.42 + input.aimPitch * 0.5;
     armL.rotation.x = lerp(
-      counterSwing * this.armSwing - this.crouchAmount * 0.2,
+      lerp(counterSwing * this.armSwing - this.crouchAmount * 0.2, braceX, aimBlend),
       -2.4,
       taunt,
     );
-    armL.rotation.z = lerp(0.06 + this.crouchAmount * 0.1, -0.5 + Math.sin(this.idleTime * 9) * 0.25, taunt);
+    armL.rotation.z = lerp(
+      0.06 + this.crouchAmount * 0.1 + aimBlend * 0.46,
+      -0.5 + Math.sin(this.idleTime * 9) * 0.25,
+      taunt,
+    );
 
     // Right arm holds the marker: swings when idle, comes up to aim when
     // aiming or firing, and kicks back on the shot itself.
@@ -183,11 +193,53 @@ export class CharacterAnimator {
     const rightSwing = swing * this.armSwing - this.crouchAmount * 0.2;
     const aimPose = 1.35 + input.aimPitch * 0.6;
     armR.rotation.x = lerp(lerp(rightSwing, aimPose, aimBlend), -2.4, taunt);
-    armR.rotation.z = lerp(-0.06 - aimBlend * 0.22, 0.5 - Math.sin(this.idleTime * 9) * 0.25, taunt);
+    armR.rotation.z = lerp(-0.06 - aimBlend * 0.1, 0.5 - Math.sin(this.idleTime * 9) * 0.25, taunt);
     // Recoil kick, additive on top of whatever pose the arm is in — negative,
     // so it rocks the muzzle back and up out of the aim pose.
     armR.rotation.x -= this.shootKick() * 0.35;
 
+    rig.updateMatrices();
+    this.aimMarker(input, rig, aimBlend, taunt);
+  }
+
+  /**
+   * Points the marker.
+   *
+   * Solved rather than posed. The gun's frame is written as the *inverse* of
+   * whatever the arm and torso are doing, times the orientation we actually
+   * want — barrel along the body's forward axis, pitched to the player's view
+   * — so the marker holds its aim through the walk cycle, the crouch, the lean
+   * and the strafe twist, none of which the player asked to aim with.
+   *
+   * Composing Euler angles instead does not work: the aim pose tucks the
+   * shoulder inward (`armR.rotation.z`), and a Z rotation applied above a
+   * pitched joint yaws the thing hanging off it. That put the barrel about 15
+   * degrees left of the crosshair, which is small on paper and glaring in the
+   * third-person frame where you can see both the gun and the mark it should
+   * be pointing at.
+   *
+   * Needs the rig posed first, so this runs after `updateMatrices()` and poses
+   * it again — the joint matrices are what it reads.
+   */
+  private aimMarker(
+    input: AnimationInput,
+    rig: VoxelRig,
+    aimBlend: number,
+    taunt: number,
+  ): void {
+    // At rest the marker rides muzzle-down at the hip, which is where a hand
+    // holding one actually carries it; aiming brings it level with the view.
+    const rest = -1.15;
+    const pitch = lerp(lerp(rest, input.aimPitch, aimBlend), rest * 0.4, taunt);
+
+    DESIRED.makeRotationX(pitch);
+    // Joint matrices are relative to the rig root and carry no scale, so their
+    // upper 3x3 is a pure rotation and this inverse is exact.
+    PARENT_INVERSE.copy(rig.jointMatrices[JOINT.ARM_R]!).invert();
+    LOCAL.multiplyMatrices(PARENT_INVERSE, DESIRED);
+
+    const gun = rig.joints[JOINT.GUN]!;
+    gun.quaternion.setFromRotationMatrix(LOCAL);
     rig.updateMatrices();
   }
 
@@ -218,3 +270,9 @@ export class CharacterAnimator {
     return saturate(Math.sin(t * Math.PI) * 2.2);
   }
 }
+
+// Scratch for the marker's aim solve. Module-level and shared: every character
+// writes them within one synchronous call and reads them back immediately.
+const DESIRED = new Matrix4();
+const PARENT_INVERSE = new Matrix4();
+const LOCAL = new Matrix4();

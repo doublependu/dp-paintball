@@ -358,6 +358,26 @@ export class BallisticsSystem implements System {
       .addScaledVector(this.direction, hit.time_of_impact);
     this.hitNormal.set(hit.normal1.x, hit.normal1.y, hit.normal1.z);
 
+    // A shape cast that starts already overlapping its target reports
+    // time_of_impact 0 and a contact normal of zero length — there is no
+    // surface to take a normal from when the shapes begin interpenetrating.
+    // That happens routinely at point-blank range: a ball covers 1.05m per
+    // fixed step at muzzle speed, so anything inside about a metre is hit from
+    // a step that began inside it.
+    //
+    // Left alone, the zero propagates: paint is recorded against an axis of
+    // zero length, and every face of the body then fails the rig shader's
+    // grazing-angle guard. The score moves and no paint appears, which is
+    // exactly what was reported, and what made it maddening to find is that
+    // nothing upstream is wrong — the hit is real and the splat is recorded.
+    //
+    // Facing back along the flight path is the right answer anyway: that is the
+    // normal a square hit would have had.
+    if (this.hitNormal.lengthSq() < 0.25) {
+      this.hitNormal.copy(this.direction).negate();
+    }
+
+
     // A grazing hit should splash less than a square one; impact speed alone
     // would miss that, so fold in the angle of incidence.
     const speed = projectile.velocity.length();
