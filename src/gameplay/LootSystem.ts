@@ -9,22 +9,63 @@ import { LOOT_SPOTS } from '../world/ParkLayout';
 import { grant, type MatchState } from './MatchState';
 import type { PlayerState } from './PlayerState';
 
-/**
- * Where the crate is, for anything that needs to go and get it.
- *
- * Bots read this directly rather than being told over the bus, because "is
- * there paint out there, and where" is a question they ask every step while
- * deciding what to do, not an event they react to once.
- */
-export interface LootState {
-  /** Crate position, or null when there is no crate out. */
-  position: Vector3 | null;
+/** One crate standing in the park. */
+export interface LootCrate {
+  /** Where it is. Owned by `LootSystem`; treat as read-only from outside. */
+  readonly position: Vector3;
   /** Rounds it is holding. */
   rounds: number;
 }
 
+/**
+ * Where the paint is, for anything that needs to go and get it.
+ *
+ * Bots read this directly rather than being told over the bus, because "is
+ * there paint out there, and where" is a question they ask every step while
+ * deciding what to do, not an event they react to once.
+ *
+ * A list rather than the single crate this used to hold. One crate is not a
+ * fight over paint but a race for it: every bot reads this the instant a crate
+ * appears, so the nearest one collects it and nobody else ever had a decision
+ * to make. Only live crates are in here — a taken one is removed, not blanked,
+ * so `crates.length` is the honest count of what is out there.
+ */
+export interface LootState {
+  readonly crates: LootCrate[];
+}
+
 export function createLootState(): LootState {
-  return { position: null, rounds: 0 };
+  return { crates: [] };
+}
+
+/** The crate closest to `from`, or null when the park is bare. */
+export function nearestCrate(loot: LootState, from: Vector3): LootCrate | null {
+  let best: LootCrate | null = null;
+  let bestDistance = Infinity;
+  for (const crate of loot.crates) {
+    const distance = crate.position.distanceToSquared(from);
+    if (distance >= bestDistance) continue;
+    bestDistance = distance;
+    best = crate;
+  }
+  return best;
+}
+
+/**
+ * Whether a crate somebody is walking towards is still there.
+ *
+ * An errand takes seconds and anyone can take a crate during them, so a held
+ * reference is a guess about the past until this says otherwise.
+ */
+export function isCrateLive(loot: LootState, crate: LootCrate | null): boolean {
+  return crate !== null && loot.crates.includes(crate);
+}
+
+/** Every round sitting in a crate — half of the round-end rule. */
+export function totalCrateRounds(loot: LootState): number {
+  let total = 0;
+  for (const crate of loot.crates) total += crate.rounds;
+  return total;
 }
 
 /** Bob height and rate, so the crate reads as a pickup rather than scenery. */
@@ -33,25 +74,39 @@ const BOB_RATE = 1.7;
 const SPIN_RATE = 0.5;
 
 /**
- * The paint crate: one per round, hidden somewhere different each time.
+ * A crate's own slot: its mesh, whatever it is holding, and its timer.
+ *
+ * The group is built once and hidden between lives rather than being rebuilt,
+ * because a crate is four meshes and five materials and a round can cycle one
+ * several times.
+ */
+interface CrateSlot {
+  group: Group;
+  /** The live crate, or null while this slot is waiting to respawn. */
+  crate: LootCrate | null;
+  /** Where the group sits before the bob is applied. */
+  base: Vector3;
+  /** Counts down to a respawn; only ever set when respawning is enabled. */
+  respawnTimer: number;
+  /** Which `LOOT_SPOTS` entry it last used, so it never picks that one twice. */
+  lastSpotIndex: number;
+}
+
+/**
+ * The paint crates: a few out at once, hidden somewhere different each time.
  *
  * Pickup is a distance check against seven characters on the fixed step, not a
  * sensor collider — a Rapier sensor plus an intersection query is a lot of
- * machinery to answer a question that costs seven subtractions, and the crate
+ * machinery to answer a question that costs seven subtractions, and a crate
  * deliberately has no collider at all so shots pass through it rather than
  * being blocked by a thing you are meant to walk into.
  */
 export class LootSystem implements System {
   readonly name = 'loot';
 
-  private group?: Group;
+  private readonly slots: CrateSlot[] = [];
   /** Held from init, so a crate can be placed outside the step. See respawn(). */
   private ctx?: GameContext;
-  private readonly base = new Vector3();
-  /** Counts down to a respawn; only ever set when respawning is enabled. */
-  private respawnTimer = 0;
-  /** So the same hiding place is never picked twice running. */
-  private lastSpotIndex = -1;
   private readonly rng: Rng;
 
   constructor(
@@ -73,64 +128,103 @@ export class LootSystem implements System {
     if (this.match.sandbox) return;
 
     this.ctx = ctx;
-    this.group = this.buildCrate();
-    ctx.scene.add(this.group);
-    this.spawn(ctx);
+    for (let i = 0; i < matchConfig.lootCrates; i++) {
+      const group = this.buildCrate();
+      group.visible = false;
+      ctx.scene.add(group);
+      this.slots.push({
+        group,
+        crate: null,
+        base: new Vector3(),
+        respawnTimer: 0,
+        lastSpotIndex: -1,
+      });
+    }
+    for (const slot of this.slots) this.spawn(slot, ctx);
   }
 
   /**
-   * Puts a crate back immediately, at a new hiding place.
+   * Puts every crate back immediately, at new hiding places.
    *
-   * Public because a fresh round needs one and the match suite needs one; the
-   * respawn *timer* is a different thing and stays private.
+   * Public because a fresh round needs them and the match suite needs them; the
+   * respawn *timers* are a different thing and stay private.
    */
   respawn(): void {
-    if (!this.ctx || this.match.sandbox) return;
-    this.respawnTimer = 0;
-    this.spawn(this.ctx);
+    const ctx = this.ctx;
+    if (!ctx || this.match.sandbox) return;
+    // Emptied outright rather than slot by slot. This system owns the list, and
+    // a fresh round should end with exactly `lootCrates` crates in it whatever
+    // the last one left behind — retiring only what the slots know about leaves
+    // any stray entry standing and quietly grows the count round on round.
+    this.loot.crates.length = 0;
+    for (const slot of this.slots) {
+      slot.crate = null;
+      slot.group.visible = false;
+      slot.respawnTimer = 0;
+      this.spawn(slot, ctx);
+    }
   }
 
   fixedUpdate(dt: number, ctx: GameContext): void {
     if (this.match.sandbox) return;
 
-    if (!this.loot.position) {
-      if (matchConfig.lootRespawnSeconds <= 0) return;
-      this.respawnTimer -= dt;
-      if (this.respawnTimer <= 0) this.spawn(ctx);
-      return;
+    for (const slot of this.slots) {
+      if (slot.crate) continue;
+      // A slot with nothing in it is only waiting if waiting is enabled at all;
+      // at 0 a taken crate is gone for the rest of the round.
+      if (matchConfig.lootRespawnSeconds <= 0) continue;
+      slot.respawnTimer -= dt;
+      if (slot.respawnTimer <= 0) this.spawn(slot, ctx);
     }
 
     this.checkPickup(ctx);
   }
 
   update(_dt: number, _alpha: number, ctx: GameContext): void {
-    const group = this.group;
-    if (!group?.visible) return;
-    // Wall clock, not simulated time: this is decoration, and it should keep
-    // turning at the same rate whatever the simulation is doing.
-    group.position.y = this.base.y + BOB_HEIGHT * (1 + Math.sin(ctx.elapsed * BOB_RATE)) * 0.5;
-    group.rotation.y = ctx.elapsed * SPIN_RATE;
+    this.slots.forEach((slot, index) => {
+      const group = slot.group;
+      if (!group.visible) return;
+      // Wall clock, not simulated time: this is decoration, and it should keep
+      // turning at the same rate whatever the simulation is doing.
+      //
+      // Offset per slot, or two crates in one sightline bob and turn in
+      // lockstep and read as one object drawn twice.
+      const phase = ctx.elapsed + index * 0.83;
+      group.position.y = slot.base.y + BOB_HEIGHT * (1 + Math.sin(phase * BOB_RATE)) * 0.5;
+      group.rotation.y = phase * SPIN_RATE;
+    });
   }
 
-  /** Places the crate at a fresh hiding place. */
-  private spawn(ctx: GameContext): void {
+  /** Places one slot's crate at a fresh hiding place. */
+  private spawn(slot: CrateSlot, ctx: GameContext): void {
     const nav = this.characters.navGrid;
-    const group = this.group;
-    if (!nav || !group) return;
+    if (!nav) return;
 
-    const spot = this.pickSpot(nav);
+    const spot = this.pickSpot(nav, slot);
     if (!spot) return;
 
-    this.base.copy(spot.point);
-    group.position.copy(this.base);
-    group.visible = true;
-    this.loot.position = this.base.clone();
-    this.loot.rounds = matchConfig.lootAmmo;
+    slot.base.copy(spot.point);
+    slot.group.position.copy(slot.base);
+    slot.group.visible = true;
+
+    const crate: LootCrate = { position: slot.base.clone(), rounds: matchConfig.lootAmmo };
+    slot.crate = crate;
+    this.loot.crates.push(crate);
 
     ctx.events.emit('loot:spawned', {
-      position: this.loot.position.clone(),
-      rounds: this.loot.rounds,
+      position: crate.position.clone(),
+      rounds: crate.rounds,
     });
+  }
+
+  /** Takes a slot's crate out of the world and out of the shared list. */
+  private retire(slot: CrateSlot): void {
+    if (slot.crate) {
+      const at = this.loot.crates.indexOf(slot.crate);
+      if (at !== -1) this.loot.crates.splice(at, 1);
+      slot.crate = null;
+    }
+    slot.group.visible = false;
   }
 
   /**
@@ -140,7 +234,7 @@ export class LootSystem implements System {
    * is no longer ground — in the lake, or inside a prop — so it is skipped
    * rather than silently relocated to the edge of the water.
    */
-  private pickSpot(nav: NavGrid): { point: Vector3; where: string } | null {
+  private pickSpot(nav: NavGrid, slot: CrateSlot): { point: Vector3; where: string } | null {
     // A random start walked circularly, rather than a shuffle: the first choice
     // is uniform, which is all that matters, and the fallback order is then
     // fixed so a round with several unusable spots still behaves predictably.
@@ -148,46 +242,51 @@ export class LootSystem implements System {
     const start = this.rng.int(0, count);
     for (let step = 0; step < count; step++) {
       const index = (start + step) % count;
-      if (index === this.lastSpotIndex && count > 1) continue;
+      if (index === slot.lastSpotIndex && count > 1) continue;
+      // Two crates in one hiding place is one crate as far as a player walking
+      // past is concerned, and it wastes the only thing there are eleven of.
+      if (this.slots.some((other) => other !== slot && other.crate && other.lastSpotIndex === index))
+        continue;
       const spot = LOOT_SPOTS[index]!;
       const walkable = nav.nearestWalkable(spot.x, spot.z, 3);
       if (!walkable) continue;
       if (Math.hypot(walkable.x - spot.x, walkable.z - spot.z) > 4) continue;
-      this.lastSpotIndex = index;
+      slot.lastSpotIndex = index;
       return { point: walkable, where: spot.where };
     }
     return null;
   }
 
-  /** First character within reach takes the lot. */
+  /** First character within reach of a crate takes the lot. */
   private checkPickup(ctx: GameContext): void {
-    const position = this.loot.position;
-    if (!position) return;
-
     const radius = matchConfig.lootPickupRadius;
-    let takerId: string | null = null;
 
-    if (this.playerState.position.distanceTo(position) <= radius) {
-      takerId = 'player';
-    } else {
-      for (const bot of this.characters.allBots) {
-        if (bot.position.distanceTo(position) <= radius) {
-          takerId = bot.id;
-          break;
+    for (const slot of this.slots) {
+      const crate = slot.crate;
+      if (!crate) continue;
+
+      let takerId: string | null = null;
+      if (this.playerState.position.distanceTo(crate.position) <= radius) {
+        takerId = 'player';
+      } else {
+        for (const bot of this.characters.allBots) {
+          if (bot.position.distanceTo(crate.position) <= radius) {
+            takerId = bot.id;
+            break;
+          }
         }
       }
+      if (!takerId) continue;
+
+      const rounds = crate.rounds;
+      const position = crate.position.clone();
+      grant(this.match, takerId, rounds);
+
+      ctx.events.emit('loot:taken', { characterId: takerId, rounds, position });
+
+      this.retire(slot);
+      slot.respawnTimer = matchConfig.lootRespawnSeconds;
     }
-    if (!takerId) return;
-
-    const rounds = this.loot.rounds;
-    grant(this.match, takerId, rounds);
-
-    ctx.events.emit('loot:taken', { characterId: takerId, rounds, position: position.clone() });
-
-    this.loot.position = null;
-    this.loot.rounds = 0;
-    if (this.group) this.group.visible = false;
-    this.respawnTimer = matchConfig.lootRespawnSeconds;
   }
 
   /**
@@ -244,18 +343,19 @@ export class LootSystem implements System {
   }
 
   dispose(): void {
-    const group = this.group;
-    if (!group) return;
-    group.removeFromParent();
-    group.traverse((object) => {
-      if (!(object instanceof Mesh)) return;
-      object.geometry.dispose();
-      // The balls share one geometry, so this disposes it several times, which
-      // three tolerates. The materials are one each.
-      const material: Material | Material[] = object.material;
-      if (Array.isArray(material)) material.forEach((m) => m.dispose());
-      else material.dispose();
-    });
-    this.group = undefined;
+    for (const slot of this.slots) {
+      slot.group.removeFromParent();
+      slot.group.traverse((object) => {
+        if (!(object instanceof Mesh)) return;
+        object.geometry.dispose();
+        // The balls share one geometry, so this disposes it several times,
+        // which three tolerates. The materials are one each.
+        const material: Material | Material[] = object.material;
+        if (Array.isArray(material)) material.forEach((m) => m.dispose());
+        else material.dispose();
+      });
+    }
+    this.slots.length = 0;
+    this.loot.crates.length = 0;
   }
 }

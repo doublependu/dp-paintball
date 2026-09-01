@@ -109,7 +109,7 @@ const start = await page.evaluate(() => ({
 check('the park is not a sandbox', start.sandbox === false);
 check(
   'every character starts with the same finite load',
-  start.entries.length === 7 && start.entries.every(([, n]) => n === 100),
+  start.entries.length === 7 && start.entries.every(([, n]) => n === 200),
   start.entries.map(([id, n]) => `${id}:${n}`).join(' '),
 );
 
@@ -158,23 +158,33 @@ await stepSim(0.1);
 const dryAfterTwo = await page.evaluate(() => window.__dry);
 check('a second pull clicks again', dryAfterTwo === 2, `${dryAfterTwo} dry events after two pulls`);
 
-// --- The crate ------------------------------------------------------------
-const crate = await page.evaluate(() => {
-  const { loot } = window.__paintball;
-  return loot.position
-    ? { x: loot.position.x, y: loot.position.y, z: loot.position.z, rounds: loot.rounds }
-    : null;
-});
-check('a crate is out there', crate !== null && crate.rounds === 20,
-      crate ? `${crate.rounds} rounds at ${crate.x.toFixed(0)},${crate.z.toFixed(0)}` : 'none');
+// --- The crates -----------------------------------------------------------
+// Several out at once now, not one. A single crate is a race the nearest bot
+// always wins rather than a place worth fighting over — see `match.lootCrates`.
+const crates = await page.evaluate(() => window.__paintball.loot.crates.map((c) => ({
+  x: c.position.x, y: c.position.y, z: c.position.z, rounds: c.rounds,
+})));
+check('the configured number of crates is out there',
+      crates.length === 3 && crates.every((c) => c.rounds === 100),
+      crates.map((c) => `${c.rounds}@${c.x.toFixed(0)},${c.z.toFixed(0)}`).join(' ') || 'none');
 
-// It must be somewhere a bot could also reach, or the round-end rule can stall.
+// No two in the same hiding place: eleven spots and three crates, so sharing one
+// is a bug rather than bad luck, and two crates in one place is one crate as far
+// as anyone walking past is concerned.
+const spotsDistinct = crates.every((a, i) =>
+  crates.every((b, j) => i === j || Math.hypot(a.x - b.x, a.z - b.z) > 3));
+check('the crates are in different places', spotsDistinct,
+      crates.map((c) => `${c.x.toFixed(0)},${c.z.toFixed(0)}`).join(' | '));
+
+// Each must be somewhere a bot could also reach, or the round-end rule can stall.
 const reachable = await page.evaluate(() => {
   const { characters, loot } = window.__paintball;
   const nav = characters.navGrid;
-  return nav && loot.position ? nav.isWalkable(loot.position.x, loot.position.z) : false;
+  return nav ? loot.crates.every((c) => nav.isWalkable(c.position.x, c.position.z)) : false;
 });
-check('the crate sits on walkable ground', reachable === true);
+check('every crate sits on walkable ground', reachable === true);
+
+const crate = crates[0] ?? null;
 
 if (crate) {
   const ammoBefore = await playerAmmo();
@@ -184,17 +194,63 @@ if (crate) {
   }, crate);
   await stepSim(0.5);
   const ammoAfter = await playerAmmo();
-  check('walking into the crate grants its paint', ammoAfter === ammoBefore + 20,
+  check('walking into a crate grants its paint', ammoAfter === ammoBefore + 100,
         `${ammoBefore} -> ${ammoAfter}`);
 
-  const gone = await page.evaluate(() => window.__paintball.loot.position === null);
-  check('a taken crate leaves the world', gone === true);
+  // That one goes; the others stay. Removing the whole list on any pickup is
+  // the obvious way to get this wrong.
+  const left = await page.evaluate((taken) => window.__paintball.loot.crates
+    .filter((c) => Math.hypot(c.position.x - taken.x, c.position.z - taken.z) < 0.5).length,
+    crate);
+  const remaining = await page.evaluate(() => window.__paintball.loot.crates.length);
+  check('a taken crate leaves the world and the others stay',
+        left === 0 && remaining === 2, `${remaining} crates still out`);
 
   // Standing on the empty spot must not keep granting paint.
   await stepSim(1.0);
   const ammoLater = await playerAmmo();
   check('the crate can only be taken once', ammoLater === ammoAfter, `${ammoLater} rounds`);
 }
+
+// --- A taken crate comes back ---------------------------------------------
+// `lootRespawnSeconds` is what turns crates into the round's pacing mechanism
+// rather than a one-off. Stepped past the timer rather than waiting on it.
+//
+// The park has to be cleared first. Thirty-six simulated seconds is a long time
+// with six bots wandering a map that now has three crates on it, and a bot
+// blundering into one takes the count straight back down — which reads as a
+// respawn that never happened. Both sides of the count are neutralised: the
+// bots go to the far corner, and the player goes somewhere no crate is.
+const beforeRespawn = await page.evaluate(() => {
+  const { characters, loot, player, state } = window.__paintball;
+  const V = state.position.constructor;
+  const parked = {};
+  for (const bot of characters.allBots) {
+    parked[bot.id] = [bot.position.x, bot.position.y, bot.position.z];
+    bot.respawn(new V(bot.position.x + 260, bot.position.y, bot.position.z + 260));
+  }
+  window.__parked = parked;
+  player.teleport(new V(-58, 3, -58));
+  return loot.crates.length;
+});
+await stepSim(36);
+const afterRespawn = await page.evaluate(() => window.__paintball.loot.crates.length);
+// Everybody comes back before anything else is measured. Leaving six bots in the
+// void 260m off the navgrid breaks every test after this one, and the way it
+// breaks them — a round that will not end, a crate that never appears — looks
+// nothing like "the bots are missing".
+await page.evaluate(() => {
+  const { characters, state } = window.__paintball;
+  const V = state.position.constructor;
+  for (const bot of characters.allBots) {
+    const home = window.__parked[bot.id];
+    if (home) bot.respawn(new V(home[0], home[1], home[2]));
+  }
+});
+await stepSim(0.5);
+check('a taken crate comes back after its timer',
+      beforeRespawn === 2 && afterRespawn === 3,
+      `${beforeRespawn} crates -> ${afterRespawn} after 36s`);
 
 // --- A dry bot goes and gets more -----------------------------------------
 // The path bots take to a crate is the riskiest new behaviour here: a navgrid
@@ -211,21 +267,28 @@ const restock = await page.evaluate(() => {
   // Empty it, and stand it a short walk from the crate — inside the range at
   // which it is allowed to notice one, but well outside grabbing distance.
   match.ammo.set(bot.id, 0);
-  const from = nav.nearestWalkable(loot.position.x + 9, loot.position.z + 3)
-    ?? nav.nearestWalkable(loot.position.x - 9, loot.position.z);
+  // Aimed at one specific crate: the nearest to where the bot is put, which is
+  // the one `nearestCrate` will hand it.
+  const target = loot.crates[0].position;
+  const from = nav.nearestWalkable(target.x + 9, target.z + 3)
+    ?? nav.nearestWalkable(target.x - 9, target.z);
   bot.position.copy(from);
+  window.__target = { x: target.x, z: target.z };
   // Keep the player out of it, so the player cannot take the crate first.
   player.teleport(new (state.position.constructor)(-58, 3, -58));
   // Watched as an event, not as a final ammo count: a bot that restocks then
   // finds someone to shoot at will have spent some of it by the time we look.
   window.__taker = null;
   game.events.on('loot:taken', ({ characterId }) => { window.__taker = characterId; });
-  return { id: bot.id, distance: bot.position.distanceTo(loot.position) };
+  return { id: bot.id, distance: bot.position.distanceTo(loot.crates[0].position) };
 });
 await stepSim(12);
 const restocked = await page.evaluate(() => ({
   taker: window.__taker,
-  crateGone: window.__paintball.loot.position === null,
+  // That particular crate, not merely "fewer crates": another one respawning
+  // elsewhere would otherwise mask the bot never arriving.
+  crateGone: !window.__paintball.loot.crates.some((c) =>
+    Math.hypot(c.position.x - window.__target.x, c.position.z - window.__target.z) < 0.5),
 }));
 check('a bot out of paint walks to the crate and takes it',
       restocked.taker === restock.id && restocked.crateGone,
@@ -240,15 +303,14 @@ const stranded = await page.evaluate(() => {
   const bot = characters.allBots[1];
   match.ammo.set(bot.id, 0);
   // Out in the middle of the lake: inside noticing range, and unwalkable, so no
-  // path to it exists.
+  // path to it exists. It has to be the *only* crate, or the bot reasonably
+  // walks to a different one and the test proves nothing.
   const V = bot.position.constructor;
-  loot.position = new V(bot.position.x, bot.position.y, bot.position.z - 14);
-  loot.rounds = 20;
+  loot.crates.length = 0;
+  const decoy = new V(bot.position.x, bot.position.y, bot.position.z - 14);
+  loot.crates.push({ position: decoy, rounds: 100 });
   const nav = characters.navGrid;
-  return {
-    id: bot.id,
-    reachable: nav.isWalkable(loot.position.x, loot.position.z),
-  };
+  return { id: bot.id, reachable: nav.isWalkable(decoy.x, decoy.z) };
 });
 await stepSim(3);
 const whileTrying = await page.evaluate((id) =>
@@ -406,7 +468,7 @@ const restarted = await page.evaluate(() => ({
   ammo: window.__paintball.match.ammo.get('player'),
   given: window.__paintball.characters.playerCharacter.hitsGiven,
   splats: window.__paintball.characters.playerCharacter.paint.splatCount,
-  crate: window.__paintball.loot.position !== null,
+  crates: window.__paintball.loot.crates.length,
   cardVisible: document.querySelector('.results').classList.contains('is-visible'),
   inWorld: window.__paintball.characters.allCharacters
     .filter((c) => c.rig.root.parent === window.__paintball.game.render.scene).length,
@@ -414,10 +476,11 @@ const restarted = await page.evaluate(() => ({
 check('clicking after the whistle starts a fresh round',
       restarted.phase === 'playing' && restarted.timeLeft > 290,
       `phase=${restarted.phase} clock=${restarted.timeLeft.toFixed(0)}s`);
-check('a fresh round refills, rescores and puts out a new crate',
-      restarted.ammo === 100 && restarted.given === 0 && restarted.splats === 0 && restarted.crate,
+check('a fresh round refills, rescores and puts out new crates',
+      restarted.ammo === 200 && restarted.given === 0 && restarted.splats === 0
+        && restarted.crates === 3,
       `ammo ${restarted.ammo}, given ${restarted.given}, splats ${restarted.splats},` +
-        ` crate ${restarted.crate}`);
+        ` crates ${restarted.crates}`);
 check('the results card is put away', restarted.cardVisible === false);
 check('the characters go back into the world',
       restarted.inWorld === 7, `${restarted.inWorld}/7 back in the park`);
@@ -440,9 +503,10 @@ await page.evaluate(() => {
   const { loot, match } = window.__paintball;
   window.__ended = null;
   for (const id of match.ammo.keys()) match.ammo.set(id, 0);
-  // Somebody has already taken the crate; its rounds no longer count.
-  loot.position = null;
-  loot.rounds = 0;
+  // Somebody has already taken every crate; their rounds no longer count. The
+  // list is emptied rather than zeroed because a respawn would otherwise put
+  // paint back in the park mid-assertion.
+  loot.crates.length = 0;
 });
 await stepSim(1.0);
 const ranDry = await page.evaluate(() => ({
@@ -461,7 +525,7 @@ await stepSim(0.5);
 const withCrateOut = await page.evaluate(() => {
   const { loot, match } = window.__paintball;
   for (const id of match.ammo.keys()) match.ammo.set(id, 0);
-  return { crate: loot.position !== null, phase: match.phase };
+  return { crate: loot.crates.length > 0, phase: match.phase };
 });
 await stepSim(1.0);
 const stillPlaying = await page.evaluate(() => window.__paintball.match.phase);
@@ -476,11 +540,11 @@ consoleErrors.length = 0;
 await openManual(`${url}?scene=course`);
 const sandbox = await page.evaluate(() => ({
   sandbox: window.__paintball.match.sandbox,
-  crate: window.__paintball.loot.position,
+  crates: window.__paintball.loot.crates.length,
   shown: document.querySelector('[data-ammo]').textContent,
 }));
 check('the test course is a sandbox', sandbox.sandbox === true);
-check('the sandbox has no crate to find', sandbox.crate === null);
+check('the sandbox has no crate to find', sandbox.crates === 0);
 
 await lockPointer('the test course');
 await page.mouse.down();

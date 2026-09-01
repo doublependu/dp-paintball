@@ -12,7 +12,12 @@ import type { GameContext } from '../core/System';
 import type { Character } from '../character/Character';
 import type { AnimationInput } from '../character/CharacterAnimator';
 import type { BallisticsSystem } from '../gameplay/Ballistics';
-import type { LootState } from '../gameplay/LootSystem';
+import {
+  isCrateLive,
+  nearestCrate,
+  type LootCrate,
+  type LootState,
+} from '../gameplay/LootSystem';
 import { ammoOf, consume, isPlaying, type MatchState } from '../gameplay/MatchState';
 import type { NavGrid } from './NavGrid';
 import type { Personality } from './Personality';
@@ -67,8 +72,17 @@ export class Bot {
   private fireCooldown = 0;
   private target: BotTarget | null = null;
   private lastSeenTargetAt = -Infinity;
-  /** Elapsed time before which this bot will not try for the crate again. */
+  /** Elapsed time before which this bot will not try for a crate again. */
   private restockBlockedUntil = -Infinity;
+  /**
+   * The crate this errand is for, held for as long as the errand lasts.
+   *
+   * Latched rather than resolved per step. Re-asking "which crate is nearest"
+   * every step makes a bot standing between two of them dither on the spot,
+   * and it repaths to a new target every time the answer flips. Dropped when
+   * somebody else takes it — see `isCrateLive`.
+   */
+  private restockTarget: LootCrate | null = null;
 
   private readonly desired = new Vector3();
   private readonly eye = new Vector3();
@@ -155,6 +169,7 @@ export class Bot {
     this.repathTimer = 0;
     this.lastSeenTargetAt = -Infinity;
     this.restockBlockedUntil = -Infinity;
+    this.restockTarget = null;
   }
 
   /** Called when this bot is hit, to make it react. */
@@ -296,19 +311,30 @@ export class Bot {
   /**
    * Whether there is a crate worth walking to.
    *
-   * Gated on range as well as on ammo. Bots read the crate's position from the
-   * same shared state the pickup check uses, so without the range test all six
-   * would set off for it the instant it spawned and it would be gone before the
-   * player had looked around. `sightRange` is generous enough that a bot which
-   * has genuinely run dry will usually find one by wandering into range.
+   * Gated on range as well as on ammo. Bots read crate positions from the same
+   * shared state the pickup check uses, so without the range test all six would
+   * set off the instant one spawned and it would be gone before the player had
+   * looked around. `sightRange` is generous enough that a bot which has
+   * genuinely run dry will usually find one by wandering into range.
    */
   private wantsRestock(ctx: GameContext): boolean {
-    const position = this.loot.position;
-    if (!position) return false;
     if (ctx.elapsed < this.restockBlockedUntil) return false;
     if (ammoOf(this.match, this.id) >= matchConfig.botSeekAmmo) return false;
+    const crate = this.currentCrate();
+    if (!crate) return false;
     const notice = this.personality.sightRange * matchConfig.botLootSightScale;
-    return this.position.distanceTo(position) <= notice;
+    return this.position.distanceTo(crate.position) <= notice;
+  }
+
+  /**
+   * The crate this bot is walking to, picking one if the errand is new and the
+   * latched one has not been taken out from under it.
+   */
+  private currentCrate(): LootCrate | null {
+    if (!isCrateLive(this.loot, this.restockTarget)) {
+      this.restockTarget = nearestCrate(this.loot, this.position);
+    }
+    return this.restockTarget;
   }
 
   /**
@@ -323,8 +349,9 @@ export class Bot {
    * `RESTOCK_TIMEOUT` now catches.
    */
   private driveRestock(nav: NavGrid): void {
-    const target = this.loot.position;
-    if (!target) return;
+    const crate = this.currentCrate();
+    if (!crate) return;
+    const target = crate.position;
 
     const fresh = this.state !== 'restock';
     if (fresh) {
@@ -417,10 +444,10 @@ export class Bot {
    * it came for.
    */
   private approachLoot(speedLimit: number): void {
-    const target = this.loot.position;
-    if (!target) return;
+    const crate = this.currentCrate();
+    if (!crate) return;
 
-    this.toTarget.subVectors(target, this.position).setY(0);
+    this.toTarget.subVectors(crate.position, this.position).setY(0);
     if (this.toTarget.length() > 2.5) {
       this.followPath(speedLimit);
       return;

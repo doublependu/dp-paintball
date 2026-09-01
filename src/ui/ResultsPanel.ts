@@ -1,7 +1,10 @@
 import { isTouchDevice } from '../core/Device';
+import type { PaintScreen } from '../world/PaintScreen';
 import type { ScoreRow } from './Hud';
 
 const REPO_URL = 'https://github.com/doublependu/dp-paintball';
+const SHARE_TITLE = 'Central Park paintball';
+const SHARE_TEXT = 'We painted the park.';
 
 /** GitHub's mark, as a path on a 16×16 viewBox. Inlined so it costs no request. */
 const GITHUB_MARK =
@@ -24,6 +27,10 @@ export interface Award {
  */
 export class ResultsPanel {
   private readonly root: HTMLDivElement;
+  /** The round's mural as a shareable file, ready before anyone clicks. */
+  private file: File | null = null;
+  /** Object URL behind the save button. Revoked when the card goes away. */
+  private downloadUrl: string | null = null;
 
   constructor(container: HTMLElement) {
     this.root = document.createElement('div');
@@ -42,17 +49,37 @@ export class ResultsPanel {
             Fork me on GitHub
           </a>
         </div>
-        <div class="results__awards" data-results-awards></div>
-        <div class="results__table">
-          <div class="results__head">
-            <span>player</span><span>tagged them</span><span>tagged</span><span>splats worn</span>
+        <div class="results__main">
+          <figure class="results__mural" data-results-mural hidden>
+            <img data-results-image alt="The park's paint screen at the end of the round" />
+            <figcaption class="results__share" data-results-share></figcaption>
+          </figure>
+          <div class="results__scores">
+            <div class="results__awards" data-results-awards></div>
+            <div class="results__table">
+              <div class="results__head">
+                <span>player</span><span>tagged them</span><span>tagged</span><span>splats worn</span>
+              </div>
+              <div class="results__body" data-results-body></div>
+            </div>
           </div>
-          <div class="results__body" data-results-body></div>
         </div>
         <div class="results__again">${isTouchDevice() ? 'tap' : 'click'} to play again</div>
       </div>
     `;
     container.append(this.root);
+
+    // One delegated listener rather than one per button, because the row is
+    // rebuilt every time the card is shown.
+    this.share.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement | null)?.closest('[data-share-action]');
+      if (!(button instanceof HTMLElement)) return;
+      // Belt and braces. The canvas is what carries the click-to-play-again
+      // listener and it is not an ancestor of this, so nothing should reach it
+      // — but a stray restart here would throw away the picture being shared.
+      event.stopPropagation();
+      this.onShareAction(button.dataset.shareAction ?? '');
+    });
   }
 
   /**
@@ -102,7 +129,12 @@ export class ResultsPanel {
     return awards;
   }
 
-  show(title: string, rows: readonly ScoreRow[], splatsById: Map<string, number>): void {
+  show(
+    title: string,
+    rows: readonly ScoreRow[],
+    splatsById: Map<string, number>,
+    screen: PaintScreen | null,
+  ): void {
     const sorted = [...rows].sort((a, b) => b.hitsGiven - a.hitsGiven || a.hitsTaken - b.hitsTaken);
     const awards = ResultsPanel.awardsFor(rows);
     const awarded = new Set(awards.map((award) => award.id));
@@ -141,15 +173,146 @@ export class ResultsPanel {
       })
       .join('');
 
+    this.showMural(screen);
     this.root.classList.add('is-visible');
   }
 
   hide(): void {
     this.root.classList.remove('is-visible');
+    this.releaseDownload();
   }
 
   get isVisible(): boolean {
     return this.root.classList.contains('is-visible');
+  }
+
+  /**
+   * How much of the viewport's height the card covers, as a fraction.
+   *
+   * `ResultsStage` frames the line-up above whatever this returns. See
+   * `setPanelShare` there for why it is measured and not assumed.
+   */
+  get heightFraction(): number {
+    const height = this.root.querySelector('.results__card')?.getBoundingClientRect().height ?? 0;
+    const viewport = this.root.parentElement?.clientHeight ?? window.innerHeight;
+    if (viewport <= 0) return 0;
+    // Plus the gap the card is inset from the bottom of the screen.
+    return (height + 22) / viewport;
+  }
+
+  /**
+   * Puts the round's mural on the card and builds the row of things to do with
+   * it.
+   *
+   * The PNG is built *here*, when the card appears, and not in the click
+   * handler that shares it. Safari spends the user's gesture across an `await`,
+   * so `canvas.toBlob(...)` followed by `navigator.share(...)` fails on an
+   * iPhone with a `NotAllowedError` — which is the one platform where the
+   * system share sheet is the whole feature. Same reason the download URL is
+   * minted up front: `window.open` after an await meets the popup blocker.
+   */
+  private showMural(screen: PaintScreen | null): void {
+    this.releaseDownload();
+    this.share.innerHTML = '';
+    this.mural.hidden = screen === null;
+    if (!screen) return;
+
+    this.image.src = screen.toDataURL();
+
+    void screen.toBlob().then((blob) => {
+      // The round can end, be dismissed and restart inside the time this takes.
+      if (!this.isVisible || !blob) return;
+      this.file = new File([blob], 'central-park-paintball.png', { type: 'image/png' });
+      this.downloadUrl = URL.createObjectURL(blob);
+      this.renderShareRow();
+    });
+  }
+
+  /**
+   * The share row, built from what this browser can actually do.
+   *
+   * `navigator.share` with files is the real answer and the only one that
+   * posts a picture anywhere in one step — it opens the system sheet, which on
+   * a phone is where X, Instagram and Messages live. Everything else is the
+   * desktop consolation prize, and the X button is deliberately labelled as
+   * what it is: the tweet intent takes text and a URL and has never accepted an
+   * image, so the picture is saved first and attached by hand.
+   */
+  private renderShareRow(): void {
+    const file = this.file;
+    if (!file) return;
+
+    const canShareFile =
+      typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
+    const canCopy = typeof ClipboardItem === 'function' && Boolean(navigator.clipboard?.write);
+
+    const buttons: string[] = [];
+    if (canShareFile) {
+      buttons.push(button('share', 'Share the painting'));
+    }
+    buttons.push(button('save', 'Save PNG'));
+    if (!canShareFile) {
+      buttons.push(button('x', 'Post to X'));
+      if (canCopy) buttons.push(button('copy', 'Copy image'));
+    }
+
+    this.share.innerHTML = buttons.join('');
+  }
+
+  private onShareAction(action: string): void {
+    const file = this.file;
+    if (!file) return;
+
+    switch (action) {
+      case 'share':
+        void navigator
+          .share({ files: [file], title: SHARE_TITLE, text: SHARE_TEXT })
+          // A cancelled share sheet rejects, and it is not a fault.
+          .catch(() => {});
+        return;
+      case 'save':
+        this.download();
+        return;
+      case 'x': {
+        // Saved first, because the intent cannot carry the image itself.
+        this.download();
+        const params = new URLSearchParams({ text: SHARE_TEXT, url: REPO_URL });
+        window.open(`https://x.com/intent/post?${params.toString()}`, '_blank', 'noopener');
+        return;
+      }
+      case 'copy':
+        void navigator.clipboard
+          .write([new ClipboardItem({ 'image/png': file })])
+          .then(() => this.flash('copy', 'Copied'))
+          .catch(() => this.flash('copy', "Browser wouldn't"));
+        return;
+      default:
+    }
+  }
+
+  private download(): void {
+    if (!this.downloadUrl) return;
+    const link = document.createElement('a');
+    link.href = this.downloadUrl;
+    link.download = 'central-park-paintball.png';
+    link.click();
+  }
+
+  /** Says what happened on the button that was pressed, then puts it back. */
+  private flash(action: string, message: string): void {
+    const button = this.share.querySelector(`[data-share-action="${action}"]`);
+    if (!(button instanceof HTMLElement)) return;
+    const original = button.textContent;
+    button.textContent = message;
+    window.setTimeout(() => {
+      if (button.isConnected) button.textContent = original;
+    }, 1600);
+  }
+
+  private releaseDownload(): void {
+    if (this.downloadUrl) URL.revokeObjectURL(this.downloadUrl);
+    this.downloadUrl = null;
+    this.file = null;
   }
 
   private get title(): HTMLElement {
@@ -164,11 +327,28 @@ export class ResultsPanel {
     return this.root.querySelector('[data-results-body]')!;
   }
 
+  private get mural(): HTMLElement {
+    return this.root.querySelector('[data-results-mural]')!;
+  }
+
+  private get image(): HTMLImageElement {
+    return this.root.querySelector('[data-results-image]')!;
+  }
+
+  private get share(): HTMLElement {
+    return this.root.querySelector('[data-results-share]')!;
+  }
+
   dispose(): void {
+    this.releaseDownload();
     this.root.remove();
   }
 }
 
 function hex(color: number): string {
   return `#${color.toString(16).padStart(6, '0')}`;
+}
+
+function button(action: string, label: string): string {
+  return `<button type="button" class="results__share-button" data-share-action="${action}">${label}</button>`;
 }

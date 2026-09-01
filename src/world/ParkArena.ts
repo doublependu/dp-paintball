@@ -27,6 +27,7 @@ import { Birds } from './Birds';
 import { Cityscape } from './Cityscape';
 import { Foliage, type TreeSpec } from './Foliage';
 import { Fountain } from './Fountain';
+import { PaintScreen, screenBlocks } from './PaintScreen';
 import {
   ARCADE,
   BRIDGE,
@@ -209,7 +210,15 @@ export class ParkArenaSystem implements System {
   /** Prop geometries keyed by their Blender object name. */
   private props = new Map<string, BufferGeometry>();
 
-  constructor(private readonly surfaces: SurfaceRegistry) {}
+  /**
+   * The paint screen is built here but owned outside, because the results card
+   * needs the same object to put a picture of it on screen and the arena has no
+   * business knowing that.
+   */
+  constructor(
+    private readonly surfaces: SurfaceRegistry,
+    private readonly screen: PaintScreen,
+  ) {}
 
   async init(ctx: GameContext): Promise<void> {
     const { scene, rng } = ctx;
@@ -242,6 +251,9 @@ export class ParkArenaSystem implements System {
       this.birds?.scatter(origin.x, origin.z);
     });
     this.placeArchitecture(ctx);
+    // Before the furniture, which reads the screen's footprint to keep the
+    // bench ring off it.
+    this.screen.build(ctx);
     this.placeFurniture(ctx, rng);
     this.placeNature(ctx, rng);
     this.buildContainment(ctx);
@@ -667,6 +679,10 @@ export class ParkArenaSystem implements System {
     }
     // Not on the sign, which is its own three colliders on the paving.
     if (Math.hypot(x - SIGN.x, z - SIGN.z) < 2.2) return false;
+    // Not against the paint screen. The plaza's bench ring passes within a
+    // metre of both its ends; the margin also keeps a lamp post from standing
+    // in front of the canvas and casting a bar across it.
+    if (screenBlocks(x, z, 2)) return false;
     return true;
   }
 
@@ -1173,6 +1189,9 @@ export class ParkArenaSystem implements System {
     this.city?.dispose();
     for (const library of this.trunkLibraries) library.dispose();
     this.sunTarget?.removeFromParent();
+    // Built outside so the results card can reach it, but this is what put it
+    // in the scene, so this is what takes it out.
+    this.screen.dispose();
     for (const item of this.disposables) item.dispose();
   }
 }

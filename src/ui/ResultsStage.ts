@@ -23,10 +23,11 @@ const SPIN_RATE = 0.55;
 /** Figures sit this far apart in depth across the arc, for a little parallax. */
 const ARC_DEPTH = 0.55;
 /**
- * Fraction of the frame height the panel covers along the bottom. The line-up is
- * pushed above it rather than centred, or the DOM card sits over their legs.
+ * Fraction of the frame height the panel covers along the bottom, before the
+ * real card has been measured. The line-up is pushed above it rather than
+ * centred, or the DOM card sits over their legs.
  */
-const PANEL_SHARE = 0.34;
+const DEFAULT_PANEL_SHARE = 0.34;
 
 /**
  * The end-of-round line-up: everybody's character, turning slowly, wearing the
@@ -57,6 +58,7 @@ export class ResultsStage {
   /** Where each figure came from, so it can be put back exactly. */
   private readonly homes = new Map<Character, { parent: Scene; position: Vector3; yaw: number }>();
   private spin = 0;
+  private panelShare = DEFAULT_PANEL_SHARE;
 
   constructor() {
     // Warm key against a cool fill, the same pair the park uses, so the paint
@@ -79,6 +81,26 @@ export class ResultsStage {
 
   get isShowing(): boolean {
     return this.shown.length > 0;
+  }
+
+  /**
+   * How much of the bottom of the frame the score card is covering.
+   *
+   * Measured from the live card rather than assumed, because the card's height
+   * is not a constant: it grew by two thirds when the mural moved into it, it
+   * differs again on a phone, and it reflows with the viewport. A number pinned
+   * here is a number that silently stops matching the thing it describes.
+   */
+  setPanelShare(share: number): void {
+    // Bounded, or a mis-measurement (a card mid-transition, a zero-height
+    // container) aims the camera at the sky.
+    //
+    // The ceiling is deliberately below what a landscape phone asks for. There
+    // the card covers ~85% of a 390px screen, and honouring that aims low
+    // enough to push the figures' heads off the top of the frame — a strip of
+    // torsos. Capped, the strip shows heads and shoulders instead, which is the
+    // half of a character worth seeing when only a sliver fits.
+    this.panelShare = Math.min(Math.max(share, 0), 0.72);
   }
 
   /** Takes the characters out of the world and stands them on the stage. */
@@ -164,7 +186,7 @@ export class ResultsStage {
 
     // Aim below the figures' centre so they sit above the score panel.
     const visibleHeight = 2 * Math.tan(halfFovY) * distance;
-    const lookY = 1.05 - visibleHeight * (PANEL_SHARE / 2);
+    const lookY = 1.05 - visibleHeight * (this.panelShare / 2);
 
     this.camera.position.set(0, 1.9, distance);
     this.camera.lookAt(0, lookY, 0);

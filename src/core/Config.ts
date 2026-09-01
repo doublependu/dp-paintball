@@ -158,11 +158,16 @@ export const ballistics = {
 /**
  * The round: what you carry, and where more of it comes from.
  *
- * Paint is finite now, which changes the game more than any single number here:
- * an unlimited marker rewards holding the trigger, and a hundred rounds rewards
- * picking a shot. Note how short the supply really is — at `fireInterval` 0.14,
- * `startingAmmo` is fourteen seconds of held trigger, so the crate is not a
- * bonus but the thing that keeps a round moving.
+ * Paint is finite, which changes the game more than any single number here: an
+ * unlimited marker rewards holding the trigger, and a counted one rewards
+ * picking a shot.
+ *
+ * These numbers are the first in this file set by playing rather than by
+ * arithmetic — see `CLAUDE/prompt_5.md`. The load doubled to 200, which is
+ * about twenty-eight seconds of held trigger at `fireInterval` 0.14, and a
+ * crate went from a rounding error to half a fresh load. With ~1400 rounds in
+ * the park at the whistle, a round should now end on the clock rather than on
+ * the ammo condition — which is what five-minute rounds were a fiction without.
  */
 export const match = {
   /** Round length. Ends early if every last paintball is gone first. */
@@ -172,19 +177,34 @@ export const match = {
   /** The clock turns urgent below this. */
   urgentAtSeconds: 30,
   /** Paintballs everyone starts with. */
-  startingAmmo: 100,
+  startingAmmo: 200,
   /** Paint in one crate. */
-  lootAmmo: 20,
+  lootAmmo: 100,
   /**
-   * Seconds before a taken crate reappears somewhere new. 0 is one crate per
-   * round and nothing more, which is the brief; try 45 if rounds run dry and
-   * turn into a walk in the park.
+   * Crates out at once.
+   *
+   * One was the brief, and one is a race rather than a fight: every bot reads
+   * the crate's position the instant it spawns, so the nearest one wins it and
+   * nobody else ever had a decision to make. Three gives the park somewhere to
+   * go that is not wherever everyone else already is.
    */
-  lootRespawnSeconds: 0,
+  lootCrates: 3,
+  /**
+   * Seconds before a taken crate reappears somewhere new. 0 would be one crate
+   * per round and nothing more, which is the brief; at 35 a crate is the
+   * round's pacing mechanism instead of a one-off.
+   */
+  lootRespawnSeconds: 35,
   /** How close you have to get to take a crate. */
   lootPickupRadius: 1.4,
-  /** Below this, a bot would rather find paint than a fight. */
-  botSeekAmmo: 15,
+  /**
+   * Below this, a bot would rather find paint than a fight.
+   *
+   * Scaled with `startingAmmo`, and it has to be: at 15 against a 200 load a
+   * bot is down to 7.5% before it goes looking, which is to say it spends the
+   * whole round not looking.
+   */
+  botSeekAmmo: 30,
   /**
    * How far a bot can notice a crate, scaling its own sight range.
    *
@@ -194,8 +214,8 @@ export const match = {
    * before the player has finished looking around.
    */
   botLootSightScale: 1.5,
-  /** The HUD counter turns warm below this. */
-  lowAmmo: 20,
+  /** The HUD counter turns warm below this. Scaled with `startingAmmo`. */
+  lowAmmo: 40,
 } as const;
 
 /**

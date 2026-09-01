@@ -589,6 +589,149 @@ check('the ball leaves the barrel the marker is drawn with',
       agreement ? `${agreement.offAxis}m off the barrel axis, ${agreement.along}m along it`
                 : 'no shot observed');
 
+// --- Paint is the colour it was fired, whatever it lands on -----------------
+//
+// FEEDBACK_5: pink paint on a green shirt came out blue. The rig shader was
+// compositing paint at <map_fragment>, which runs *before* <color_fragment> —
+// three's `diffuseColor *= vColor` — so every splat on a body was multiplied by
+// the clothing under it. Magenta on mint gives (0.25, 0.19, 0.28): a dark
+// blue-violet, and the cool ambient finishes the job.
+//
+// Differential, and it has to be. `NEXT_2` records that matching a paint colour
+// against the hex in Config does not work, because everything on screen is
+// cel-shaded, fogged and lit by a warm sun. So this fires one colour at two
+// parts of one still body whose *base* colours are far apart — the torso wears
+// the team's magenta, the legs are near-black navy — and requires the two
+// splats to render as the same colour. Whatever the sun does to one it does to
+// the other; the only thing left that can separate them is what is underneath,
+// which is exactly the bug.
+//
+// The player, not a bot: bots wander, and a body that moves between the two
+// frames puts its whole silhouette into the difference. And measured by taking
+// the paint *off*, for the reason the sweep above gives — landing a hit
+// flinches the body, removing paint animates nothing.
+// Lime, and the choice is load-bearing: the probe has to be bright in a channel
+// the two surfaces disagree about or the multiply it is hunting for hides. The
+// shirt is the team's magenta (1.00, 0.24, 0.51) and the face is skin
+// (0.95, 0.79, 0.63) — nearly the same in red, half the cube apart in green. A
+// green-dominant paint therefore comes out olive on one and yellow-green on the
+// other under a multiply, and identical without one. Cyan was tried first and
+// is useless here: it has no red at all, so both products land on dark blue and
+// the bug sails through.
+const PAINT_UNDER_TEST = 0xa8e337;
+
+/** Mean rendered colour of a cluster of splats at one spot on the player. */
+async function paintedColorAt(spot) {
+  await page.evaluate(() => window.__paintball.characters.playerCharacter.paint.clear());
+  await waitSim(0.4);
+
+  await page.evaluate(({ spot, color }) => {
+    const { game, state, characters } = window.__paintball;
+    const V = state.position.constructor;
+    const character = characters.playerCharacter;
+    for (const nudge of [-9, 0, 9]) {
+      const yaw = state.yaw + ((spot.yaw + nudge) * Math.PI) / 180;
+      const tilt = ((spot.tilt ?? 0) * Math.PI) / 180;
+      const nx = Math.sin(yaw) * Math.cos(tilt);
+      const ny = Math.sin(tilt);
+      const nz = Math.cos(yaw) * Math.cos(tilt);
+      character.tickGameplay(5);
+      game.events.emit('hit:character', {
+        targetId: 'player',
+        shooterId: 'dummy-a',
+        color,
+        point: new V(
+          state.position.x + nx * 0.35,
+          state.position.y + spot.height + ny * 0.35,
+          state.position.z + nz * 0.35,
+        ),
+        normal: new V(nx, ny, nz),
+        impactSpeed: 40,
+      });
+    }
+  }, { spot, color: PAINT_UNDER_TEST });
+
+  // Long enough for the flinch those hits triggered to play out.
+  await waitSim(1.2);
+
+  // The painted frame is the reference; the frame after it has no paint.
+  await snap();
+  await page.evaluate(() => window.__paintball.characters.playerCharacter.paint.clear());
+  await stepOnce();
+
+  return page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      const probe = document.createElement('canvas');
+      probe.width = 320;
+      probe.height = 180;
+      const ctx = probe.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(document.querySelector('canvas.game-canvas'), 0, 0, 320, 180);
+      const now = ctx.getImageData(0, 0, 320, 180).data;
+      const before = window.__ref;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let i = 0; i < now.length; i += 4) {
+        if (Math.abs(now[i] - before[i]) +
+            Math.abs(now[i + 1] - before[i + 1]) +
+            Math.abs(now[i + 2] - before[i + 2]) <= 60) continue;
+        // `before`, not `now`: the paint was in the earlier frame.
+        r += before[i]; g += before[i + 1]; b += before[i + 2]; n++;
+      }
+      resolve(n === 0 ? null : { r: r / n, g: g / n, b: b / n, n });
+    });
+  }));
+}
+
+// Back to the sweep's stance: aimed, so the body fills enough of the frame for
+// a few centimetres of splat to be a number rather than a rumour.
+await page.evaluate(() => {
+  const { player, state } = window.__paintball;
+  player.teleport(new (state.position.constructor)(0, 1.5, 10));
+  state.yaw = Math.PI;
+  // The sweep's own stance. Looking down a little is what puts the crown and
+  // the shoulders in frame at all.
+  state.pitch = 0.32;
+});
+await waitSim(0.8);
+await page.mouse.down({ button: 'right' });
+await waitSim(1.0);
+
+// Both spots are ones the sweep above has already proven are drawn *and*
+// visible, which is a stricter bar than "recorded a splat". Two near misses
+// worth recording: 0.72, the sweep's "thigh", lands on the GUN joint because
+// the marker hangs there — that comparison is torso against gun, and both carry
+// the team colour, so it cannot see the bug at all. And the legs, which have
+// the most contrasting base colour on the body, take a splat that this camera
+// cannot see: the diff then measures grass moving behind the shins.
+const onShirt = await paintedColorAt({ name: 'chest', yaw: 0, height: 1.15 });
+const onFace = await paintedColorAt({ name: 'head', yaw: 0, height: 1.25, tilt: 30 });
+await page.mouse.up({ button: 'right' });
+await waitSim(0.3);
+
+const describe = (s) => `(${s.r.toFixed(0)},${s.g.toFixed(0)},${s.b.toFixed(0)})`;
+if (!onShirt || !onFace) {
+  check('paint is measurable on both the shirt and the face', false,
+        `chest ${onShirt ? onShirt.n : 0}px, head ${onFace ? onFace.n : 0}px`);
+} else {
+  const distance = Math.hypot(
+    onShirt.r - onFace.r, onShirt.g - onFace.g, onShirt.b - onFace.b);
+  // Measured both ways before this number was chosen: 1.7 apart with the fix in
+  // and 73.9 with the bug reintroduced, of a possible 441. 35 leaves the pass
+  // side an order of magnitude of headroom and still catches the regression
+  // twice over. The pixel counts are printed so a shrinking sample shows up as
+  // something other than a mysteriously passing test.
+  check('paint renders the same colour on the shirt and on the face',
+        distance < 35,
+        `shirt ${describe(onShirt)} ${onShirt.n}px vs face ${describe(onFace)} ${onFace.n}px` +
+        ` — distance ${distance.toFixed(1)}`);
+
+  // And it arrives as lime rather than as a wash of what it landed on: green
+  // clearly ahead of both red and blue on either surface.
+  const limeish = (s) => s.g > s.r + 20 && s.g > s.b + 40;
+  check('lime paint arrives lime on both surfaces',
+        limeish(onShirt) && limeish(onFace),
+        `${describe(onShirt)} and ${describe(onFace)}`);
+}
+
 check('no console or page errors', consoleErrors.length === 0, consoleErrors[0] ?? 'clean');
 
 await browser.close();

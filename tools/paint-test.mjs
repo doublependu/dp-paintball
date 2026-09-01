@@ -142,6 +142,107 @@ check(
     `(${(afterRamp.verts / afterRamp.splats).toFixed(1)}/splat)`,
 );
 
+// --- Overlapping paint does not z-fight -------------------------------------
+//
+// FEEDBACK_5: "z fighting artifact when different color paint overlap each
+// other on objects such as trees and benches". All world paint is one merged
+// buffer with one polygon offset, which separates paint from the surface but
+// not from other paint — two decals over the same triangle are built from that
+// triangle's own vertices and end up at the same depth to the bit. The material
+// now writes no depth at all, so the draw order decides and the newest splat
+// wins everywhere.
+//
+// Measured by colour rather than by looking for speckle: lay cyan down, cover
+// it with magenta, and the patch must read magenta. A tie broken by depth
+// precision reads as a mixture of the two, and — the part that makes it a
+// z-fighting test rather than a draw-order one — the mixture shifts when the
+// camera moves a few millimetres, because that is what changes the interpolated
+// depths. So it is measured twice, from two positions a hair apart.
+await place(6, 1, 30, 0, -1.0);
+await fireFor(0.3, 0.8);
+
+const overlapReady = await page.evaluate(() => {
+  const { game, state, impacts } = window.__paintball;
+  const handle = impacts.at(-1)?.colliderHandle;
+  if (handle === undefined) return false;
+  const Vec = state.position.constructor;
+
+  // A patch of ground a couple of metres in front of where we are standing,
+  // painted twice over: every cyan splat gets a magenta one at exactly the same
+  // point, which is the coplanar case the report is about.
+  const points = [];
+  for (let i = 0; i < 40; i++) {
+    const a = (i / 40) * Math.PI * 2;
+    const r = 0.35 + (i % 5) * 0.32;
+    points.push(new Vec(state.position.x + Math.cos(a) * r,
+                        0,
+                        state.position.z - 2.2 + Math.sin(a) * r));
+  }
+  for (const color of [0x00d4e8, 0xff3d81]) {
+    for (const point of points) {
+      game.events.emit('hit:world', {
+        shooterId: 'overlap', color, point: point.clone(),
+        normal: new Vec(0, 1, 0), impactSpeed: 40, colliderHandle: handle,
+      });
+    }
+  }
+  return true;
+});
+
+/**
+ * Counts saturated cyan and magenta pixels in the frame.
+ *
+ * Neither hue occurs naturally in this park — it is grass, stone and sky — and
+ * the camera is aimed steeply down at painted ground, so what is counted is
+ * paint. Deliberately not a mean: a mean over a speckled tie lands between the
+ * two colours and looks like a third colour rather than like a fault.
+ */
+const countHues = () => page.evaluate(() => new Promise((resolve) => {
+  requestAnimationFrame(() => {
+    const probe = document.createElement('canvas');
+    probe.width = 320;
+    probe.height = 180;
+    const ctx = probe.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(document.querySelector('canvas.game-canvas'), 0, 0, 320, 180);
+    const d = ctx.getImageData(0, 0, 320, 180).data;
+    let magenta = 0, cyan = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      if (r > g + 40 && r > 70) magenta++;
+      else if (b > r + 40 && g > r + 20) cyan++;
+    }
+    resolve({ magenta, cyan });
+  });
+}));
+
+if (!overlapReady) {
+  check('overlap test could run', false, 'no impact recorded to source a collider from');
+} else {
+  await waitSim(0.3);
+  const near = await countHues();
+  // A few millimetres, which is all a depth tie needs to resolve the other way.
+  await page.evaluate(() => {
+    const { player, state } = window.__paintball;
+    const p = state.position;
+    player.teleport(new (state.position.constructor)(p.x, p.y, p.z + 0.035));
+  });
+  await waitSim(0.3);
+  const far = await countHues();
+
+  check('the newer colour covers the older one where they overlap',
+        near.magenta > near.cyan * 6 && far.magenta > far.cyan * 6,
+        `near ${near.magenta} magenta / ${near.cyan} cyan, ` +
+        `far ${far.magenta} magenta / ${far.cyan} cyan`);
+
+  // And the split does not move when the camera does, which is the difference
+  // between "drawn in the right order" and "winning the coin toss this frame".
+  const nearShare = near.cyan / Math.max(1, near.magenta + near.cyan);
+  const farShare = far.cyan / Math.max(1, far.magenta + far.cyan);
+  check('the overlap does not change with the camera',
+        Math.abs(nearShare - farShare) < 0.05,
+        `older colour holds ${(nearShare * 100).toFixed(1)}% then ${(farShare * 100).toFixed(1)}%`);
+}
+
 // --- Eviction -------------------------------------------------------------
 // Fire once at open ground to learn which collider the ground is, then flood
 // the buffer through the same event path a real impact takes.

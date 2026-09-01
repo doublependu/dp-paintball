@@ -3,6 +3,7 @@ import { displayName } from '../character/Names';
 import type { GameContext, System } from '../core/System';
 import type { MatchState } from '../gameplay/MatchState';
 import type { RenderSystem } from '../render/Renderer';
+import type { PaintScreen } from '../world/PaintScreen';
 import type { ScoreRow } from './Hud';
 import { ResultsPanel } from './ResultsPanel';
 import { ResultsStage } from './ResultsStage';
@@ -30,6 +31,8 @@ export class ResultsSystem implements System {
     private readonly characters: CharactersSystem,
     private readonly match: MatchState,
     private readonly render: RenderSystem,
+    /** Null on the test course, which has no screen to show. */
+    private readonly screen: PaintScreen | null,
   ) {}
 
   init(ctx: GameContext): void {
@@ -44,7 +47,14 @@ export class ResultsSystem implements System {
 
   /** Per-frame, so the line-up keeps turning while the panel is up. */
   update(dt: number): void {
-    this.stage?.update(dt);
+    const stage = this.stage;
+    if (!stage?.isShowing) return;
+    // Re-measured every frame rather than on show, because the card's height is
+    // not settled when it appears: it fades and slides in, the mural's image
+    // decodes a frame or two later, and the share row is appended once the PNG
+    // is ready. Reading it once catches the card mid-arrival.
+    if (this.panel) stage.setPanelShare(this.panel.heightFraction);
+    stage.update(dt);
   }
 
   private show(reason: 'time' | 'ammo'): void {
@@ -61,6 +71,7 @@ export class ResultsSystem implements System {
       reason === 'ammo' ? 'Out of paint!' : 'Time!',
       characters.map(toRow),
       splats,
+      this.screen,
     );
   }
 

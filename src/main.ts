@@ -21,6 +21,7 @@ import { HudSystem } from './ui/HudSystem';
 import { PauseSystem } from './ui/PauseSystem';
 import { ResultsSystem } from './ui/ResultsSystem';
 import { TouchControlsSystem } from './ui/TouchControls';
+import { PaintScreen } from './world/PaintScreen';
 import { ParkArenaSystem } from './world/ParkArena';
 import { TestCourseSystem } from './world/TestCourse';
 
@@ -52,6 +53,10 @@ const surfaces = new SurfaceRegistry();
 // all stamp the same shapes.
 const splatAtlas = new SplatAtlas();
 const paint = new PaintSystem(surfaces, splatAtlas);
+// Built here rather than inside the arena because two unrelated things need the
+// same object: the park hangs it on the plaza, and the results card puts a
+// picture of it on screen. It stamps the same splat shapes as everything else.
+const paintScreen = new PaintScreen(splatAtlas);
 const characterRegistry = new CharacterRegistry();
 // Ballistics consults the registry at impact, so it must exist first.
 const ballistics = new BallisticsSystem(characterRegistry);
@@ -66,7 +71,10 @@ const bots: BotSpec[] = useTestCourse
   ? []
   : [
       { id: 'bot-a', position: new Vector3(-16, 0, 4), colorIndex: 1, personality: 0 },
-      { id: 'bot-b', position: new Vector3(16, 0, 6), colorIndex: 2, personality: 1 },
+      // Moved off (16, 6) when the paint screen went up on the plaza's east
+      // rim: that spawn was two metres behind the board, so this one opened
+      // every round facing the back of a wall.
+      { id: 'bot-b', position: new Vector3(19, 0, 13), colorIndex: 2, personality: 1 },
       { id: 'bot-c', position: new Vector3(4, 0, 42), colorIndex: 3, personality: 2 },
       // Respread when the map grew: this one used to sit in the Ramble, which
       // the enlarged Lake now covers.
@@ -116,7 +124,11 @@ const aim = new AimSolver();
 //   player writes renderPosition -> camera reads it and writes avatarOpacity
 //   -> avatar reads both.
 game
-  .add(useTestCourse ? new TestCourseSystem(surfaces) : new ParkArenaSystem(surfaces))
+  .add(
+    useTestCourse
+      ? new TestCourseSystem(surfaces)
+      : new ParkArenaSystem(surfaces, paintScreen),
+  )
   .add(player)
   .add(new CameraRig(playerState))
   .add(ballistics)
@@ -142,7 +154,15 @@ game
   .add(new PauseSystem(container, charactersSystem, match))
   // Last: it draws over the finished frame, and it takes the characters out of
   // the world, which everything above expects to still be there while playing.
-  .add(new ResultsSystem(container, charactersSystem, match, game.render));
+  .add(
+    new ResultsSystem(
+      container,
+      charactersSystem,
+      match,
+      game.render,
+      useTestCourse ? null : paintScreen,
+    ),
+  );
 
 interface ImpactRecord {
   x: number;
@@ -164,6 +184,7 @@ declare global {
       player: PlayerController;
       ballistics: BallisticsSystem;
       paint: PaintSystem;
+      paintScreen: PaintScreen;
       characters: CharactersSystem;
       audio: AudioSystem;
       hud: HudSystem;
@@ -204,6 +225,7 @@ window.__paintball = {
   player,
   ballistics,
   paint,
+  paintScreen,
   characters: charactersSystem,
   audio,
   hud,

@@ -558,7 +558,8 @@ body {
 }
 
 .results__card {
-  width: min(760px, 100%);
+  /* Widened from 760 when the mural moved in beside the scores. */
+  width: min(940px, 100%);
   padding: 16px 22px 14px;
   border-radius: 18px;
   border: 3px solid #2a2438;
@@ -590,6 +591,91 @@ body {
  */
 .results .fork-badge {
   pointer-events: auto;
+}
+
+/*
+ * Mural beside the scores on a wide screen, above them on a narrow one.
+ *
+ * Side by side rather than stacked because the card already runs to the height
+ * `ResultsStage.PANEL_SHARE` budgets for it, and a 16:9 picture on top of the
+ * table would push the line-up's legs behind the card.
+ */
+.results__main {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.results__scores {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.results__mural {
+  flex: 0 0 40%;
+  margin: 0;
+  min-width: 0;
+}
+
+.results__mural img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  border: 3px solid #2a2438;
+  /* The canvas colour, so a mural that has not been shot at yet still reads as
+     a blank canvas rather than as an image that failed to load. */
+  background: #f7f4ec;
+  object-fit: cover;
+}
+
+.results__share {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/*
+ * The buttons take clicks; the card around them does not.
+ *
+ * Same arrangement as `.fork-badge` above and for the same reason: `.results`
+ * is `pointer-events: none` so that a click anywhere starts the next round, and
+ * anything that wants a click of its own has to opt back in. A share button
+ * that also restarted the round would throw away the picture it just shared.
+ */
+.results__share-button {
+  pointer-events: auto;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 6px 11px;
+  border-radius: 999px;
+  border: 2px solid #2a2438;
+  background: #fff6d8;
+  color: #2a2438;
+  cursor: pointer;
+}
+
+.results__share-button:hover {
+  background: #ffd23f;
+}
+
+.results__share-button:active {
+  transform: translateY(1px);
+}
+
+@media (max-width: 720px) {
+  .results__main {
+    flex-direction: column;
+  }
+
+  .results__mural {
+    flex: 0 0 auto;
+    width: 100%;
+  }
 }
 
 .results__awards {
@@ -703,7 +789,9 @@ body {
 
    The layers, bottom to top: HUD 25, lens splash 30, these controls 35, the
    start prompt 36, the results card 38 (lifted from its desktop stacking so
-   its repo link still takes a tap), the pause card 40, the rotate gate 60.
+   its repo link and share buttons still take a tap — they sit above the
+   tap-to-play-again layer, which is why sharing does not start a round), the
+   pause card 40, the rotate gate 60.
    --------------------------------------------------------------------------- */
 
 .touch,
@@ -1126,6 +1214,31 @@ body {
 .is-touch .results__award { padding: 3px 8px; font-size: 10px; }
 .is-touch .results__row { padding: 2px 0; font-size: 12px; }
 .is-touch .results__again { margin-top: 6px; font-size: 10px; }
+/*
+ * A phone held in landscape has height to spare in no direction at all, so the
+ * mural takes a third of the width and the share row gets thumb-sized targets
+ * rather than the desktop's chips.
+ */
+.is-touch .results__main { gap: 10px; }
+.is-touch .results__mural { flex-basis: 26%; }
+/*
+ * One row, never two. A landscape phone is under 400px tall and the card is
+ * already most of it; a wrapped second row of buttons costs another 40px and
+ * pushes the line-up behind the card entirely.
+ */
+.is-touch .results__share { margin-top: 6px; gap: 4px; flex-wrap: nowrap; }
+.is-touch .results__share-button {
+  font-size: 9px;
+  padding: 7px 8px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+/*
+ * Opaque on touch, where the tap-to-play-again layer sits directly behind the
+ * card rather than off at the edges of a desktop screen. At 0.95 its wording
+ * ghosts straight through the score table.
+ */
+.is-touch .results__card { background: #fcfaf5; }
 .is-touch .fork-badge { padding: 7px 14px; font-size: 0.72rem; }
 .is-touch .fork-badge svg { width: 16px; height: 16px; }
 

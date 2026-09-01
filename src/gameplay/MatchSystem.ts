@@ -2,7 +2,7 @@ import type { CharactersSystem } from '../character/CharactersSystem';
 import { match as matchConfig } from '../core/Config';
 import type { GameContext, System } from '../core/System';
 import type { BallisticsSystem } from './Ballistics';
-import type { LootState, LootSystem } from './LootSystem';
+import { totalCrateRounds, type LootState, type LootSystem } from './LootSystem';
 import { isPaused, isPlaying, resetMatch, totalAmmo, type MatchState } from './MatchState';
 
 /**
@@ -93,17 +93,20 @@ export class MatchSystem implements System {
   /**
    * Whether there is no paint left anywhere in the park.
    *
-   * All three clauses matter. Without the crate, "everyone is empty" fires while
-   * twenty rounds are still sitting under the arcade, which is not what the rule
-   * says — the paint in the crate counts, so somebody has to go and get it or
-   * the clock has to run out. Without the in-flight clause the round ends while
-   * the last shot is still travelling, and the final hit lands after the
-   * scoreboard has already been drawn.
+   * All three clauses matter. Without the crates, "everyone is empty" fires
+   * while a hundred rounds are still sitting under the arcade, which is not
+   * what the rule says — the paint in a crate counts, so somebody has to go and
+   * get it or the clock has to run out. Without the in-flight clause the round
+   * ends while the last shot is still travelling, and the final hit lands after
+   * the scoreboard has already been drawn.
+   *
+   * Note this counts *rounds*, not crates. A slot waiting out its respawn timer
+   * holds nothing and must not keep the round alive on its own.
    */
   private outOfPaint(): boolean {
     return (
       totalAmmo(this.match) === 0 &&
-      this.loot.position === null &&
+      totalCrateRounds(this.loot) === 0 &&
       this.ballistics.activeCount === 0
     );
   }

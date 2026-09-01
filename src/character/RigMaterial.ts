@@ -131,8 +131,18 @@ export function createRigMaterial(
          varying float vRigJoint;`,
       )
       .replace(
-        '#include <map_fragment>',
-        `#include <map_fragment>
+        // Deliberately <color_fragment>, not <map_fragment>.
+        //
+        // color_fragment is `diffuseColor *= vColor`, and it runs *after*
+        // map_fragment in three's chunk order. Compositing paint before it
+        // meant every splat was multiplied by the clothing underneath it: pink
+        // paint on a mint shirt came out (0.25, 0.19, 0.28), a dark
+        // blue-violet, which a cool ambient and a three-band ramp then present
+        // as blue. Paint is a coat over the surface, not a filter on it, so it
+        // has to be written last and absolutely — which is what world paint has
+        // always done, its material having no vertex colours to be caught by.
+        '#include <color_fragment>',
+        `#include <color_fragment>
          float rigTile = 1.0 / uSplatTiles;
          for ( int i = 0; i < ${paint.max}; i++ ) {
            if ( i >= uSplatCount ) break;
@@ -191,7 +201,9 @@ export function createRigMaterial(
       );
   };
 
-  material.customProgramCacheKey = () => `voxel-rig-v3-${JOINT_COUNT}-${paint.max}`;
+  // Bumped to v4 when paint moved after the vertex-colour multiply. A stale
+  // cached program is indistinguishable from a fix that did not work.
+  material.customProgramCacheKey = () => `voxel-rig-v4-${JOINT_COUNT}-${paint.max}`;
 
   // The normal variant shares the *same* jointUniform array, so a single
   // setJoints() keeps the colour pass and the prepass in lockstep. Two separate

@@ -4,12 +4,21 @@ import {
   MeshToonMaterial,
   NearestFilter,
   RGBAFormat,
+  type Texture,
   UnsignedByteType,
 } from 'three';
 import { palette, render as renderConfig } from '../core/Config';
 
 export interface CelOptions {
   color: number;
+  /**
+   * Optional albedo texture, multiplied by `color` as three's `map` always is —
+   * so a mapped surface usually wants `color: 0xffffff`.
+   *
+   * Almost nothing in this park is textured; the one caller is the paint
+   * screen, whose whole surface is a canvas that gets stamped into.
+   */
+  map?: Texture;
   /** Rim colour. Defaults to the warm sun tint. */
   rimColor?: number;
   /** 0 disables the rim entirely. */
@@ -72,6 +81,7 @@ export function getCelGradient(): DataTexture {
 export function createCelMaterial(options: CelOptions): MeshToonMaterial {
   const {
     color,
+    map,
     rimColor = palette.sunWarm,
     rimStrength = 0.28,
     rimPower = 3.2,
@@ -81,6 +91,7 @@ export function createCelMaterial(options: CelOptions): MeshToonMaterial {
 
   const material = new MeshToonMaterial({
     color,
+    map,
     gradientMap: getCelGradient(),
     transparent,
     opacity,

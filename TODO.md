@@ -48,3 +48,33 @@ wall on a phone. It now sits above the right trigger. An auto-hop was tried in
 its place first; `CLAUDE/NEXT_4.md` records why the button won.
 
 Plan in `CLAUDE/PLAN_4.md`, consequences in `CLAUDE/NEXT_4.md`.
+
+# Iteration 5 — the colours, the economy, and something to paint on
+
+All six items in `CLAUDE/prompt_5.md` are done. Plan in `CLAUDE/PLAN_5.md`,
+consequences in `CLAUDE/NEXT_5.md`. `npm test` is eleven suites, 197 checks.
+
+Two colour bugs, in the two separate paint pipelines:
+
+- **Pink paint on a green shirt came out blue.** The rig shader composited paint
+  at `<map_fragment>`, which runs *before* three's `diffuseColor *= vColor`, so
+  every splat on a body was multiplied by the clothing under it. Magenta on mint
+  gives a dark blue-violet. Paint is written after the vertex colour now.
+- **Overlapping paint z-fought.** One merged buffer, one polygon offset:
+  coplanar decals over the same triangle land at the same depth to the bit, and
+  the tie was broken by precision. The material writes no depth now, so draw
+  order decides and the newest splat wins.
+
+Both are covered by tests that were checked against the reintroduced bug, not
+just against the fix — see `NEXT_5.md`, which records what the first three
+attempts at the colour test measured instead.
+
+**The ammo economy is finally tuned**, closing the oldest open item in this repo
+(`NEXT_2.md` P0, open since iteration 1 and flagged throughout as needing a
+person rather than a machine): 200 rounds each, crates of 100, and three crates
+out at once with a 35s respawn instead of one per round.
+
+**The park has a paint screen** — an 11m canvas on the plaza's east rim. It
+keeps its paint in texture space rather than as world decals, which is the
+technique `PaintSystem` rejects for the map and the right one for one flat
+board. The results card shows the painting and offers it for sharing.

@@ -282,7 +282,27 @@ export class PaintSystem implements System {
       polygonOffset: true,
       polygonOffsetFactor: -4,
       polygonOffsetUnits: -4,
-      depthWrite: true,
+      /**
+       * Off, and this is what stops paint z-fighting paint.
+       *
+       * The polygon offset separates paint from the *surface* it sits on; it
+       * does nothing to separate paint from other paint. Two decals over one
+       * triangle are generated from that triangle's own vertices, so after the
+       * same offset they hold the same depth to the bit, and which one wins per
+       * pixel falls out of rasterisation order and interpolation precision —
+       * speckle that crawls as the camera moves, worst on the small triangles
+       * of trees and benches where several splats share a square metre.
+       *
+       * With no depth writes there is nothing to tie against: all paint is one
+       * draw call in insertion order, so the last decal to cover a pixel is the
+       * newest one, everywhere, with no epsilon to tune. That is the rule
+       * character paint already follows — see `CharacterPaint.add` — so the two
+       * pipelines now agree about what "painted over" means.
+       *
+       * Safe because paint is opaque and alpha-tested: the geometry underneath
+       * it already wrote the depth that everything else tests against.
+       */
+      depthWrite: false,
     });
 
     material.onBeforeCompile = (shader) => {
