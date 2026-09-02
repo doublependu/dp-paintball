@@ -2,7 +2,7 @@ import { CanvasTexture, SRGBColorSpace } from 'three';
 import { Rng } from '../core/Random';
 
 /**
- * The lettering on the park's dedication sign, painted into a canvas at boot.
+ * The lettering on the park's signs, painted into a canvas at boot.
  *
  * Drawn rather than shipped as an image for the same reason the splat atlas is:
  * it costs a millisecond and no download, and the copy stays editable as text
@@ -12,13 +12,25 @@ import { Rng } from '../core/Random';
  * board, each one stroked in ink and set down at a slightly wrong angle. Type
  * laid out perfectly straight is the one thing that would read as a screenshot
  * of a web page glued onto a park sign.
+ *
+ * Two boards come out of here and the machinery is identical: the dedication
+ * plaque by the fountain, and the place markers that name the park's corners.
+ * They differ in proportion and in copy, and in nothing else — a place name is
+ * one short line, so it wants a board nearly three times as wide as it is tall,
+ * where a two-line dedication wants 2:1.
  */
 
-const WIDTH = 1024;
-const HEIGHT = 512;
+const PLAQUE_WIDTH = 1024;
+const PLAQUE_HEIGHT = 512;
 
 /** Board proportions the geometry has to match, or the lettering stretches. */
-export const PLAQUE_ASPECT = WIDTH / HEIGHT;
+export const PLAQUE_ASPECT = PLAQUE_WIDTH / PLAQUE_HEIGHT;
+
+const PLACE_WIDTH = 512;
+const PLACE_HEIGHT = 176;
+
+/** The same, for a place marker. About 2.9:1 — a park sign, not a plaque. */
+export const PLACE_PLAQUE_ASPECT = PLACE_WIDTH / PLACE_HEIGHT;
 
 /** Matches the HUD's stack, so the game speaks in one typeface. */
 const FONT = '"Segoe UI Rounded", ui-rounded, "Hiragino Maru Gothic ProN", "Trebuchet MS", Verdana, sans-serif';
@@ -34,8 +46,16 @@ const BOARD = '#2c4636';
 const CREAM = '#f4e9d0';
 const INK = '#14201a';
 
-/** Widest the lettering may run, leaving the border its margin. */
-const TEXT_WIDTH = WIDTH - 150;
+/**
+ * The height every hardcoded pixel size below was chosen against.
+ *
+ * The border inset, its two stroke weights, the bolt heads and the text margin
+ * are all in pixels, and all of them are really fractions of the board. Scaling
+ * them by the board's own height rather than restating them per size keeps the
+ * 176px place marker looking like the 512px plaque shrunk, instead of like the
+ * same board with a hairline border and no margin.
+ */
+const REFERENCE_HEIGHT = 512;
 
 interface Line {
   text: string;
@@ -50,8 +70,8 @@ interface Line {
 }
 
 /**
- * The copy. `®` is picked out of the string and set small and raised wherever
- * it appears, so the mark sits against the name it belongs to.
+ * The dedication's copy. `®` is picked out of the string and set small and
+ * raised wherever it appears, so the mark sits against the name it belongs to.
  *
  * Baselines set the two lines as one block on the middle of the board rather
  * than filling it: a name with air above and below it reads as a dedication,
@@ -72,19 +92,55 @@ interface Glyph {
 }
 
 export function createSignPlaqueTexture(): CanvasTexture {
+  // Fixed seed: the wobble is meant to look hand-made, not to be different on
+  // every load — a sign that re-letters itself when you reload is a bug.
+  return paintPlaque(LINES, PLAQUE_WIDTH, PLAQUE_HEIGHT, 0x51c14);
+}
+
+/**
+ * A board naming one place in the park, and the proportions it was drawn at.
+ *
+ * The seed comes from the name rather than from a counter, for the same reason
+ * the dedication's is fixed: every marker is hand-made, and the same marker is
+ * hand-made the same way on every reload.
+ */
+export function createPlaceSignTexture(name: string): {
+  texture: CanvasTexture;
+  aspect: number;
+} {
+  const line: Line = {
+    text: name,
+    size: PLACE_HEIGHT * 0.52,
+    baseline: PLACE_HEIGHT * 0.68,
+    tracking: 0.05,
+  };
+  return {
+    texture: paintPlaque([line], PLACE_WIDTH, PLACE_HEIGHT, hashSeed(name)),
+    aspect: PLACE_PLAQUE_ASPECT,
+  };
+}
+
+/** Everything both boards have in common: the timber, the border, the type. */
+function paintPlaque(
+  lines: readonly Line[],
+  width: number,
+  height: number,
+  seed: number,
+): CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = WIDTH;
-  canvas.height = HEIGHT;
+  canvas.width = width;
+  canvas.height = height;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('SignPlaque: no 2D context');
 
-  // Fixed seed: the wobble is meant to look hand-made, not to be different on
-  // every load — a sign that re-letters itself when you reload is a bug.
-  const rng = new Rng(0x51c14);
+  const rng = new Rng(seed);
+  const scale = height / REFERENCE_HEIGHT;
 
-  paintBoard(ctx, rng);
-  drawBorder(ctx, rng);
-  for (const line of LINES) drawLine(ctx, rng, line);
+  paintBoard(ctx, rng, width, height, scale);
+  drawBorder(ctx, rng, width, height, scale);
+  // Widest the lettering may run, leaving the border its margin.
+  const textWidth = width - REFERENCE_HEIGHT * 0.293 * scale;
+  for (const line of lines) drawLine(ctx, rng, line, width, textWidth);
 
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
@@ -94,43 +150,73 @@ export function createSignPlaqueTexture(): CanvasTexture {
   return texture;
 }
 
-/** Board colour, plus grain streaks along the plank. */
-function paintBoard(ctx: CanvasRenderingContext2D, rng: Rng): void {
-  ctx.fillStyle = BOARD;
-  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+/**
+ * A stable 32-bit seed from a name (FNV-1a).
+ *
+ * Any hash would do; what matters is that it is a pure function of the copy, so
+ * "Bow Bridge" wobbles the same way in every session and two markers never come
+ * out as the same board with different words on it.
+ */
+function hashSeed(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash;
+}
 
-  for (let i = 0; i < 70; i++) {
+/** Board colour, plus grain streaks along the plank. */
+function paintBoard(
+  ctx: CanvasRenderingContext2D,
+  rng: Rng,
+  width: number,
+  height: number,
+  scale: number,
+): void {
+  ctx.fillStyle = BOARD;
+  ctx.fillRect(0, 0, width, height);
+
+  const streaks = Math.round(70 * ((width * height) / (PLAQUE_WIDTH * PLAQUE_HEIGHT)));
+  for (let i = 0; i < streaks; i++) {
     ctx.globalAlpha = rng.range(0.02, 0.07);
     ctx.fillStyle = rng.bool(0.55) ? '#000000' : '#ffffff';
-    ctx.fillRect(0, rng.range(0, HEIGHT), WIDTH, rng.range(2, 10));
+    ctx.fillRect(0, rng.range(0, height), width, rng.range(2, 10) * scale);
   }
   ctx.globalAlpha = 1;
 }
 
 /** A painted border, drawn as a wobbling rectangle and inked on the outside. */
-function drawBorder(ctx: CanvasRenderingContext2D, rng: Rng): void {
-  const inset = 30;
+function drawBorder(
+  ctx: CanvasRenderingContext2D,
+  rng: Rng,
+  width: number,
+  height: number,
+  scale: number,
+): void {
+  const inset = 30 * scale;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
-  tracePath(ctx, rng, inset, 5);
+  tracePath(ctx, rng, width, height, inset, 5 * scale, 64 * scale);
   ctx.strokeStyle = INK;
-  ctx.lineWidth = 16;
+  ctx.lineWidth = 16 * scale;
   ctx.stroke();
   ctx.strokeStyle = CREAM;
-  ctx.lineWidth = 7;
+  ctx.lineWidth = 7 * scale;
   ctx.stroke();
 
   // Bolt heads at the corners, where a real board is fixed to its posts.
+  const bolt = 26 * scale;
   for (const [bx, by] of [
-    [inset + 26, inset + 26], [WIDTH - inset - 26, inset + 26],
-    [inset + 26, HEIGHT - inset - 26], [WIDTH - inset - 26, HEIGHT - inset - 26],
+    [inset + bolt, inset + bolt], [width - inset - bolt, inset + bolt],
+    [inset + bolt, height - inset - bolt], [width - inset - bolt, height - inset - bolt],
   ] as const) {
     ctx.beginPath();
-    ctx.arc(bx, by, 9, 0, Math.PI * 2);
+    ctx.arc(bx, by, 9 * scale, 0, Math.PI * 2);
     ctx.fillStyle = CREAM;
     ctx.fill();
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 4 * scale;
     ctx.strokeStyle = INK;
     ctx.stroke();
   }
@@ -140,12 +226,19 @@ function drawBorder(ctx: CanvasRenderingContext2D, rng: Rng): void {
  * Lays down a rectangle as a run of short segments, each corner jittered.
  * A perfectly straight painted line is the tell that no hand was involved.
  */
-function tracePath(ctx: CanvasRenderingContext2D, rng: Rng, inset: number, amp: number): void {
+function tracePath(
+  ctx: CanvasRenderingContext2D,
+  rng: Rng,
+  width: number,
+  height: number,
+  inset: number,
+  amp: number,
+  step: number,
+): void {
   const left = inset;
-  const right = WIDTH - inset;
+  const right = width - inset;
   const top = inset;
-  const bottom = HEIGHT - inset;
-  const step = 64;
+  const bottom = height - inset;
 
   const points: Array<[number, number]> = [];
   const edge = (
@@ -171,7 +264,13 @@ function tracePath(ctx: CanvasRenderingContext2D, rng: Rng, inset: number, amp: 
 }
 
 /** Sets one line, glyph by glyph, shrinking it if it would run off the board. */
-function drawLine(ctx: CanvasRenderingContext2D, rng: Rng, line: Line): void {
+function drawLine(
+  ctx: CanvasRenderingContext2D,
+  rng: Rng,
+  line: Line,
+  width: number,
+  textWidth: number,
+): void {
   const glyphs: Glyph[] = [...line.text].map((ch) => ({
     ch,
     scale: ch === '®' ? 0.36 : 1,
@@ -195,11 +294,12 @@ function drawLine(ctx: CanvasRenderingContext2D, rng: Rng, line: Line): void {
 
   // Shrink to fit rather than trusting the sizes above: which font actually
   // answers the stack depends on the machine, and the widest of them overruns
-  // the board by a good 15%.
+  // the board by a good 15%. Place names vary in length besides — "The Mall"
+  // and "Bethesda Fountain" are set on the same board.
   let size = line.size;
   let total = measure(size);
-  if (total > TEXT_WIDTH) {
-    size *= TEXT_WIDTH / total;
+  if (total > textWidth) {
+    size *= textWidth / total;
     total = measure(size);
   }
 
@@ -207,7 +307,7 @@ function drawLine(ctx: CanvasRenderingContext2D, rng: Rng, line: Line): void {
   ctx.textBaseline = 'alphabetic';
   ctx.lineJoin = 'round';
 
-  let x = (WIDTH - total) / 2;
+  let x = (width - total) / 2;
   for (const glyph of glyphs) {
     ctx.save();
     ctx.translate(x + glyph.width / 2, line.baseline - glyph.rise + rng.spread(size * 0.022));

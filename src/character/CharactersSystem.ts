@@ -1,5 +1,6 @@
 import { Vector3 } from 'three';
-import { player as playerConfig } from '../core/Config';
+import { mural as muralConfig, player as playerConfig } from '../core/Config';
+import { Rng } from '../core/Random';
 import type { GameContext, System } from '../core/System';
 import { Bot, type BotTarget } from '../ai/Bot';
 import { NavGrid } from '../ai/NavGrid';
@@ -36,6 +37,8 @@ export class CharactersSystem implements System {
   private bots: Bot[] = [];
   private splatAtlas?: SplatAtlas;
   private nav?: NavGrid;
+  /** Held so a round can be re-rolled without a context to hand. See `respawnAll`. */
+  private painterRng?: Rng;
   /** Where everyone stood at boot, so a restart can put them back. */
   private readonly spawns = new Map<string, Vector3>();
   /** Rebuilt each step; bots read it to find someone to shoot at. */
@@ -67,6 +70,13 @@ export class CharactersSystem implements System {
     private readonly board: MuralBoard | null,
     private readonly botSpecs: BotSpec[] = [],
     /**
+     * Seeds the muralist roll, and comes from the same per-game seed the loot
+     * does rather than from `WORLD_SEED`. Which bots go painting is a fact
+     * about this game, not about the park: drawn from the world seed it would
+     * be the same one bot at the wall in every game anybody ever plays.
+     */
+    private readonly gameSeed = 0,
+    /**
      * Only used to put the player back at their spawn between rounds. Optional
      * because the test course builds this system without one.
      */
@@ -74,6 +84,10 @@ export class CharactersSystem implements System {
   ) {}
 
   init(ctx: GameContext): void {
+    // Forked off the game seed rather than shared with `ctx.rng`, so a re-roll
+    // between rounds cannot shift the world's own sequence.
+    this.painterRng = new Rng(this.gameSeed ^ 0x9e3779b9);
+
     // One atlas shared by every character's paint stamper, and with world
     // paint and the lens splash too — the splat shapes are identical, only the
     // tint differs.
@@ -119,6 +133,8 @@ export class CharactersSystem implements System {
       this.spawns.set(spec.id, grounded.clone());
       this.bots.push(bot);
     }
+
+    this.choosePainters(this.painterRng);
 
     // Captured after the arena is built and before anything has moved.
     this.spawns.set('player', this.state.position.clone());
@@ -271,6 +287,7 @@ export class CharactersSystem implements System {
    * half a restart.
    */
   respawnAll(): void {
+    if (this.painterRng) this.choosePainters(this.painterRng);
     const playerSpawn = this.spawns.get('player');
     if (playerSpawn && this.controller) {
       this.controller.teleport(playerSpawn);
@@ -302,6 +319,30 @@ export class CharactersSystem implements System {
 
   get navGrid(): NavGrid | undefined {
     return this.nav;
+  }
+
+  /**
+   * Picks the round's muralists: one to three of the roster, sampled without
+   * replacement.
+   *
+   * Here rather than in `Bot` because it is a fact about the roster, not about
+   * any one bot, and this is what owns the roster and its per-round reset.
+   *
+   * Painting used to be a gate every bot re-asked every step, and the result
+   * was that essentially nobody painted: a measured 300-second match left three
+   * splats on an eleven-metre board. A designated painter will cross the whole
+   * park for the errand, which is the difference between a side quest and a
+   * coincidence — and since every bot already carries its own paint colour,
+   * three painters are three colours on the board for free.
+   */
+  private choosePainters(rng: Rng): void {
+    for (const bot of this.bots) bot.isPainter = false;
+    const pool = [...this.bots];
+    const wanted = muralConfig.minPainters + rng.int(0, muralConfig.maxPainters - muralConfig.minPainters + 1);
+    const count = Math.min(pool.length, wanted);
+    for (let i = 0; i < count; i++) {
+      pool.splice(rng.int(0, pool.length), 1)[0]!.isPainter = true;
+    }
   }
 
   dispose(): void {

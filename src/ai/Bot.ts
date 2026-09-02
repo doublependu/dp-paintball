@@ -17,7 +17,7 @@ import type { AnimationInput } from '../character/CharacterAnimator';
 import { displayName } from '../character/Names';
 import { BallisticsSystem } from '../gameplay/Ballistics';
 import type { MuralBoard, MuralSlot } from '../world/PaintScreen';
-import { MURAL_DESIGNS, dotsFor, letterDesign } from './MuralDesigns';
+import { designsForBox, dotsFor, letterDesign } from './MuralDesigns';
 import {
   isCrateLive,
   nearestCrate,
@@ -104,6 +104,18 @@ export class Bot {
   private fireCooldown = 0;
   private target: BotTarget | null = null;
   private lastSeenTargetAt = -Infinity;
+  /**
+   * When somebody was last close enough to count as a fight.
+   *
+   * Distinct from `lastSeenTargetAt`, and the distinction is what makes the
+   * mural errand reachable at all. Measured over a natural round, a bot has a
+   * visible target 90% of the time and one within `mural.breakOffRange` for a
+   * fraction of that — the park is 336m across and `sightRange` is generous.
+   * Gating art on "nobody in sight" made the errand a lottery: in one sampled
+   * match the designated painter had four clear seconds all round, while an
+   * undesignated bot on the other side of the park had two hundred.
+   */
+  private lastThreatenedAt = -Infinity;
   /** Elapsed time before which this bot will not try for a crate again. */
   private restockBlockedUntil = -Infinity;
   /**
@@ -131,6 +143,41 @@ export class Bot {
   private readonly muralStance = new Vector3();
   /** Elapsed time before which this bot will not think about painting again. */
   private muralBlockedUntil = -Infinity;
+  /**
+   * A drawing broken off but not thrown away, and when the lease on it lapses.
+   *
+   * The difference between a side quest and a wasted trip. A painter that has
+   * arrived and started keeps its slot, its dots and its index through a fight,
+   * so it comes back and finishes the same heart rather than starting a new one
+   * from nothing forty-five seconds later. See `pauseMural`.
+   */
+  private muralPaused = false;
+  private muralResumeBy = -Infinity;
+  /**
+   * Drawings this bot has carried to the last mark.
+   *
+   * For the suite, and it exists because the alternative does not work: a
+   * corner drawing is eight seconds of firing, so sampling `muralProgress` from
+   * outside the sim catches it somewhere in the middle and never at the end.
+   * A test that has to poll fast enough to see completion is a test that has to
+   * run the round four times slower than it needs to.
+   */
+  private muralsFinished = 0;
+
+  /**
+   * Whether this bot is one of the round's designated painters.
+   *
+   * Rolled once at the whistle by `CharactersSystem`, one to three of the
+   * roster, and nothing else ever enters `muralist`. See `mural.minPainters`.
+   */
+  isPainter = false;
+
+  /**
+   * Simulation time as of this step, for the handful of things that need it
+   * outside `fixedUpdate` — `onHit` arrives from the hit router, which has no
+   * clock to hand and no business acquiring one.
+   */
+  private now = 0;
 
   private readonly desired = new Vector3();
   private readonly eye = new Vector3();
@@ -225,10 +272,12 @@ export class Bot {
     this.stateTimer = 0;
     this.repathTimer = 0;
     this.lastSeenTargetAt = -Infinity;
+    this.lastThreatenedAt = -Infinity;
     this.restockBlockedUntil = -Infinity;
     this.restockTarget = null;
     this.abandonMural();
     this.muralBlockedUntil = -Infinity;
+    this.muralsFinished = 0;
   }
 
   /** Called when this bot is hit, to make it react. */
@@ -236,7 +285,11 @@ export class Bot {
     // Whatever it was drawing, it is not drawing it now. Standing still in the
     // open with a paintball marker pointed at a wall is exactly the moment
     // somebody comes and tags you, and that is the best thing about it.
-    this.abandonMural();
+    //
+    // Paused rather than abandoned: being tagged is a reason to stop painting
+    // and a bad reason to lose the picture. The lease runs for `resumeSeconds`,
+    // which is long enough to deal with whoever turned up and come back.
+    this.pauseMural();
     this.state = 'startled';
     this.stateTimer = rng.range(0.9, 1.8);
     this.path = [];
@@ -257,6 +310,7 @@ export class Bot {
     others: Bot[],
     ballistics: BallisticsSystem,
   ): void {
+    this.now = ctx.elapsed;
     this.stateTimer -= dt;
     this.repathTimer -= dt;
     this.fireCooldown = Math.max(0, this.fireCooldown - dt);
@@ -294,7 +348,10 @@ export class Bot {
     }
 
     this.target = best;
-    if (best) this.lastSeenTargetAt = ctx.elapsed;
+    if (best) {
+      this.lastSeenTargetAt = ctx.elapsed;
+      if (bestDistance <= muralConfig.breakOffRange) this.lastThreatenedAt = ctx.elapsed;
+    }
   }
 
   // --- decision ------------------------------------------------------------
@@ -328,25 +385,57 @@ export class Bot {
       this.enterWander(nav, rng);
     }
 
-    // Painting. Checked before targets, because a painter that sees somebody
-    // should stop painting and fight — which is what dropping through to the
-    // clause below does — and after restock, because a bot low on paint has a
-    // more pressing errand than art.
+    // A paused drawing whose lease has run out is simply an abandoned one, and
+    // it has to be collected here rather than wherever the bot happens to be:
+    // the slot is held against the board, so nobody else can use that corner
+    // until this bot lets go of it.
+    if (this.muralPaused && ctx.elapsed > this.muralResumeBy) {
+      this.abandonMural();
+      this.muralBlockedUntil = ctx.elapsed + muralConfig.retrySeconds;
+    }
+
+    // Painting. Checked before targets, because a painter that is actually in a
+    // fight should stop painting and fight — which is what dropping through to
+    // the clause below does — and after restock, because a bot low on paint has
+    // a more pressing errand than art.
     if (this.state === 'muralist') {
       const done = this.muralIndex >= this.muralDots.length;
-      if (this.target || done || this.stateTimer <= 0) {
+      // Out of paint is out of the errand. `paintNextMark` fails its `consume`
+      // silently, and nothing else in this branch ends the state, so a painter
+      // that ran dry at the board stood in front of it for the rest of the
+      // round holding a corner nobody else could use.
+      const dry = ammoOf(this.match, this.id) <= 0;
+      if (done || dry || this.stateTimer <= 0) {
+        if (done) this.muralsFinished++;
         this.abandonMural();
-        // A cooldown either way. Without it a bot that finishes a drawing turns
-        // straight round and starts another, and the board fills with one
-        // painter's work while everyone else fights.
-        this.muralBlockedUntil = ctx.elapsed + muralConfig.cooldownSeconds;
+        // A cooldown either way, but not the same one. A finished drawing earns
+        // the long wait — without it a painter turns straight round and starts
+        // another, and the board fills with one bot's work while everyone else
+        // fights. A drawing that timed out earns the short one: see
+        // `mural.retrySeconds`.
+        this.muralBlockedUntil =
+          ctx.elapsed + (done ? muralConfig.cooldownSeconds : muralConfig.retrySeconds);
         if (!this.target) {
           this.enterWander(nav, rng);
           return;
         }
+      } else if (this.threatened()) {
+        // Somebody close enough to be a fight. Keep the picture, drop through.
+        //
+        // Out of `muralist` here rather than leaving it to the clauses below:
+        // one of them — a target with no paint to shoot at it — changes no
+        // state at all, and that left a paused painter still in `muralist`,
+        // walking to a stance it would never fire a mark from.
+        this.pauseMural();
+        this.state = 'wander';
+        this.path = [];
       } else {
+        // A target seen across the meadow is not a fight, and breaking off for
+        // one is what made the errand a wasted trip — see `mural.breakOffRange`.
         return;
       }
+    } else if (this.canResumeMural(ctx)) {
+      if (this.resumeMural(ctx, nav)) return;
     } else if (this.wantsToPaint(ctx)) {
       if (this.startMural(ctx, nav)) return;
     }
@@ -467,12 +556,49 @@ export class Bot {
    */
   private wantsToPaint(ctx: GameContext): boolean {
     if (!this.board) return false;
+    // Designation first, and it is the cheapest clause as well as the one that
+    // changes the behaviour most: at most three bots a round are painters, so
+    // the rest of the roster never asks any of the questions below.
+    if (!this.isPainter) return false;
     if (this.match.sandbox) return false;
     if (ctx.elapsed < this.muralBlockedUntil) return false;
-    if (this.target) return false;
-    if (ctx.elapsed - this.lastSeenTargetAt < muralConfig.quietSeconds) return false;
+    // Quiet means "nobody near", not "nobody in sight", and the two are very
+    // different in a park this size: `sightRange` reaches most of the way
+    // across Sheep Meadow, so a bot that refuses to paint while anything at all
+    // is visible refuses all round. The bar is the same `breakOffRange` that
+    // breaks a drawing off, which is the only consistent answer — a sighting
+    // that would not interrupt the errand should not prevent it either.
+    if (this.threatened()) return false;
+    if (ctx.elapsed - this.lastThreatenedAt < muralConfig.quietSeconds) return false;
     if (ammoOf(this.match, this.id) < muralConfig.minAmmo) return false;
-    return this.position.distanceTo(this.board.centre) <= muralConfig.noticeRange;
+    // Deliberately no range test. There used to be one — sixty metres — and it
+    // was the second most expensive line in the old design: the board is at the
+    // far west of a park bots cross all round, and the median distance to it
+    // over a measured match was eighty metres. For a bot that has been told
+    // this is its errand, the walk across the park *is* the errand.
+    return true;
+  }
+
+  /** Somebody close enough that this is a fight rather than a sighting. */
+  private threatened(): boolean {
+    if (!this.target) return false;
+    return this.position.distanceTo(this.target.position) <= muralConfig.breakOffRange;
+  }
+
+  /**
+   * Whether there is a paused drawing worth going back to.
+   *
+   * Deliberately not gated on `quietSeconds` the way starting one is: the
+   * picture is already laid out and the stance already chosen, so the cost of
+   * going back is a walk rather than a commitment, and the whole point of the
+   * lease is that it is picked up promptly.
+   */
+  private canResumeMural(ctx: GameContext): boolean {
+    if (!this.muralPaused || !this.muralSlot) return false;
+    if (ctx.elapsed > this.muralResumeBy) return false;
+    if (this.threatened()) return false;
+    if (ammoOf(this.match, this.id) <= 0) return false;
+    return this.muralIndex < this.muralDots.length;
   }
 
   /**
@@ -488,7 +614,9 @@ export class Bot {
 
     const slot = board.claimSlot(this.id);
     if (!slot) {
-      this.muralBlockedUntil = ctx.elapsed + muralConfig.cooldownSeconds * 0.5;
+      // Every corner taken. Ask again shortly rather than sitting out the full
+      // wait, which is meant for a bot that has actually painted something.
+      this.muralBlockedUntil = ctx.elapsed + muralConfig.retrySeconds * 0.5;
       return false;
     }
 
@@ -513,7 +641,7 @@ export class Bot {
     // who never arrive and nobody else allowed to try.
     if (!walkable || !path || !this.canSeeBoard(ctx, walkable, board, slot)) {
       board.releaseSlot(this.id);
-      this.muralBlockedUntil = ctx.elapsed + muralConfig.cooldownSeconds;
+      this.muralBlockedUntil = ctx.elapsed + muralConfig.retrySeconds;
       return false;
     }
     this.muralStance.copy(walkable);
@@ -521,6 +649,7 @@ export class Bot {
     this.muralSlot = slot;
     this.muralDots = this.layOutDrawing(board, slot, ctx.rng);
     this.muralIndex = 0;
+    this.muralPaused = false;
     this.state = 'muralist';
     this.stateTimer = muralConfig.timeoutSeconds;
     this.setPath(path);
@@ -562,9 +691,14 @@ export class Bot {
       2 * paintConfig.baseSplatRadius * TYPICAL_SPLAT_SCALE * paintConfig.screenSplatScale;
     const spacing = diameter * muralConfig.dotSpacing;
 
+    // Only what still reads in a box this size. The slots are corners now, and
+    // the dense half of the catalogue closes up into a disc at 2.6m — see
+    // `MuralDesign.minBox`.
+    const box = Math.min(slot.widthMetres, slot.heightMetres);
     const initial = displayName(this.id).charAt(0);
     const signature = rng.bool(muralConfig.letterChance) ? letterDesign(initial) : null;
-    const design = signature ?? rng.pick(MURAL_DESIGNS);
+    const design =
+      signature && signature.minBox <= box ? signature : rng.pick(designsForBox(box));
     this.muralName = design.name;
 
     const unit = dotsFor(
@@ -708,6 +842,50 @@ export class Bot {
     return true;
   }
 
+  /**
+   * Goes back to a drawing that was broken off, if the corner is still ours.
+   *
+   * Re-claiming is how the lease is checked: `claimSlot` hands a holder its own
+   * slot back, so a different index means the board was wiped at a whistle and
+   * this picture no longer exists.
+   */
+  private resumeMural(ctx: GameContext, nav: NavGrid): boolean {
+    const board = this.board;
+    const held = this.muralSlot;
+    if (!board || !held) return false;
+
+    const slot = board.claimSlot(this.id);
+    const path = slot ? nav.findPath(this.position, this.muralStance) : null;
+    if (!slot || slot.index !== held.index || !path) {
+      this.abandonMural();
+      this.muralBlockedUntil = ctx.elapsed + muralConfig.retrySeconds;
+      return false;
+    }
+
+    this.muralPaused = false;
+    this.state = 'muralist';
+    // A fresh backstop for the resumed leg. `timeoutSeconds` is a guard against
+    // a painter that cannot reach or finish, not a budget for the whole errand.
+    this.stateTimer = muralConfig.timeoutSeconds;
+    this.setPath(path);
+    return true;
+  }
+
+  /**
+   * Stops painting but keeps the picture: the slot, the marks and how far
+   * through them this bot got, for `mural.resumeSeconds`.
+   *
+   * The half of `abandonMural` that is nearly always the right one. A drawing
+   * interrupted at mark nine is nine marks of a heart on the board and a bot
+   * that knows which nine; throwing that away is how the old design turned
+   * every sighting into a wasted trip and a 45-second cooldown.
+   */
+  private pauseMural(): void {
+    if (!this.muralSlot) return;
+    this.muralPaused = true;
+    this.muralResumeBy = this.now + muralConfig.resumeSeconds;
+  }
+
   /** Drops the drawing and hands the slot back. Safe to call at any time. */
   private abandonMural(): void {
     if (this.muralSlot) this.board?.releaseSlot(this.id);
@@ -715,6 +893,8 @@ export class Bot {
     this.muralName = null;
     this.muralDots = [];
     this.muralIndex = 0;
+    this.muralPaused = false;
+    this.muralResumeBy = -Infinity;
   }
 
   /** How far through its drawing a painter is, 0..1. For the suite. */
@@ -737,6 +917,16 @@ export class Bot {
     return this.muralSlot?.index ?? null;
   }
 
+  /** Whether it is holding a broken-off drawing to come back to. For the suite. */
+  get muralOnHold(): boolean {
+    return this.muralPaused;
+  }
+
+  /** How many drawings it has carried to the last mark. For the suite. */
+  get muralsPainted(): number {
+    return this.muralsFinished;
+  }
+
   /**
    * Where the marks of the current drawing go, in world space.
    *
@@ -749,11 +939,61 @@ export class Bot {
   }
 
   private enterWander(nav: NavGrid, rng: Rng): void {
-    this.abandonMural();
+    // A paused drawing survives wandering — that is what makes it a pause. Its
+    // lease is collected in `decide` when `resumeSeconds` runs out, not here.
+    if (!this.muralPaused) this.abandonMural();
     this.state = 'wander';
     this.stateTimer = 12;
-    const destination = nav.randomWalkablePoint(rng);
+    const destination = this.wanderTarget(nav, rng);
     this.setPath(destination ? nav.findPath(this.position, destination) : null);
+  }
+
+  /**
+   * Where a bot goes when it has nothing else to do.
+   *
+   * A random walkable cell for most of the roster, and the painting wall for a
+   * designated painter — which is what turns the errand from a coincidence into
+   * a plan, and it is the second half of dropping `noticeRange`. Removing the
+   * range gate let a painter *consider* a board eighty metres away; this is what
+   * gets it there.
+   *
+   * Both special cases exist because the walk was measured and it is the whole
+   * difficulty. A painter breaks off whenever somebody comes within
+   * `breakOffRange`, and in a six-bot park that is often: the couple of seconds
+   * of quiet between one fight and the next used to be spent walking to a random
+   * cell, so a bot fifty metres out would approach for three seconds, wander
+   * away for four, and hover at the same distance for the whole round. Aiming
+   * every quiet moment at the same place is what makes them add up.
+   *
+   * Not a beeline — the destination is a walkable cell near the board with a
+   * bot's worth of scatter on it, so two painters converging do not stack up on
+   * the same square metre, and a painter crossing the park still reads as a bot
+   * going somewhere rather than one on rails.
+   */
+  private wanderTarget(nav: NavGrid, rng: Rng): Vector3 | null {
+    // Holding a picture? Then the errand is still the destination.
+    if (this.muralPaused && this.muralSlot) return this.muralStance;
+
+    const board = this.board;
+    if (
+      board &&
+      this.isPainter &&
+      !this.match.sandbox &&
+      this.now >= this.muralBlockedUntil &&
+      ammoOf(this.match, this.id) >= muralConfig.minAmmo
+    ) {
+      const spread = muralConfig.standoffMax + 6;
+      this.desired
+        .copy(board.normal)
+        .applyAxisAngle(UP, rng.spread(muralConfig.offAxisDeg * DEG2RAD * 2))
+        .multiplyScalar(rng.range(muralConfig.standoffMin, spread))
+        .add(board.centre)
+        .setY(0);
+      const near = nav.nearestWalkable(this.desired.x, this.desired.z, 5);
+      if (near) return near;
+    }
+
+    return nav.randomWalkablePoint(rng);
   }
 
   private setPath(path: Vector3[] | null): void {
@@ -907,18 +1147,21 @@ export class Bot {
       z: this.position.z,
     });
 
-    // Face the target when fighting, the board when painting, otherwise face
-    // where we're going. The board case matters more than it looks: the muzzle
-    // is solved from the body's yaw, so a painter facing anywhere else is
-    // shooting at the wall out of the corner of its eye.
+    // Face the board when painting, the target when fighting, otherwise face
+    // where we're going. The board case matters more than it looks and it wins
+    // over the target: the muzzle is solved from the body's yaw, so a painter
+    // facing anywhere else is shooting at the wall out of the corner of its
+    // eye. It used to come second, which was harmless only because any target
+    // at all ended the drawing — now a painter carries on through a distant
+    // sighting, and turning to look at it would bend the picture.
     const board = this.state === 'muralist' ? this.board : null;
-    const facing = this.target
-      ? Math.atan2(
-          -(this.target.position.x - this.position.x),
-          -(this.target.position.z - this.position.z),
-        )
-      : board
-        ? Math.atan2(-(board.centre.x - this.position.x), -(board.centre.z - this.position.z))
+    const facing = board
+      ? Math.atan2(-(board.centre.x - this.position.x), -(board.centre.z - this.position.z))
+      : this.target
+        ? Math.atan2(
+            -(this.target.position.x - this.position.x),
+            -(this.target.position.z - this.position.z),
+          )
         : Math.hypot(this.velocity.x, this.velocity.z) > 0.2
           ? Math.atan2(-this.velocity.x, -this.velocity.z)
           : this.yaw;

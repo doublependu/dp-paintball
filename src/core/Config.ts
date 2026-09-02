@@ -338,18 +338,40 @@ export const paint = {
 /**
  * Bots painting the board.
  *
- * A bot with paint to spare, nobody to shoot at and a wall in front of it goes
- * and draws something. The numbers here are all about keeping that a moment
- * rather than a mode: it takes a fifth of a load, it happens to at most two
- * bots at a time, it is abandoned the instant anything else happens, and a bot
- * that has just finished one will not start another for the best part of a
- * minute.
+ * A designated painter with paint to spare and nobody to shoot at walks to the
+ * board and draws something in a corner of it. The numbers here are all about
+ * making that a *side quest* rather than either a mode or a coincidence.
+ *
+ * It used to be neither. Every bot was eligible, on a gate that needed no
+ * target, three seconds of quiet, eighty rounds, no cooldown and sixty metres
+ * to the board simultaneously — and the median bot spent the round 80m away. A
+ * measured 300-second match produced three splats on the board: two bots
+ * started, neither got past the walk-in, and four never entered the state at
+ * all. Every clause below that changed, changed because of that measurement.
  */
 export const mural = {
-  /** A bot needs this much paint before art is a reasonable use of it. */
-  minAmmo: 80,
-  /** How far away it can be and still think of going. */
-  noticeRange: 60,
+  /**
+   * How many bots are designated as painters at the whistle, inclusive.
+   *
+   * The prompt asked for one to three, and the reason it is a roll at the
+   * whistle rather than a gate every bot re-asks is that a plan produces
+   * different behaviour from a coincidence: a designated painter will cross the
+   * whole park for the errand, which is what makes it visible.
+   *
+   * The colours come free. Every bot carries its own index into `paintColors`,
+   * so three painters are three colours on the board with no further work.
+   */
+  minPainters: 1,
+  maxPainters: 3,
+  /**
+   * A bot needs this much paint before art is a reasonable use of it.
+   *
+   * Halved from 80 with `maxDots`, since a corner drawing costs a quarter of
+   * what a half-board one did. Not lower: a bot that spends its last rounds on
+   * a heart and then walks the park looking for a crate has made the round
+   * worse, which is what the restock clause in `wantsToPaint` is there for.
+   */
+  minAmmo: 40,
   /** Seconds of nobody in sight before a bot's mind wanders to the wall. */
   quietSeconds: 3,
   /** Where it stands to paint, in metres out from the board. */
@@ -363,23 +385,61 @@ export const mural = {
    * An order of magnitude tighter than a bot's fighting aim, which is 4.5 to 12
    * degrees and would put a metre-and-a-half group on the board at this range.
    * Not zero: a perfectly rasterised drawing looks printed, and this game is
-   * drawn by hand everywhere else.
+   * drawn by hand everywhere else. It matters more at a corner's size than it
+   * did at twice it — the same cone, over a box a third the width.
    */
   aimErrorDeg: 0.4,
   /** Seconds between marks. Slower than a fight — this is deliberate work. */
   fireInterval: 0.32,
   /** Give up on a drawing after this long, wherever it got to. */
   timeoutSeconds: 45,
-  /** And do not start another for this long afterwards. */
+  /**
+   * Having finished one, do not start another for this long.
+   *
+   * The cooldown exists so that one painter does not fill the board with its
+   * own work while everyone else fights — which is a reason about *finished*
+   * drawings, and only about those.
+   */
   cooldownSeconds: 45,
+  /**
+   * And having failed to finish one — timed out, or held a lease past
+   * `resumeSeconds` — wait only this long before trying again.
+   *
+   * The same 45 seconds used to apply to both, and against a round where a
+   * painter gets a handful of quiet windows it was most of the reason nothing
+   * ever appeared: a bot that painted nothing has monopolised nothing, and
+   * making it sit out three quarters of a minute for having been shot at spends
+   * the round's remaining chances on a punishment for bad luck.
+   */
+  retrySeconds: 12,
+  /**
+   * A target this close breaks a painter off. Further away, it keeps painting.
+   *
+   * The old rule was any target at all, and it is the single most expensive
+   * line in the old design: a painter would walk twenty seconds to the board,
+   * catch sight of somebody through the trees at fifty metres, and throw away
+   * the errand and three quarters of a minute of cooldown with it. Two entries
+   * in the measured round averaged four seconds each for exactly this.
+   */
+  breakOffRange: 26,
+  /**
+   * How long a broken-off drawing is held before the slot goes back.
+   *
+   * A bot that breaks off to fight and comes back to finish its heart is the
+   * side quest the prompt describes. A bot that restarts from nothing and then
+   * sits out `cooldownSeconds` is what the measurement found.
+   */
+  resumeSeconds: 30,
   /**
    * Marks per drawing. A budget: see `dotsFor`.
    *
-   * Fifty-six at `fireInterval` is eighteen seconds of standing still, plus the
-   * walk in. That is most of `timeoutSeconds` and it is meant to be: a drawing
-   * should be a thing a bot commits to and can be interrupted in the middle of.
+   * Twenty-six at `fireInterval` is eight seconds of standing still, which is
+   * what the corner designs come to at that box size anyway (11 to 25 marks).
+   * The old 56 was eighteen seconds plus a walk that could be twenty more, and
+   * against the measured quiet runs — 11 to 97 seconds, one bot in six with a
+   * gap that long — it only ever fitted one bot's afternoon.
    */
-  maxDots: 56,
+  maxDots: 26,
   /**
    * Spacing between marks, as a fraction of a splat's diameter.
    *
@@ -388,8 +448,14 @@ export const mural = {
    * a drawing that costs eighty rounds is a bot that has stopped playing.
    */
   dotSpacing: 0.7,
-  /** Odds that a painter signs with its own initial instead of drawing. */
-  letterChance: 0.22,
+  /**
+   * Odds that a painter signs with its own initial instead of drawing.
+   *
+   * Up from 0.22 with the move to corners. An initial in the corner of a mural
+   * is exactly the thing the prompt describes, and a letter is the sparsest
+   * mark in the catalogue at that size — see `letterDesign`.
+   */
+  letterChance: 0.35,
 } as const;
 
 /**

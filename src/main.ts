@@ -1,6 +1,8 @@
 import './style.css';
 import { Vector3 } from 'three';
-import { MURAL_DESIGNS, dotsFor, letterDesign } from './ai/MuralDesigns';
+import { MURAL_DESIGNS, designsForBox, dotsFor, letterDesign } from './ai/MuralDesigns';
+import { DEDICATION_SIGN, PLACE_SIGNS, signBlocks } from './world/PlaceSigns';
+import { ARCADE, PLAZA, TERRACE, heightAt, lakeMask, walkMask } from './world/ParkLayout';
 import { CharacterRegistry } from './character/CharacterRegistry';
 import { CharactersSystem, type BotSpec } from './character/CharactersSystem';
 import { AudioSystem } from './audio/AudioSystem';
@@ -23,7 +25,7 @@ import { PauseSystem } from './ui/PauseSystem';
 import { PosterCapture } from './ui/PosterCapture';
 import { ResultsSystem } from './ui/ResultsSystem';
 import { TouchControlsSystem } from './ui/TouchControls';
-import { PaintScreen } from './world/PaintScreen';
+import { PaintScreen, screenBlocks } from './world/PaintScreen';
 import { ParkArenaSystem } from './world/ParkArena';
 import { TestCourseSystem } from './world/TestCourse';
 
@@ -95,11 +97,18 @@ const match = createMatchState(
   { sandbox: useTestCourse },
 );
 const loot = createLootState();
-// A different hiding place every game, so this cannot come from WORLD_SEED.
-// `?seed=` pins it, which is what makes a crate reproducible when something
-// about one needs reproducing.
+/**
+ * What varies between games rather than between parks.
+ *
+ * `WORLD_SEED` builds the same Central Park every time, which is the point of
+ * it — but the crate's hiding place and which bots are this round's muralists
+ * are not facts about the park, and drawing them from it would mean the same
+ * crate in the same corner and the same bot at the wall in every game anybody
+ * ever plays. `?seed=` pins both, which is what makes either reproducible when
+ * something about one needs reproducing.
+ */
 const seedParam = new URLSearchParams(location.search).get('seed');
-const lootSeed = seedParam !== null ? Number(seedParam) >>> 0 : Date.now() >>> 0;
+const gameSeed = seedParam !== null ? Number(seedParam) >>> 0 : Date.now() >>> 0;
 
 // Built after the match, whose roster needs the bot list and whose phase the
 // controller reads — a player does not drive once the round is over.
@@ -113,10 +122,11 @@ const charactersSystem = new CharactersSystem(
   loot,
   useTestCourse ? null : paintScreen,
   bots,
+  gameSeed,
   // Only used to put the player back at their spawn when a round restarts.
   player,
 );
-const lootSystem = new LootSystem(match, loot, playerState, charactersSystem, lootSeed);
+const lootSystem = new LootSystem(match, loot, playerState, charactersSystem, gameSeed);
 const matchSystem = new MatchSystem(match, charactersSystem, ballistics, loot, lootSystem);
 const audio = new AudioSystem(playerState);
 const hud = new HudSystem(container, charactersSystem, splatAtlas, match, loot, playerState);
@@ -214,8 +224,30 @@ declare global {
       /** The bots' drawing catalogue, so the suite can check it directly. */
       mural: {
         designs: typeof MURAL_DESIGNS;
+        designsForBox: typeof designsForBox;
         dotsFor: typeof dotsFor;
         letterDesign: typeof letterDesign;
+      };
+      /**
+       * The park's signs and the masks it was laid out from.
+       *
+       * The sign table is data and the suite drives its checks off it, so a
+       * marker that moves takes its own tests with it rather than leaving a
+       * stale coordinate behind in `arena-test`.
+       */
+      signs: {
+        places: typeof PLACE_SIGNS;
+        dedication: typeof DEDICATION_SIGN;
+        blocks: typeof signBlocks;
+      };
+      layout: {
+        heightAt: typeof heightAt;
+        walkMask: typeof walkMask;
+        lakeMask: typeof lakeMask;
+        screenBlocks: typeof screenBlocks;
+        PLAZA: typeof PLAZA;
+        TERRACE: typeof TERRACE;
+        ARCADE: typeof ARCADE;
       };
     };
   }
@@ -259,8 +291,26 @@ window.__paintball = {
   stepSim: (seconds) => game.stepSim(seconds),
   bootTimings: () => game.bootTimings,
   impacts,
-  mural: { designs: MURAL_DESIGNS, dotsFor, letterDesign },
+  mural: { designs: MURAL_DESIGNS, designsForBox, dotsFor, letterDesign },
+  signs: { places: PLACE_SIGNS, dedication: DEDICATION_SIGN, blocks: signBlocks },
+  layout: { heightAt, walkMask, lakeMask, screenBlocks, PLAZA, TERRACE, ARCADE },
 };
+
+/**
+ * `?manual` hands the simulation clock to `stepSim` from the very first frame.
+ *
+ * The headless suites all claim manual mode by evaluating `setManualSim(true)`
+ * as soon as `window.__paintball` exists, and that is a race they lose every so
+ * often: the loop can get five or six real frames in first, and a run that
+ * starts a tenth of a second into the round is a different round. It went
+ * unnoticed while every case teleported the world into the state it wanted
+ * anyway; the natural-round case in `mural-test` is the first that reads the
+ * park as it plays, and it needs the same park every time.
+ *
+ * Set here rather than after boot because that is the whole point — nothing has
+ * stepped yet.
+ */
+if (new URLSearchParams(location.search).has('manual')) game.setManualSim(true);
 
 game.events.on('load:progress', ({ phase, progress }) => {
   if (loaderBar) loaderBar.style.width = `${Math.round(progress * 100)}%`;

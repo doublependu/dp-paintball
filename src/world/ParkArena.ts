@@ -6,7 +6,6 @@ import {
   Group,
   HemisphereLight,
   InstancedMesh,
-  type Material,
   Matrix4,
   Mesh,
   Object3D,
@@ -20,7 +19,6 @@ import type { GameContext, System } from '../core/System';
 import type { SurfaceRegistry } from '../paint/SurfaceRegistry';
 import { createCelMaterial } from '../render/CelMaterial';
 import { NO_OUTLINE_LAYER } from '../render/NprPipeline';
-import { PLAQUE_ASPECT, createSignPlaqueTexture } from '../render/SignPlaque';
 import { shadowMapSize } from '../render/Renderer';
 import { Sky } from '../render/Sky';
 import { Birds } from './Birds';
@@ -28,13 +26,13 @@ import { Cityscape } from './Cityscape';
 import { Foliage, type TreeSpec } from './Foliage';
 import { Fountain } from './Fountain';
 import { PaintScreen, screenBlocks } from './PaintScreen';
+import { buildSigns, signBlocks } from './PlaceSigns';
 import {
   ARCADE,
   BRIDGE,
   BRIDGE_APPROACH_Y,
   ISLAND,
   PARK_HALF,
-  PLAZA,
   TERRACE,
   heightAt,
   lakeMask,
@@ -134,29 +132,6 @@ const BRIDGE_RAMPS = [
 ] as const;
 /** Ramp width, matching the bridge deck between its parapets. */
 const BRIDGE_RAMP_WIDTH = 4.6;
-
-/**
- * The dedication sign.
- *
- * On the plaza paving at its south-east rim, facing the fountain: the plaza is
- * where the round starts and where the sightlines cross, so a sign here is one
- * anyone will walk past, and standing off the axis between the spawn and the
- * fountain keeps it out of the opening shot of the map.
- *
- * The board is sized from the plaque's own proportions rather than by eye, so
- * the lettering is never stretched — see SignPlaque.
- */
-const SIGN = {
-  // Kept a few metres clear of the undercroft wall: the terrace throws a shadow
-  // three metres out onto the paving all afternoon, and a lettered board read
-  // in that band is a dark green rectangle.
-  x: 10.5,
-  z: 9.0,
-  boardWidth: 2.4,
-  postColor: 0x6d5a41,
-  /** Matches the plaque's painted ground, so the lit board reads as one thing. */
-  boardColor: 0x2c4636,
-};
 
 interface Placement {
   position: Vector3;
@@ -677,8 +652,9 @@ export class ParkArenaSystem implements System {
     if (Math.abs(x) > stairs.from - 1 && Math.abs(x) < stairs.to + 1 && z > 7 && z < ARCADE.z) {
       return false;
     }
-    // Not on the sign, which is its own three colliders on the paving.
-    if (Math.hypot(x - SIGN.x, z - SIGN.z) < 2.2) return false;
+    // Not on a sign. Each is its own three colliders standing on the ground,
+    // and there are eleven of them now rather than the one this used to know.
+    if (signBlocks(x, z, 1.0)) return false;
     // Not against the paint screen. This kept the plaza's bench ring off its
     // ends when it stood there; on the meadow it keeps a lamp post from
     // standing in front of the canvas and casting a bar across it.
@@ -737,81 +713,8 @@ export class ParkArenaSystem implements System {
     void rng;
     this.placeInstanced(ctx, 'park_bench', benches, 0x7d6a4f);
     this.placeInstanced(ctx, 'lamp_post', lamps, 0x3c3b46);
-    this.placeSign(ctx);
-  }
-
-  /**
-   * The park's dedication sign: a lettered board on two posts.
-   *
-   * Built from boxes here rather than added to the Blender prop set, because
-   * the only thing that makes it a sign is the plaque texture, and that is
-   * generated (SignPlaque). A modelled board would be the same three boxes with
-   * a download attached.
-   *
-   * Both posts and board are ordinary colliders registered for paint, so the
-   * sign stops a paintball, blocks a bot, and takes a splat like anything else
-   * in the park — being the credits doesn't make it scenery.
-   */
-  private placeSign(ctx: GameContext): void {
-    const base = new Vector3(SIGN.x, heightAt(SIGN.x, SIGN.z), SIGN.z);
-    // Turned to face the fountain, which is what anyone standing in front of
-    // the sign is looking past it at.
-    const rotationY = Math.atan2(PLAZA.x - SIGN.x, PLAZA.z - SIGN.z);
-    const quaternion = new Quaternion().setFromAxisAngle(UP, rotationY);
-
-    const plaque = createSignPlaqueTexture();
-    const boardMaterial = createCelMaterial({ color: SIGN.boardColor });
-    const postMaterial = createCelMaterial({ color: SIGN.postColor });
-    // White base colour: the plaque already carries every colour on the board,
-    // and toon shading multiplies the two.
-    const faceMaterial = createCelMaterial({ color: 0xffffff });
-    faceMaterial.map = plaque;
-    this.disposables.push(plaque, boardMaterial, postMaterial, faceMaterial);
-
-    const place = (
-      size: Vector3,
-      local: Vector3,
-      material: Material | Material[],
-    ): void => {
-      const geometry = new BoxGeometry(size.x, size.y, size.z);
-      const mesh = new Mesh(geometry, material);
-      mesh.position.copy(local).applyAxisAngle(UP, rotationY).add(base);
-      mesh.rotation.y = rotationY;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      this.group.add(mesh);
-      this.disposables.push(geometry);
-
-      const collider = ctx.physics.createStaticBox(
-        mesh.position,
-        { x: size.x / 2, y: size.y / 2, z: size.z / 2 },
-        quaternion,
-      );
-      this.surfaces.registerMesh(collider.handle, mesh);
-    };
-
-    const boardHeight = SIGN.boardWidth / PLAQUE_ASPECT;
-    // Board top at 2.22m: above head height, so it reads over a crowd, and low
-    // enough that the small print is legible from in front of it.
-    const boardY = 2.22 - boardHeight / 2;
-
-    // Posts run past the board top and 0.2m into the ground, so neither end
-    // floats when the paving isn't perfectly level.
-    for (const side of [-1, 1]) {
-      place(
-        new Vector3(0.14, 2.5, 0.14),
-        new Vector3(side * (SIGN.boardWidth / 2 - 0.3), 1.05, -0.09),
-        postMaterial,
-      );
-    }
-
-    // BoxGeometry groups run +X, -X, +Y, -Y, +Z, -Z. Only the +Z face is
-    // lettered; the rest is painted board.
-    place(
-      new Vector3(SIGN.boardWidth, boardHeight, 0.12),
-      new Vector3(0, boardY, 0),
-      [boardMaterial, boardMaterial, boardMaterial, boardMaterial, faceMaterial, boardMaterial],
-    );
+    // The dedication plaque and the ten place markers. See `PlaceSigns`.
+    buildSigns(ctx, this.surfaces, this.group, this.disposables);
   }
 
   // --- trees ---------------------------------------------------------------
@@ -839,6 +742,9 @@ export class ParkArenaSystem implements System {
     // metres of the board's width, which is exactly where a tree would grow out
     // of the canvas. The margin also keeps a canopy from leaning over the face.
     if (screenBlocks(x, z, 3)) return false;
+    // Nor through a sign. The margin is wider than the furniture's because a
+    // canopy leans: a trunk two metres off is a crown over the lettering.
+    if (signBlocks(x, z, 1.2)) return false;
     return true;
   }
 

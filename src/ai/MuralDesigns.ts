@@ -28,6 +28,21 @@ export interface Stroke {
 export interface MuralDesign {
   name: string;
   strokes: Stroke[];
+  /**
+   * The smallest box side, in metres, this design still reads at.
+   *
+   * A legibility floor rather than a preference. Every stroke is drawn in 54cm
+   * blobs whatever the box is, so shrinking the box does not shrink the marks —
+   * it closes the gaps between them, and past some point the drawing is a lumpy
+   * disc. Measured as the fraction of the drawing's own bounding area that ends
+   * up inked: the shipped catalogue spans 30-56% at the 4.6m slot the bots used
+   * to get, so 57% is a fill already accepted as readable, and each floor here
+   * is the smallest box at which that design stays under it.
+   *
+   * `designsForBox` is what reads it. Declared per design rather than kept as a
+   * second list of names, so a new drawing states its own floor next to itself.
+   */
+  minBox: number;
 }
 
 // --- little builders ---------------------------------------------------------
@@ -67,6 +82,7 @@ function polygon(...points: Array<readonly [number, number]>): Stroke {
 
 const SUN: MuralDesign = {
   name: 'sun',
+  minBox: 2.6,
   strokes: [
     circle(0.5, 0.5, 0.23, 18),
     ...Array.from({ length: 8 }, (_, i) => {
@@ -87,6 +103,7 @@ const SUN: MuralDesign = {
  */
 const HEART: MuralDesign = {
   name: 'heart',
+  minBox: 2.2,
   strokes: [
     {
       points: Array.from({ length: 26 }, (_, i) => {
@@ -103,6 +120,7 @@ const HEART: MuralDesign = {
 
 const SMILEY: MuralDesign = {
   name: 'smiley',
+  minBox: 2.6,
   strokes: [
     circle(0.5, 0.5, 0.45, 26),
     dot(0.34, 0.37),
@@ -121,6 +139,7 @@ const SMILEY: MuralDesign = {
  */
 const CAT: MuralDesign = {
   name: 'cat',
+  minBox: 3.4,
   strokes: [
     circle(0.5, 0.62, 0.3, 20),
     // Open ears rising off the head, rather than triangles laid over it.
@@ -138,6 +157,7 @@ const CAT: MuralDesign = {
 
 const TREE: MuralDesign = {
   name: 'tree',
+  minBox: 4.0,
   strokes: [
     line([0.5, 0.98], [0.5, 0.78]),
     line([0.28, 0.78], [0.5, 0.5], [0.72, 0.78], [0.28, 0.78]),
@@ -148,6 +168,7 @@ const TREE: MuralDesign = {
 
 const HOUSE: MuralDesign = {
   name: 'house',
+  minBox: 4.0,
   strokes: [
     polygon([0.22, 0.96], [0.22, 0.52], [0.78, 0.52], [0.78, 0.96]),
     line([0.12, 0.52], [0.5, 0.14], [0.88, 0.52]),
@@ -157,6 +178,7 @@ const HOUSE: MuralDesign = {
 
 const FISH: MuralDesign = {
   name: 'fish',
+  minBox: 4.5,
   strokes: [
     {
       points: Array.from({ length: 20 }, (_, i) => {
@@ -178,6 +200,7 @@ const FISH: MuralDesign = {
  */
 const FLOWER: MuralDesign = {
   name: 'flower',
+  minBox: 3.4,
   strokes: [
     ...Array.from({ length: 5 }, (_, i) => {
       const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
@@ -191,6 +214,7 @@ const FLOWER: MuralDesign = {
 
 const GULL: MuralDesign = {
   name: 'gulls',
+  minBox: 2.0,
   strokes: [
     line([0.06, 0.42], [0.24, 0.24], [0.42, 0.42]),
     line([0.42, 0.42], [0.6, 0.24], [0.78, 0.42]),
@@ -200,6 +224,7 @@ const GULL: MuralDesign = {
 
 const BALLOON: MuralDesign = {
   name: 'balloon',
+  minBox: 2.2,
   strokes: [
     circle(0.5, 0.32, 0.27, 18),
     polygon([0.46, 0.59], [0.54, 0.59], [0.5, 0.66]),
@@ -209,6 +234,7 @@ const BALLOON: MuralDesign = {
 
 const MUSHROOM: MuralDesign = {
   name: 'mushroom',
+  minBox: 3.0,
   strokes: [
     arc(0.5, 0.56, 0.42, Math.PI, Math.PI * 2, 14),
     line([0.08, 0.56], [0.92, 0.56]),
@@ -220,6 +246,7 @@ const MUSHROOM: MuralDesign = {
 
 const CLOUD: MuralDesign = {
   name: 'cloud',
+  minBox: 3.4,
   strokes: [
     arc(0.32, 0.5, 0.2, Math.PI, Math.PI * 2, 8),
     arc(0.52, 0.42, 0.26, Math.PI * 1.05, Math.PI * 2, 10),
@@ -254,29 +281,94 @@ export const MURAL_DESIGNS: readonly MuralDesign[] = [
  * Only the letters this game's roster actually starts with. A general font is
  * not the job — `letterDesign` falls back to a picture for anything missing,
  * which is also what happens for the player's own "you".
+ *
+ * Each glyph carries its own `minBox`, measured the same way the pictures' are.
+ * They are not interchangeable: an open C is the sparsest mark in the whole
+ * catalogue and reads in two metres, while a B is two closed bowls against an
+ * upright and closes into a blob well before a corner's size.
  */
-const LETTERS: Record<string, Stroke[]> = {
-  A: [line([0.16, 0.96], [0.5, 0.08], [0.84, 0.96]), line([0.29, 0.6], [0.71, 0.6])],
-  B: [
-    line([0.24, 0.96], [0.24, 0.08], [0.62, 0.08]),
-    arc(0.62, 0.3, 0.22, -Math.PI / 2, Math.PI / 2, 7),
-    line([0.62, 0.52], [0.24, 0.52]),
-    arc(0.6, 0.74, 0.22, -Math.PI / 2, Math.PI / 2, 7),
-    line([0.6, 0.96], [0.24, 0.96]),
-  ],
-  C: [arc(0.52, 0.52, 0.4, Math.PI * 0.3, Math.PI * 1.7, 14)],
-  D: [line([0.26, 0.96], [0.26, 0.08], [0.5, 0.08]), arc(0.5, 0.52, 0.44, -Math.PI / 2, Math.PI / 2, 12), line([0.5, 0.96], [0.26, 0.96])],
-  E: [line([0.76, 0.08], [0.26, 0.08], [0.26, 0.96], [0.76, 0.96]), line([0.26, 0.52], [0.66, 0.52])],
-  F: [line([0.76, 0.08], [0.26, 0.08], [0.26, 0.96]), line([0.26, 0.5], [0.66, 0.5])],
-  G: [arc(0.52, 0.52, 0.4, Math.PI * 0.3, Math.PI * 1.7, 14), line([0.52, 0.52], [0.92, 0.52])],
-  H: [line([0.24, 0.08], [0.24, 0.96]), line([0.76, 0.08], [0.76, 0.96]), line([0.24, 0.52], [0.76, 0.52])],
+const LETTERS: Record<string, { minBox: number; strokes: Stroke[] }> = {
+  A: {
+    minBox: 2.0,
+    strokes: [line([0.16, 0.96], [0.5, 0.08], [0.84, 0.96]), line([0.29, 0.6], [0.71, 0.6])],
+  },
+  B: {
+    minBox: 3.6,
+    strokes: [
+      line([0.24, 0.96], [0.24, 0.08], [0.62, 0.08]),
+      arc(0.62, 0.3, 0.22, -Math.PI / 2, Math.PI / 2, 7),
+      line([0.62, 0.52], [0.24, 0.52]),
+      arc(0.6, 0.74, 0.22, -Math.PI / 2, Math.PI / 2, 7),
+      line([0.6, 0.96], [0.24, 0.96]),
+    ],
+  },
+  C: { minBox: 2.0, strokes: [arc(0.52, 0.52, 0.4, Math.PI * 0.3, Math.PI * 1.7, 14)] },
+  D: {
+    minBox: 2.4,
+    strokes: [
+      line([0.26, 0.96], [0.26, 0.08], [0.5, 0.08]),
+      arc(0.5, 0.52, 0.44, -Math.PI / 2, Math.PI / 2, 12),
+      line([0.5, 0.96], [0.26, 0.96]),
+    ],
+  },
+  E: {
+    minBox: 2.6,
+    strokes: [
+      line([0.76, 0.08], [0.26, 0.08], [0.26, 0.96], [0.76, 0.96]),
+      line([0.26, 0.52], [0.66, 0.52]),
+    ],
+  },
+  F: {
+    minBox: 2.0,
+    strokes: [line([0.76, 0.08], [0.26, 0.08], [0.26, 0.96]), line([0.26, 0.5], [0.66, 0.5])],
+  },
+  G: {
+    minBox: 2.2,
+    strokes: [
+      arc(0.52, 0.52, 0.4, Math.PI * 0.3, Math.PI * 1.7, 14),
+      line([0.52, 0.52], [0.92, 0.52]),
+    ],
+  },
+  H: {
+    minBox: 3.0,
+    strokes: [
+      line([0.24, 0.08], [0.24, 0.96]),
+      line([0.76, 0.08], [0.76, 0.96]),
+      line([0.24, 0.52], [0.76, 0.52]),
+    ],
+  },
 };
 
-/** The painter's initial as a design, or null when there is no glyph for it. */
+/**
+ * The painter's initial as a design, or null when there is no glyph for it.
+ *
+ * An initial in the corner of a mural is the most sign-like thing a painter can
+ * leave, which is why `mural.letterChance` went up when the slots shrank — but
+ * the caller still has to check the glyph's own `minBox`, because a B does not
+ * survive a corner and a C sails through it.
+ */
 export function letterDesign(initial: string): MuralDesign | null {
-  const strokes = LETTERS[initial.toUpperCase()];
-  if (!strokes) return null;
-  return { name: `letter ${initial.toUpperCase()}`, strokes };
+  const glyph = LETTERS[initial.toUpperCase()];
+  if (!glyph) return null;
+  return {
+    name: `letter ${initial.toUpperCase()}`,
+    strokes: glyph.strokes,
+    minBox: glyph.minBox,
+  };
+}
+
+/**
+ * The designs that still read in a box this size, smallest side in metres.
+ *
+ * At the 2.6m corner the bots now get, this is six of the twelve: the dense
+ * half of the catalogue closes up into the lumpy disc the `CAT` and `FLOWER`
+ * comments describe from the last time this was got wrong. Falls back to the
+ * whole catalogue rather than to nothing, so a future slot smaller than every
+ * floor still gets a drawing instead of a crash.
+ */
+export function designsForBox(box: number): readonly MuralDesign[] {
+  const fits = MURAL_DESIGNS.filter((design) => design.minBox <= box + 1e-6);
+  return fits.length > 0 ? fits : MURAL_DESIGNS;
 }
 
 /**

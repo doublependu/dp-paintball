@@ -74,23 +74,30 @@ const CANVAS_WHITE = '#f7f4ec';
 const UPLOAD_INTERVAL = 1 / 20;
 
 /**
- * How the front is divided up between painters.
+ * How the front is divided up between painters: four corners, and nothing else.
  *
- * Two, side by side, and the number is a legibility budget rather than a
- * capacity one. A paintball lands as a blob about half a metre across, so a
- * drawing needs a good four metres of board to have a dozen blobs across it and
- * read as a sun rather than as a splatter. Three slots on an eleven-metre board
- * gives three and a half metres each, and everything drawn in one comes out as
- * the same lumpy circle.
+ * It used to be two full-height columns, 4.73m by 4.58m, which between them
+ * owned the whole picture. That was a legibility budget — a paintball lands as
+ * a blob half a metre across, so a drawing needs several metres to read as a
+ * sun rather than as a splatter — and it answered the wrong question. The board
+ * is the player's canvas. What the bots want is a corner of it.
  *
- * It also caps the painters, which is the other thing that wants capping: two
- * bots standing still in the open is a scene, and five is an art class.
+ * So: a 2.8 x 2.6m drawing box inset 0.45m from each edge of the canvas. Three
+ * painters at once is 21.8m² of the board's 68.1m², all of it at the rim, and
+ * the whole central band stays the player's. What survives at that size is a
+ * shorter list than the full catalogue, which is what `MuralDesign.minBox` is
+ * for.
+ *
+ * Four slots for at most three painters (`mural.maxPainters`) is deliberate: it
+ * keeps the least-recently-used hand-out in `claimSlot` meaningful, so a second
+ * round of drawings does not land on the first.
  */
-const SLOT_COLUMNS = 2;
-/** Fraction of the board's height a slot uses, centred. */
-const SLOT_HEIGHT_SHARE = 0.86;
-/** Fraction of a slot the drawing itself fills, leaving a margin around it. */
-const SLOT_INSET = 0.86;
+const SLOT_COUNT = 4;
+/** The drawing box itself, in metres. */
+const SLOT_BOX_WIDTH = 2.8;
+const SLOT_BOX_HEIGHT = 2.6;
+/** How far the box is held off the canvas edge, in metres. */
+const SLOT_INSET = 0.45;
 
 /** One painter's patch of the front, in uv. */
 export interface MuralSlot {
@@ -488,10 +495,10 @@ export class PaintScreen {
    */
   claimSlot(ownerId: string): MuralSlot | null {
     const held = this.claims.get(ownerId);
-    if (held !== undefined) return this.slot(held);
+    if (held !== undefined) return this.slotAt(held);
 
     let best = -1;
-    for (let index = 0; index < SLOT_COLUMNS; index++) {
+    for (let index = 0; index < SLOT_COUNT; index++) {
       let taken = false;
       for (const value of this.claims.values()) if (value === index) taken = true;
       if (taken) continue;
@@ -501,7 +508,7 @@ export class PaintScreen {
 
     this.claims.set(ownerId, best);
     this.slotUsed[best] = ++this.claimTick;
-    return this.slot(best);
+    return this.slotAt(best);
   }
 
   releaseSlot(ownerId: string): void {
@@ -513,17 +520,33 @@ export class PaintScreen {
     return this.claims.get(ownerId);
   }
 
-  private slot(index: number): MuralSlot {
-    const width = 1 / SLOT_COLUMNS;
+  /**
+   * One corner, by index: 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right.
+   *
+   * Public because the suite has to check that a drawing landed inside its own
+   * box and outside the band the player is being left, and asking the board
+   * where its boxes are beats restating the arithmetic in the test.
+   */
+  slotAt(index: number): MuralSlot {
+    const halfU = SLOT_BOX_WIDTH / 2 / BOARD_WIDTH;
+    const halfV = SLOT_BOX_HEIGHT / 2 / BOARD_HEIGHT;
+    // Centre of the box nearest each edge, in uv.
+    const nearU = (SLOT_INSET + SLOT_BOX_WIDTH / 2) / BOARD_WIDTH;
+    const nearV = (SLOT_INSET + SLOT_BOX_HEIGHT / 2) / BOARD_HEIGHT;
     return {
       index,
-      u: (index + 0.5) * width,
-      v: 0.5,
-      halfU: (width * SLOT_INSET) / 2,
-      halfV: (SLOT_HEIGHT_SHARE * SLOT_INSET) / 2,
-      widthMetres: BOARD_WIDTH * width * SLOT_INSET,
-      heightMetres: BOARD_HEIGHT * SLOT_HEIGHT_SHARE * SLOT_INSET,
+      u: index % 2 === 0 ? nearU : 1 - nearU,
+      v: index < 2 ? nearV : 1 - nearV,
+      halfU,
+      halfV,
+      widthMetres: SLOT_BOX_WIDTH,
+      heightMetres: SLOT_BOX_HEIGHT,
     };
+  }
+
+  /** How many corners there are to hand out. */
+  get slotCount(): number {
+    return SLOT_COUNT;
   }
 
   /**

@@ -10,7 +10,21 @@
 import { chromium } from 'playwright-core';
 import { existsSync } from 'node:fs';
 
-const url = process.argv[2] ?? 'http://localhost:4173/';
+/**
+ * Two query flags, and between them they are what makes a run repeatable.
+ *
+ * `manual` freezes the simulation clock before the first frame — see `main.ts`.
+ * Claiming it through `setManualSim` after the page loads is a race the loop
+ * sometimes wins, and a run that starts a tenth of a second into the round is a
+ * different round.
+ *
+ * `seed` pins the loot, which is seeded from the wall clock on purpose so that
+ * crates hide somewhere new every game. Left free, a round diverges the moment
+ * the first bot goes restocking — about two minutes in, which is exactly where
+ * the natural-round case below spends its time.
+ */
+const base = process.argv[2] ?? 'http://localhost:4173/';
+const url = base + (base.includes('?') ? '&' : '?') + 'manual&seed=1';
 const EXECUTABLE =
   process.env.CHROME_PATH ??
   ['/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find(existsSync);
@@ -213,6 +227,147 @@ await waitSim(1.4);
 const afterPaint = await page.evaluate(() => window.__paintball.paint.splatCount);
 check('paint sticks to arena geometry', afterPaint > beforePaint,
       `${beforePaint} -> ${afterPaint} splats`);
+
+// --- The place signs -------------------------------------------------------
+//
+// Driven off the exported table rather than off a copy of it, so a marker that
+// moves takes these checks with it instead of leaving a stale coordinate here.
+// The table was settled against the layout masks offline; what is checked here
+// is the live park, which is the only place the colliders and the navgrid
+// exist.
+const signs = await page.evaluate(() => {
+  const { signs, layout } = window.__paintball;
+  const all = [
+    { ...signs.dedication, half: 2.4 / 2 },
+    ...signs.places.map((s) => ({ ...s, half: 1.9 / 2 })),
+  ];
+  return all.map((sign) => {
+    // The real footprint, not a bounding square: the board is turned to face
+    // its subject, so its own axes are what the posts and the plank run along.
+    const yaw = Math.atan2(sign.faceX - sign.x, sign.faceZ - sign.z);
+    const along = [Math.cos(yaw), -Math.sin(yaw)];
+    const through = [Math.sin(yaw), Math.cos(yaw)];
+    const at = (a, b) => [
+      sign.x + along[0] * a + through[0] * b,
+      sign.z + along[1] * a + through[1] * b,
+    ];
+
+    let walk = 0;
+    let lake = 0;
+    for (const a of [-sign.half, 0, sign.half]) {
+      for (const b of [-0.25, 0.15]) {
+        const [x, z] = at(a, b);
+        walk = Math.max(walk, layout.walkMask(x, z));
+        lake = Math.max(lake, layout.lakeMask(x, z));
+      }
+    }
+    // Fall measured between the two post feet, which is what actually decides
+    // whether one of them floats.
+    const foot = sign.half - 0.3;
+    const left = layout.heightAt(...at(-foot, -0.09));
+    const right = layout.heightAt(...at(foot, -0.09));
+
+    const { PLAZA, TERRACE, ARCADE } = layout;
+    return {
+      name: sign.name,
+      x: sign.x,
+      z: sign.z,
+      walk,
+      lake,
+      fall: Math.abs(left - right),
+      fountain: Math.hypot(sign.x - PLAZA.x, sign.z - PLAZA.z) < 8.5,
+      terrace: Math.abs(sign.x) < TERRACE.halfWidth + 1.5 &&
+        sign.z > ARCADE.z - 2.5 && sign.z < TERRACE.southZ + 2,
+      screen: layout.screenBlocks(sign.x, sign.z, 3),
+    };
+  });
+});
+
+check('there is a sign for every named place', signs.length === 11,
+      signs.map((s) => s.name).join(', '));
+
+// A sign is a collider and the navgrid is built by querying physics, so one
+// overhanging a walk pinches the path every bot on that side of the park uses.
+// Hence 0.05 here where `canPlant` lets a tree have 0.15.
+const onWalk = signs.filter((s) => s.walk >= 0.05 || s.lake >= 0.05);
+check('no sign stands on a walk or in the water', onWalk.length === 0,
+      onWalk.map((s) => `${s.name} walk=${s.walk.toFixed(2)} lake=${s.lake.toFixed(2)}`).join('; ') ||
+      `${signs.length} footprints clear, worst walk ${Math.max(...signs.map((s) => s.walk)).toFixed(2)}`);
+
+const inProp = signs.filter((s) => s.fountain || s.terrace || s.screen);
+check('no sign stands inside something else', inProp.length === 0,
+      inProp.map((s) => s.name).join('; ') || 'clear of the basin, the terrace and the board');
+
+const steep = signs.filter((s) => s.fall > 0.25);
+check('every sign stands on ground flat enough for both posts',
+      steep.length === 0,
+      steep.map((s) => `${s.name} falls ${s.fall.toFixed(2)}m`).join('; ') ||
+      `worst fall between the posts ${Math.max(...signs.map((s) => s.fall)).toFixed(2)}m`);
+
+const crowded = [];
+for (let i = 0; i < signs.length; i++) {
+  for (let j = i + 1; j < signs.length; j++) {
+    const d = Math.hypot(signs[i].x - signs[j].x, signs[i].z - signs[j].z);
+    if (d < 2.5) crowded.push(`${signs[i].name}/${signs[j].name} ${d.toFixed(1)}m`);
+  }
+}
+check('no two signs are on top of each other', crowded.length === 0,
+      crowded.join('; ') || 'all at least 2.5m apart');
+
+// Reachability, which is the check that catches a sign that walled itself into
+// the wood: the grid is pruned to what is reachable from the player's spawn, so
+// a cell near a sign means somebody can walk up and read it. 4.5m rather than
+// 2m because the grid is 2m and a sign blocks the cells it overlaps — the
+// nearest standable centre beside a 2.4m board is a cell away by construction.
+const reach = await page.evaluate((table) => {
+  const nav = window.__paintball.characters.navGrid;
+  return table.map((sign) => {
+    const cell = nav.nearestWalkable(sign.x, sign.z, 4);
+    return {
+      name: sign.name,
+      distance: cell ? Math.hypot(cell.x - sign.x, cell.z - sign.z) : Infinity,
+    };
+  });
+}, signs.map(({ name, x, z }) => ({ name, x, z })));
+const stranded = reach.filter((r) => !(r.distance <= 4.5));
+check('every sign has walkable ground beside it', stranded.length === 0,
+      stranded.map((r) => `${r.name} ${r.distance.toFixed(1)}m`).join('; ') ||
+      `furthest ${Math.max(...reach.map((r) => r.distance)).toFixed(1)}m`);
+
+// And a sign takes paint, fired at rather than stamped — the whole point of
+// registering the boards is that they are ordinary park geometry, and neither
+// the frame nor the plinth of the paint screen is, which is how that omission
+// went unnoticed for an iteration.
+const shot = await page.evaluate(() => {
+  const { player, state, signs, layout } = window.__paintball;
+  const spec = signs.places.find((s) => s.name === 'The Mall');
+  // Stand five metres out along the way the board is looking, and look back at
+  // the middle of the plank — pitch solved rather than left flat, because the
+  // ground five metres from a sign is not the ground under it.
+  const dx = spec.faceX - spec.x;
+  const dz = spec.faceZ - spec.z;
+  const length = Math.hypot(dx, dz);
+  const x = spec.x + (dx / length) * 5;
+  const z = spec.z + (dz / length) * 5;
+  const eye = layout.heightAt(x, z) + 1.62;
+  // Board top 2.05m above the sign's own ground, and 0.65m of plank under it.
+  const boardY = layout.heightAt(spec.x, spec.z) + 2.05 - 0.33;
+  state.yaw = Math.atan2(-(spec.x - x), -(spec.z - z));
+  state.pitch = Math.atan2(boardY - eye, 5);
+  player.teleport(new (state.position.constructor)(x, layout.heightAt(x, z) + 0.4, z));
+  window.__paintball.impacts.length = 0;
+  return { x: spec.x, z: spec.z, name: spec.name };
+});
+await waitSim(1.2);
+await page.mouse.down();
+await waitSim(0.8);
+await page.mouse.up();
+await waitSim(1.2);
+const onSign = await page.evaluate(({ x, z }) =>
+  window.__paintball.impacts.filter((i) => Math.hypot(i.x - x, i.z - z) < 1.6 && i.y > 1.0).length,
+  shot);
+check('paint sticks to a place sign', onSign > 0,
+      `${onSign} impacts on "${shot.name}" from 5m in front of it`);
 
 check('no console or page errors', consoleErrors.length === 0, consoleErrors[0] ?? 'clean');
 
