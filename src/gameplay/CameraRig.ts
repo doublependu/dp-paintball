@@ -1,3 +1,4 @@
+import type * as RapierNS from '@dimforge/rapier3d';
 import { Euler, Quaternion, Vector3 } from 'three';
 import { camera as cameraConfig, player as playerConfig } from '../core/Config';
 import { DEG2RAD, clamp, damp, saturate } from '../core/MathUtils';
@@ -131,6 +132,9 @@ export class CameraRig implements System {
     );
   }
 
+  /** The arm's collision shape, made once. See `castArm`. */
+  private armShape?: RapierNS.Ball;
+
   /**
    * Sphere-casts backward from the pivot and returns how far the arm may
    * extend. A sphere rather than a ray, so the near plane never pokes through a
@@ -139,7 +143,11 @@ export class CameraRig implements System {
   private castArm(physics: GameContext['physics'], wantArm: number): number {
     if (!physics.isReady) return wantArm;
 
-    const shape = new physics.api.Ball(cameraConfig.collisionRadius);
+    // Made once rather than per frame: this is the only per-frame wasm
+    // allocation left in the render path, and at 240Hz it was thousands of
+    // shapes a second for a sphere whose radius never changes.
+    const shape =
+      this.armShape ?? (this.armShape = new physics.api.Ball(cameraConfig.collisionRadius));
     const hit = physics.w.castShape(
       this.orbitPoint,
       IDENTITY_ROTATION,

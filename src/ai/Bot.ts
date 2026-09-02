@@ -3,15 +3,21 @@ import { Vector3 } from 'three';
 import {
   ballistics as ballisticsConfig,
   match as matchConfig,
+  mural as muralConfig,
+  paint as paintConfig,
   physics as physicsConfig,
   player as playerConfig,
 } from '../core/Config';
+import { FIXED_DT } from '../core/Config';
 import { DEG2RAD, clamp, damp, dampAngle } from '../core/MathUtils';
 import type { Rng } from '../core/Random';
 import type { GameContext } from '../core/System';
 import type { Character } from '../character/Character';
 import type { AnimationInput } from '../character/CharacterAnimator';
-import type { BallisticsSystem } from '../gameplay/Ballistics';
+import { displayName } from '../character/Names';
+import { BallisticsSystem } from '../gameplay/Ballistics';
+import type { MuralBoard, MuralSlot } from '../world/PaintScreen';
+import { MURAL_DESIGNS, dotsFor, letterDesign } from './MuralDesigns';
 import {
   isCrateLive,
   nearestCrate,
@@ -22,7 +28,14 @@ import { ammoOf, consume, isPlaying, type MatchState } from '../gameplay/MatchSt
 import type { NavGrid } from './NavGrid';
 import type { Personality } from './Personality';
 
-export type BotState = 'wander' | 'loiter' | 'engage' | 'reposition' | 'startled' | 'restock';
+export type BotState =
+  | 'wander'
+  | 'loiter'
+  | 'engage'
+  | 'reposition'
+  | 'startled'
+  | 'restock'
+  | 'muralist';
 
 export interface BotTarget {
   id: string;
@@ -41,6 +54,25 @@ const SEPARATION_RADIUS = 1.8;
 const RESTOCK_TIMEOUT = 14;
 /** And how long it then leaves the crate alone. */
 const RESTOCK_COOLDOWN = 10;
+/** Fixed steps the arc solver will fly before giving up on reaching the board. */
+const MAX_SOLVE_STEPS = 90;
+
+/**
+ * The speed scale a mark on the board actually lands at.
+ *
+ * Not `maxSplatScale`, which is what a square hit at the muzzle would give.
+ * These shots arrive from ten metres having lost some speed to drag, and
+ * `emitImpact` scales what it reports by the angle of incidence — a painter
+ * stands off-axis and below its own marks, so a real one measures about here.
+ * Overestimating it spaces the drawing out until the strokes come apart.
+ */
+const TYPICAL_SPLAT_SCALE = 1.0;
+
+const UP = new Vector3(0, 1, 0);
+/** How close to its firing stance a painter has to be before it starts. */
+const STANCE_RADIUS = 1.4;
+/** Iterations of the elevation solve. Three lands inside a centimetre. */
+const AIM_SOLVE_STEPS = 3;
 
 /**
  * One NPC paintballer: navigation, a small behaviour state machine, and aim.
@@ -84,6 +116,22 @@ export class Bot {
    */
   private restockTarget: LootCrate | null = null;
 
+  /**
+   * The drawing in progress: where the marks go, how far through it is, and
+   * where to stand while making them.
+   *
+   * Held rather than recomputed because the whole point is that the picture
+   * comes out the way it was laid out — re-deriving it mid-errand from a bot
+   * that has drifted half a metre would redraw the same sun somewhere else.
+   */
+  private muralSlot: MuralSlot | null = null;
+  private muralName: string | null = null;
+  private muralDots: Vector3[] = [];
+  private muralIndex = 0;
+  private readonly muralStance = new Vector3();
+  /** Elapsed time before which this bot will not think about painting again. */
+  private muralBlockedUntil = -Infinity;
+
   private readonly desired = new Vector3();
   private readonly eye = new Vector3();
   private readonly toTarget = new Vector3();
@@ -92,6 +140,13 @@ export class Bot {
   private readonly aimRight = new Vector3();
   private readonly aimUp = new Vector3();
   private readonly forward = new Vector3();
+  // Scratch for the elevation solve, which runs once per mark and must not
+  // allocate on the fixed step.
+  private readonly solveAim = new Vector3();
+  private readonly solveVelocity = new Vector3();
+  private readonly solvePosition = new Vector3();
+  private readonly solvePrevious = new Vector3();
+  private readonly solveHit = new Vector3();
 
   private readonly animation: AnimationInput = {
     speed: 0,
@@ -117,6 +172,8 @@ export class Bot {
      */
     private readonly match: MatchState,
     private readonly loot: LootState,
+    /** The painting wall, or null on the test course, which has none. */
+    private readonly board: MuralBoard | null,
   ) {
     this.id = id;
     this.personality = personality;
@@ -170,10 +227,16 @@ export class Bot {
     this.lastSeenTargetAt = -Infinity;
     this.restockBlockedUntil = -Infinity;
     this.restockTarget = null;
+    this.abandonMural();
+    this.muralBlockedUntil = -Infinity;
   }
 
   /** Called when this bot is hit, to make it react. */
   onHit(rng: Rng): void {
+    // Whatever it was drawing, it is not drawing it now. Standing still in the
+    // open with a paintball marker pointed at a wall is exactly the moment
+    // somebody comes and tags you, and that is the best thing about it.
+    this.abandonMural();
     this.state = 'startled';
     this.stateTimer = rng.range(0.9, 1.8);
     this.path = [];
@@ -265,6 +328,29 @@ export class Bot {
       this.enterWander(nav, rng);
     }
 
+    // Painting. Checked before targets, because a painter that sees somebody
+    // should stop painting and fight — which is what dropping through to the
+    // clause below does — and after restock, because a bot low on paint has a
+    // more pressing errand than art.
+    if (this.state === 'muralist') {
+      const done = this.muralIndex >= this.muralDots.length;
+      if (this.target || done || this.stateTimer <= 0) {
+        this.abandonMural();
+        // A cooldown either way. Without it a bot that finishes a drawing turns
+        // straight round and starts another, and the board fills with one
+        // painter's work while everyone else fights.
+        this.muralBlockedUntil = ctx.elapsed + muralConfig.cooldownSeconds;
+        if (!this.target) {
+          this.enterWander(nav, rng);
+          return;
+        }
+      } else {
+        return;
+      }
+    } else if (this.wantsToPaint(ctx)) {
+      if (this.startMural(ctx, nav)) return;
+    }
+
     if (this.target && ammoOf(this.match, this.id) > 0) {
       this.reactionTimer = Math.max(0, this.reactionTimer - dt);
       if (this.state !== 'engage' && this.state !== 'reposition') {
@@ -351,6 +437,9 @@ export class Bot {
   private driveRestock(nav: NavGrid): void {
     const crate = this.currentCrate();
     if (!crate) return;
+    // Paint beats art, and the slot must not go with it: a bot that walks off
+    // to a crate still holding half the board would keep it for the round.
+    this.abandonMural();
     const target = crate.position;
 
     const fresh = this.state !== 'restock';
@@ -364,7 +453,303 @@ export class Bot {
     }
   }
 
+  // --- painting -------------------------------------------------------------
+
+  /**
+   * Whether this is a good moment to go and draw something.
+   *
+   * Every clause is about keeping it a moment rather than a mode. Paint first:
+   * a bot that spends its last eighty rounds on a sun then walks the park
+   * looking for a crate has made the round worse. Quiet second: `lastSeen` is
+   * the honest test, because `target` goes null the instant somebody steps
+   * behind a tree and a bot that starts painting mid-firefight is a bot that
+   * has stopped playing. Then range, then the cooldown from the last one.
+   */
+  private wantsToPaint(ctx: GameContext): boolean {
+    if (!this.board) return false;
+    if (this.match.sandbox) return false;
+    if (ctx.elapsed < this.muralBlockedUntil) return false;
+    if (this.target) return false;
+    if (ctx.elapsed - this.lastSeenTargetAt < muralConfig.quietSeconds) return false;
+    if (ammoOf(this.match, this.id) < muralConfig.minAmmo) return false;
+    return this.position.distanceTo(this.board.centre) <= muralConfig.noticeRange;
+  }
+
+  /**
+   * Claims a patch of board, decides what to draw on it, and sets off.
+   *
+   * Returns false when it could not start — both slots taken, no standable
+   * ground in front of the board, no route to it — and blocks itself for a
+   * while so it does not re-ask every step for the rest of the round.
+   */
+  private startMural(ctx: GameContext, nav: NavGrid): boolean {
+    const board = this.board;
+    if (!board) return false;
+
+    const slot = board.claimSlot(this.id);
+    if (!slot) {
+      this.muralBlockedUntil = ctx.elapsed + muralConfig.cooldownSeconds * 0.5;
+      return false;
+    }
+
+    // Where to stand: out along the board's normal from the middle of the slot,
+    // swung off-axis so two painters are not in each other's line and the
+    // drawing is not made from directly in front every time.
+    board.worldPointAt(slot.u, slot.v, this.solveAim);
+    const swing = ctx.rng.range(-1, 1) * muralConfig.offAxisDeg * DEG2RAD;
+    const distance = ctx.rng.range(muralConfig.standoffMin, muralConfig.standoffMax);
+    this.muralStance
+      .copy(board.normal)
+      .applyAxisAngle(UP, swing)
+      .multiplyScalar(distance)
+      .add(this.solveAim)
+      .setY(0);
+
+    const walkable = nav.nearestWalkable(this.muralStance.x, this.muralStance.z, 4);
+    const path = walkable ? nav.findPath(this.position, walkable) : null;
+    // No standable ground in front of the board, no route to it, or something
+    // in the way of the canvas from there. Give the slot straight back: holding
+    // one while failing to use it is how the board ends up with two painters
+    // who never arrive and nobody else allowed to try.
+    if (!walkable || !path || !this.canSeeBoard(ctx, walkable, board, slot)) {
+      board.releaseSlot(this.id);
+      this.muralBlockedUntil = ctx.elapsed + muralConfig.cooldownSeconds;
+      return false;
+    }
+    this.muralStance.copy(walkable);
+
+    this.muralSlot = slot;
+    this.muralDots = this.layOutDrawing(board, slot, ctx.rng);
+    this.muralIndex = 0;
+    this.state = 'muralist';
+    this.stateTimer = muralConfig.timeoutSeconds;
+    this.setPath(path);
+    return true;
+  }
+
+  /**
+   * Whether the middle of the slot is actually visible from a standing
+   * position at `from`.
+   *
+   * Stops short of the board itself, so the thing being looked for is a bench,
+   * a lamp post or a tree between the two — the canvas is a collider like
+   * anything else and would otherwise report itself as the obstruction.
+   */
+  private canSeeBoard(
+    ctx: GameContext,
+    from: Vector3,
+    board: MuralBoard,
+    slot: MuralSlot,
+  ): boolean {
+    board.worldPointAt(slot.u, slot.v, this.solveAim);
+    this.eye.set(from.x, from.y + 1.18, from.z);
+    this.toTarget.subVectors(this.solveAim, this.eye);
+    const range = this.toTarget.length();
+    if (range < 1) return false;
+    this.toTarget.divideScalar(range);
+    return !ctx.physics.raycast(this.eye, this.toTarget, range - 0.6, this.collider);
+  }
+
+  /**
+   * Turns a design into the list of world points to shoot at, in drawing order.
+   *
+   * Spacing is derived from the size a splat actually lands at rather than
+   * chosen: the marks have to overlap enough to read as a stroke, and the only
+   * thing that decides how big one is, is the paint config.
+   */
+  private layOutDrawing(board: MuralBoard, slot: MuralSlot, rng: Rng): Vector3[] {
+    const diameter =
+      2 * paintConfig.baseSplatRadius * TYPICAL_SPLAT_SCALE * paintConfig.screenSplatScale;
+    const spacing = diameter * muralConfig.dotSpacing;
+
+    const initial = displayName(this.id).charAt(0);
+    const signature = rng.bool(muralConfig.letterChance) ? letterDesign(initial) : null;
+    const design = signature ?? rng.pick(MURAL_DESIGNS);
+    this.muralName = design.name;
+
+    const unit = dotsFor(
+      design,
+      slot.widthMetres,
+      slot.heightMetres,
+      spacing,
+      muralConfig.maxDots,
+    );
+    return unit.map(([x, y]) =>
+      board.worldPointAt(
+        slot.u + (x - 0.5) * slot.halfU * 2,
+        slot.v + (y - 0.5) * slot.halfV * 2,
+        new Vector3(),
+      ),
+    );
+  }
+
+  /** Walks to the firing stance, then stands still. */
+  private approachStance(speedLimit: number): void {
+    this.toTarget.subVectors(this.muralStance, this.position).setY(0);
+    const distance = this.toTarget.length();
+    if (distance <= STANCE_RADIUS) return;
+    if (distance > 2.5) {
+      this.followPath(speedLimit);
+      return;
+    }
+    // The path's last waypoint is a 2m cell centre, which is not close enough
+    // to stand still and draw from — the same last stretch `approachLoot` walks
+    // by hand, for the same reason.
+    this.desired.copy(this.toTarget).normalize().multiplyScalar(speedLimit * 0.7);
+  }
+
+  /**
+   * Puts the next mark of the drawing on the board.
+   *
+   * Nothing happens until the bot is standing where it meant to stand: a mark
+   * fired on the way in is aimed correctly and lands correctly, and it is still
+   * wrong, because the drawing is being made by someone walking past.
+   */
+  private paintNextMark(ctx: GameContext, ballistics: BallisticsSystem): void {
+    if (this.fireCooldown > 0) return;
+    if (this.muralIndex >= this.muralDots.length) return;
+    if (this.position.distanceTo(this.muralStance) > STANCE_RADIUS + 0.6) return;
+
+    const mark = this.muralDots[this.muralIndex]!;
+
+    this.muzzle
+      .set(this.position.x, this.position.y + 1.18, this.position.z)
+      .addScaledVector(this.forward.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw)), 0.56);
+
+    if (!this.solveArc(mark)) return;
+    if (!consume(this.match, this.id)) return;
+
+    // A hand's worth of wobble, and no more. See `mural.aimErrorDeg`.
+    const errorRad = muralConfig.aimErrorDeg * DEG2RAD;
+    const angle = ctx.rng.range(0, Math.PI * 2);
+    const spread = Math.tan(errorRad) * Math.sqrt(ctx.rng.next());
+    this.aimRight.set(-this.aimDirection.z, 0, this.aimDirection.x).normalize();
+    this.aimUp.crossVectors(this.aimRight, this.aimDirection).normalize();
+    this.aimDirection
+      .addScaledVector(this.aimRight, Math.cos(angle) * spread)
+      .addScaledVector(this.aimUp, Math.sin(angle) * spread)
+      .normalize();
+
+    ballistics.fire(this.muzzle, this.aimDirection, this.id, this.character.color, this.collider);
+    this.character.animator.triggerShot();
+    ctx.events.emit('shot:fired', {
+      shooterId: this.id,
+      color: this.character.color,
+      origin: this.muzzle.clone(),
+      direction: this.aimDirection.clone(),
+    });
+
+    this.muralIndex++;
+    this.fireCooldown = muralConfig.fireInterval * ctx.rng.range(0.85, 1.2);
+  }
+
+  /**
+   * Solves the launch direction that actually lands on `mark`, into
+   * `aimDirection`.
+   *
+   * The fighting aim lifts by `0.5 * g * t²` with `t = range / muzzleSpeed`,
+   * which is fine against a person-sized capsule and useless against a
+   * twenty-centimetre dot: it ignores drag, so it is wrong by several
+   * centimetres — and wrong the same way every time, which would bend every
+   * drawing downward by the same amount rather than merely scattering it.
+   *
+   * So this integrates the real flight model instead, through the one copy of
+   * it that exists, and corrects the aim point by however far the ball missed.
+   * Three passes converge well inside a centimetre. No physics queries: this is
+   * arithmetic on `advance`, and it runs once per mark rather than per frame.
+   */
+  private solveArc(mark: Vector3): boolean {
+    this.solveAim.copy(mark);
+
+    for (let pass = 0; pass < AIM_SOLVE_STEPS; pass++) {
+      this.aimDirection.subVectors(this.solveAim, this.muzzle);
+      const range = this.aimDirection.length();
+      if (range < 0.5) return false;
+      this.aimDirection.divideScalar(range);
+
+      // Fly it. The board is a vertical plane, so "has it arrived" is a
+      // question about horizontal distance travelled, not about elapsed time.
+      const targetFlat = Math.hypot(mark.x - this.muzzle.x, mark.z - this.muzzle.z);
+      this.solveVelocity.copy(this.aimDirection).multiplyScalar(ballisticsConfig.muzzleSpeed);
+      this.solvePosition.copy(this.muzzle);
+      this.solveHit.copy(mark);
+
+      let arrived = false;
+      for (let step = 0; step < MAX_SOLVE_STEPS; step++) {
+        this.solvePrevious.copy(this.solvePosition);
+        BallisticsSystem.advance(this.solveVelocity, FIXED_DT);
+        this.solvePosition.addScaledVector(this.solveVelocity, FIXED_DT);
+
+        const flat = Math.hypot(
+          this.solvePosition.x - this.muzzle.x,
+          this.solvePosition.z - this.muzzle.z,
+        );
+        if (flat < targetFlat) continue;
+
+        // Interpolate across the step that crossed the board, so the answer
+        // does not quantise to the sim rate.
+        const previousFlat = Math.hypot(
+          this.solvePrevious.x - this.muzzle.x,
+          this.solvePrevious.z - this.muzzle.z,
+        );
+        const span = flat - previousFlat;
+        const t = span > 1e-6 ? (targetFlat - previousFlat) / span : 0;
+        this.solveHit.lerpVectors(this.solvePrevious, this.solvePosition, t);
+        arrived = true;
+        break;
+      }
+      if (!arrived) return false;
+
+      // Whatever it missed by, aim that much further the other way.
+      this.solveAim.add(this.solveHit.subVectors(mark, this.solveHit));
+    }
+
+    this.aimDirection.subVectors(this.solveAim, this.muzzle).normalize();
+    return true;
+  }
+
+  /** Drops the drawing and hands the slot back. Safe to call at any time. */
+  private abandonMural(): void {
+    if (this.muralSlot) this.board?.releaseSlot(this.id);
+    this.muralSlot = null;
+    this.muralName = null;
+    this.muralDots = [];
+    this.muralIndex = 0;
+  }
+
+  /** How far through its drawing a painter is, 0..1. For the suite. */
+  get muralProgress(): number {
+    if (this.muralDots.length === 0) return 0;
+    return this.muralIndex / this.muralDots.length;
+  }
+
+  /** What it is drawing and how many marks that takes. For the suite. */
+  get muralDesign(): string | null {
+    return this.muralName;
+  }
+
+  get muralDotCount(): number {
+    return this.muralDots.length;
+  }
+
+  /** Which patch of board it holds, or null. For the suite. */
+  get muralSlotIndex(): number | null {
+    return this.muralSlot?.index ?? null;
+  }
+
+  /**
+   * Where the marks of the current drawing go, in world space.
+   *
+   * Exposed for the suite, which checks that the paint on the board actually
+   * lands on the drawing rather than merely somewhere in the right half of it.
+   * Live, not a copy: nothing outside should be holding these past the errand.
+   */
+  get muralMarks(): readonly Vector3[] {
+    return this.muralDots;
+  }
+
   private enterWander(nav: NavGrid, rng: Rng): void {
+    this.abandonMural();
     this.state = 'wander';
     this.stateTimer = 12;
     const destination = nav.randomWalkablePoint(rng);
@@ -398,6 +783,8 @@ export class Bot {
         .multiplyScalar(speedLimit * 1.25);
     } else if (this.state === 'restock') {
       this.approachLoot(speedLimit);
+    } else if (this.state === 'muralist') {
+      this.approachStance(speedLimit);
     } else if (this.state === 'reposition' && this.target) {
       this.repositionAround(nav, ctx, speedLimit);
     } else if (this.state === 'engage' && this.target) {
@@ -520,15 +907,21 @@ export class Bot {
       z: this.position.z,
     });
 
-    // Face the target when fighting, otherwise face where we're going.
+    // Face the target when fighting, the board when painting, otherwise face
+    // where we're going. The board case matters more than it looks: the muzzle
+    // is solved from the body's yaw, so a painter facing anywhere else is
+    // shooting at the wall out of the corner of its eye.
+    const board = this.state === 'muralist' ? this.board : null;
     const facing = this.target
       ? Math.atan2(
           -(this.target.position.x - this.position.x),
           -(this.target.position.z - this.position.z),
         )
-      : Math.hypot(this.velocity.x, this.velocity.z) > 0.2
-        ? Math.atan2(-this.velocity.x, -this.velocity.z)
-        : this.yaw;
+      : board
+        ? Math.atan2(-(board.centre.x - this.position.x), -(board.centre.z - this.position.z))
+        : Math.hypot(this.velocity.x, this.velocity.z) > 0.2
+          ? Math.atan2(-this.velocity.x, -this.velocity.z)
+          : this.yaw;
     this.yaw = dampAngle(this.yaw, facing, 7, dt);
   }
 
@@ -544,6 +937,10 @@ export class Bot {
     // worse thing to look at than one still going about its business — but
     // nobody scores after the whistle, so nobody shoots either.
     if (!isPlaying(this.match)) return;
+    if (this.state === 'muralist') {
+      this.paintNextMark(ctx, ballistics);
+      return;
+    }
     if (this.state !== 'engage' || !this.target) return;
     if (this.reactionTimer > 0) {
       this.reactionTimer -= dt;
@@ -608,7 +1005,8 @@ export class Bot {
     if (!isPlaying(this.match)) return;
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     this.animation.speed = speed;
-    this.animation.aiming = this.state === 'engage' && this.target !== null;
+    this.animation.aiming =
+      (this.state === 'engage' && this.target !== null) || this.state === 'muralist';
     this.animation.crouching = this.state === 'loiter' && this.personality.name === 'camper';
     this.animation.aimPitch = 0;
     // Direction of travel in the body's own frame, so strafing reads correctly.

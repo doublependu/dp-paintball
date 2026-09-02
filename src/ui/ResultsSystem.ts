@@ -5,6 +5,7 @@ import type { MatchState } from '../gameplay/MatchState';
 import type { RenderSystem } from '../render/Renderer';
 import type { PaintScreen } from '../world/PaintScreen';
 import type { ScoreRow } from './Hud';
+import type { PosterCapture, Souvenir } from './PosterCapture';
 import { ResultsPanel } from './ResultsPanel';
 import { ResultsStage } from './ResultsStage';
 
@@ -33,6 +34,14 @@ export class ResultsSystem implements System {
     private readonly render: RenderSystem,
     /** Null on the test course, which has no screen to show. */
     private readonly screen: PaintScreen | null,
+    /**
+     * The in-game photograph of the mural, when one could be taken.
+     *
+     * Registered *before* this system, because it renders a frame with the
+     * characters still standing in the park and `stage.present` below is what
+     * takes them out of it.
+     */
+    private readonly poster: PosterCapture | null,
   ) {}
 
   init(ctx: GameContext): void {
@@ -71,8 +80,21 @@ export class ResultsSystem implements System {
       reason === 'ammo' ? 'Out of paint!' : 'Time!',
       characters.map(toRow),
       splats,
-      this.screen,
+      this.souvenir(),
     );
+  }
+
+  /**
+   * The picture of the round: the park with the mural in it where the shutter
+   * worked, the mural's own canvas where it did not.
+   *
+   * The fallback is not theoretical. A WebGL context that has already handed
+   * its drawing buffer back returns a blank frame, and a blank rectangle on the
+   * card would be worse than the flat painting it replaced.
+   */
+  private souvenir(): Souvenir | null {
+    if (this.poster?.hasPoster) return this.poster;
+    return this.screen;
   }
 
   private hide(): void {

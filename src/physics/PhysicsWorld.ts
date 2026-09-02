@@ -188,16 +188,28 @@ export class PhysicsWorld {
    * Ray query against the world. Returns the nearest hit, or null.
    * `exclude` skips a collider — normally the shooter's own body.
    */
+  /** Reused by every cast. See `raycast`. */
+  private ray?: RapierNS.Ray;
+
   raycast(
     origin: Vector3,
     direction: Vector3,
     maxDistance: number,
     exclude?: RapierNS.Collider,
   ): RaycastHit | null {
-    const ray = new this.api.Ray(
-      { x: origin.x, y: origin.y, z: origin.z },
-      { x: direction.x, y: direction.y, z: direction.z },
-    );
+    // One ray, mutated, rather than a fresh one per cast. This is the hottest
+    // query in the game — the scene crosshair alone traces up to 36 of them per
+    // fixed step — and every allocation here is garbage a collector eventually
+    // stops the frame to clear. The hit record is still fresh each time, because
+    // callers hold on to it.
+    const ray = this.ray ?? (this.ray = new this.api.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 }));
+    ray.origin.x = origin.x;
+    ray.origin.y = origin.y;
+    ray.origin.z = origin.z;
+    ray.dir.x = direction.x;
+    ray.dir.y = direction.y;
+    ray.dir.z = direction.z;
+
     const hit = this.w.castRayAndGetNormal(
       ray,
       maxDistance,
@@ -207,11 +219,16 @@ export class PhysicsWorld {
       exclude,
     );
     if (!hit) return null;
-    const point = ray.pointAt(hit.timeOfImpact);
+    // `ray.pointAt` allocates; the same arithmetic does not.
+    const t = hit.timeOfImpact;
     return {
-      point: { x: point.x, y: point.y, z: point.z },
+      point: {
+        x: origin.x + direction.x * t,
+        y: origin.y + direction.y * t,
+        z: origin.z + direction.z * t,
+      },
       normal: { x: hit.normal.x, y: hit.normal.y, z: hit.normal.z },
-      distance: hit.timeOfImpact,
+      distance: t,
       collider: hit.collider,
     };
   }

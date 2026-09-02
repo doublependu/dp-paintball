@@ -78,3 +78,42 @@ out at once with a 35s respawn instead of one per round.
 keeps its paint in texture space rather than as world decals, which is the
 technique `PaintSystem` rejects for the map and the right one for one flat
 board. The results card shows the painting and offers it for sharing.
+
+# Iteration 6 — the board moves, and the bots paint on it
+
+All seven items in `CLAUDE/prompt_6.md` are done. Plan in `CLAUDE/PLAN_6.md`,
+consequences in `CLAUDE/NEXT_6.md`. `npm test` is twelve suites, 219 checks.
+
+**The painting wall has moved to Sheep Meadow's west rim**, 72m from the spawn
+with the west woods behind it, on the flattest ground in the park outside the
+paving — the site was picked by sampling `heightAt` across the board's real
+footprint at a dozen candidates rather than by eye. It **takes paint on both
+sides** now; the front is the round's canvas and is wiped at every whistle, the
+back faces the woods and keeps whatever anybody has ever put on it.
+
+**The bots draw on it.** A bot with paint to spare and nobody in sight walks up,
+claims half the board and paints a sun, a cat, a house or its own initial, one
+paintball at a time, in the order a person would draw it. It needed an aim two
+orders of magnitude tighter than its fighting cone and an elevation solve that
+flies the real flight model — the drag-free approximation the fighting aim uses
+is wrong by a consistent few centimetres, which bends every drawing downward.
+`tools/mural-test.mjs` measures the difference: a bot covers 98% of its marks,
+the same marks fired with a fighting aim cover 38%.
+
+**Sharing works.** The end-of-round picture is now a photograph of the park with
+the mural standing in it, taken at the whistle through the game's own render
+pipeline, and the X link goes to the game rather than to this repository. It was
+also a button that started a download and opened a popup in one gesture, which
+browsers throttle silently — it is a real link now.
+
+**Crates can be found.** A shaft of light stands over every one, the HUD points
+at the nearest, and a fresh one announces where it landed by name — the park's
+hiding places have all had written names since the crate existed and nothing had
+ever said one out loud.
+
+**On the lag:** adaptive resolution, a shadow map on a cadence, the mural's
+canvas uploaded at 20Hz rather than on every hit, and the per-frame Rapier
+allocations gone. The real-GPU harness cannot run on the machine this was built
+on, so `NEXT_6.md` is explicit about which of that is measured and which is
+reasoned — and about the biggest remaining cost, which is deliberately untouched
+until somebody can measure it.

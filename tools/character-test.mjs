@@ -130,18 +130,58 @@ const hullDrew = await page.evaluate(() => {
 check('the hull is live in the scene', hullDrew);
 
 // --- Hit routing: person, not park -----------------------------------------
-// Bots wander, so rather than firing at a fixed coordinate, step up to whichever
-// bot is nearest and re-aim at its live chest position between bursts.
+//
+// Bots wander, so rather than firing at a fixed coordinate, this steps up to
+// whichever bot is nearest and re-aims at its live chest between bursts.
+//
+// Two things here were learned the hard way and both are load-bearing.
+//
+// **Aim from the camera, not from the player.** `AimSolver` traces from the
+// camera — which sits behind the character and off its shoulder — and points
+// the muzzle at whatever that ray reaches. Setting a yaw that lines the
+// *player* up with a bot leaves the camera's ray passing half a metre to one
+// side, which at ten metres is a clean miss. Two passes, because moving the yaw
+// swings the camera round the character and moves the answer.
+//
+// **The success condition is the player's own credit, not "somebody got hit".**
+// Six bots with live triggers are shooting each other throughout, so a loop
+// that stops when any bot's hit count moves can stop on somebody else's shot —
+// and then assert, correctly and uselessly, that a hit was registered on a
+// character. It went unnoticed for three iterations because the marginal aim
+// above usually did land, and it surfaced when an unrelated change shifted the
+// shared RNG stream and the bots wandered somewhere slightly different.
 const totalBotHits = () => page.evaluate(() =>
   window.__paintball.characters.allBots.reduce((s, b) => s + b.character.hitsTaken, 0));
 const botSplats = () => page.evaluate(() =>
   window.__paintball.characters.allBots.reduce((s, b) => s + b.character.paint.splatCount, 0));
+const playerGiven = () => page.evaluate(() =>
+  window.__paintball.characters.playerCharacter.hitsGiven);
+
+/** Points the camera's own ray at the nearest bot's chest. */
+const aimAtNearestBot = () => page.evaluate(() => {
+  const { state, characters, camera } = window.__paintball;
+  let best = null;
+  let bestD = Infinity;
+  for (const b of characters.allBots) {
+    const d = Math.hypot(b.position.x - state.position.x, b.position.z - state.position.z);
+    if (d < bestD) { bestD = d; best = b; }
+  }
+  if (!best) return null;
+  const eye = camera();
+  const dx = best.position.x - eye.x;
+  const dz = best.position.z - eye.z;
+  const dy = best.position.y + 1.25 - eye.y;
+  state.yaw = Math.atan2(-dx, -dz);
+  state.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+  return bestD;
+});
 
 const hitsBefore = await totalBotHits();
 const splatsBefore = await botSplats();
+const givenBefore = await playerGiven();
 let landed = false;
 
-for (let attempt = 0; attempt < 6 && !landed; attempt++) {
+for (let attempt = 0; attempt < 8 && !landed; attempt++) {
   // Plant ourselves a few metres from the closest bot, facing it.
   await page.evaluate(() => {
     const { player, state, characters } = window.__paintball;
@@ -155,41 +195,37 @@ for (let attempt = 0; attempt < 6 && !landed; attempt++) {
     const dx = best.position.x - state.position.x;
     const dz = best.position.z - state.position.z;
     const len = Math.hypot(dx, dz) || 1;
-    // Stand 6m short of the bot, on the line between us.
-    const stand = new (state.position.constructor)(
-      best.position.x - (dx / len) * 6, 2, best.position.z - (dz / len) * 6);
-    player.teleport(stand);
-    state.yaw = Math.atan2(-(dx / len), -(dz / len));
-    state.pitch = 0.02;
+    // Stand 6m short of the bot, on the line between us, and above the ground
+    // wherever that is — the park is not level and the board's meadow is three
+    // and a half metres up.
+    const nav = characters.navGrid;
+    const x = best.position.x - (dx / len) * 6;
+    const z = best.position.z - (dz / len) * 6;
+    player.teleport(new (state.position.constructor)(x, nav.groundAt(x, z) + 0.5, z));
   });
   await waitSim(0.6);
-  // Re-aim at the live position, since it moved while we settled.
-  await page.evaluate(() => {
-    const { state, characters } = window.__paintball;
-    let best = null;
-    let bestD = Infinity;
-    for (const b of characters.allBots) {
-      const d = Math.hypot(b.position.x - state.position.x, b.position.z - state.position.z);
-      if (d < bestD) { bestD = d; best = b; }
-    }
-    if (!best) return;
-    const dx = best.position.x - state.position.x;
-    const dz = best.position.z - state.position.z;
-    state.yaw = Math.atan2(-dx, -dz);
-  });
-  await page.mouse.down();
-  await waitSim(0.8);
-  await page.mouse.up();
-  await waitSim(1.0);
-  landed = (await totalBotHits()) > hitsBefore;
+
+  // Fired in short bursts with a fresh aim before each, so a bot that walks
+  // during the burst is followed rather than led.
+  for (let burst = 0; burst < 4 && !landed; burst++) {
+    await aimAtNearestBot();
+    await waitSim(0.1);
+    await aimAtNearestBot();
+    await page.mouse.down();
+    await waitSim(0.4);
+    await page.mouse.up();
+    await waitSim(0.7);
+    landed = (await playerGiven()) > givenBefore;
+  }
 }
 
-const playerRow = (await stats()).find((c) => c.id === 'player');
-check('shooting a character registers on that character', landed,
+check('shooting a character registers on that character',
+      landed && (await totalBotHits()) > hitsBefore,
       `bot hits ${hitsBefore} -> ${await totalBotHits()}`);
 check('paint lands on the body', (await botSplats()) > splatsBefore,
       `bot splats ${splatsBefore} -> ${await botSplats()}`);
-check('the shooter is credited', playerRow.given > 0, `player given ${playerRow.given}`);
+check('the shooter is credited', (await playerGiven()) > givenBefore,
+      `player given ${givenBefore} -> ${await playerGiven()}`);
 
 // --- Grace window, measured in simulation time ------------------------------
 // Drive the event path directly at a fixed rate: 40 hits over 4 simulated

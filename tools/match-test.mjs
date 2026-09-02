@@ -162,7 +162,7 @@ check('a second pull clicks again', dryAfterTwo === 2, `${dryAfterTwo} dry event
 // Several out at once now, not one. A single crate is a race the nearest bot
 // always wins rather than a place worth fighting over — see `match.lootCrates`.
 const crates = await page.evaluate(() => window.__paintball.loot.crates.map((c) => ({
-  x: c.position.x, y: c.position.y, z: c.position.z, rounds: c.rounds,
+  x: c.position.x, y: c.position.y, z: c.position.z, rounds: c.rounds, where: c.where,
 })));
 check('the configured number of crates is out there',
       crates.length === 3 && crates.every((c) => c.rounds === 100),
@@ -175,6 +175,73 @@ const spotsDistinct = crates.every((a, i) =>
   crates.every((b, j) => i === j || Math.hypot(a.x - b.x, a.z - b.z) > 3));
 check('the crates are in different places', spotsDistinct,
       crates.map((c) => `${c.x.toFixed(0)},${c.z.toFixed(0)}`).join(' | '));
+
+// --- Finding one ------------------------------------------------------------
+//
+// The bots read crate positions out of shared state the instant one lands. The
+// player was the only participant who had to search, in a 130m park with hills
+// and a woodland belt in it, for a box two thirds of a metre across.
+//
+// Three things fixed that and all three are checked here: every crate knows the
+// written name of its hiding place, a shaft of light stands over it, and the HUD
+// points at the nearest one.
+check('every crate knows where it is hiding',
+      crates.length > 0 && crates.every((c) => typeof c.where === 'string' && c.where.length > 3),
+      crates.map((c) => c.where).join(' | ') || 'none');
+
+const beacons = await page.evaluate(() => {
+  const { game, loot } = window.__paintball;
+  // A beacon is an additively blended mesh on the no-outline layer standing
+  // over a crate: the prepass would otherwise ink it like a solid post.
+  const found = [];
+  game.render.scene.traverse((o) => {
+    if (!o.isMesh || !o.visible || !o.material || o.material.blending !== 2) return;
+    if (!o.layers.isEnabled(2)) return;
+    const p = o.getWorldPosition(new o.position.constructor());
+    found.push({ x: p.x, z: p.z });
+  });
+  return loot.crates.map((c) =>
+    found.some((f) => Math.hypot(f.x - c.position.x, f.z - c.position.z) < 0.6));
+});
+check('a beacon stands over every crate',
+      beacons.length === crates.length && beacons.every(Boolean),
+      `${beacons.filter(Boolean).length}/${beacons.length} crates lit`);
+
+// The marker is range-gated on the same notion the bots use, so standing next
+// to a crate must show it and standing across the park must not.
+const marker = await page.evaluate(async (target) => {
+  const { player, state, loot, characters } = window.__paintball;
+  const V = state.position.constructor;
+  const read = () => {
+    const el = document.querySelector('[data-crate-marker]');
+    return el ? el.classList.contains('is-visible') : null;
+  };
+  const nearestCrateDistance = (x, z) => Math.min(...loot.crates.map(
+    (c) => Math.hypot(c.position.x - x, c.position.z - z)));
+
+  player.teleport(new V(target.x + 6, target.y + 1, target.z + 6));
+  window.__paintball.stepSim(0.4);
+  const near = read();
+
+  // Somewhere provably out of range of *every* crate, rather than a mirror of
+  // this one's position: three crates are out at once and the opposite corner
+  // of the park can easily be sixty metres from a different one.
+  const nav = characters.navGrid;
+  let away = null;
+  for (let x = -80; x <= 80; x += 20) {
+    for (let z = -80; z <= 80; z += 20) {
+      if (!nav.isWalkable(x, z)) continue;
+      const d = nearestCrateDistance(x, z);
+      if (!away || d > away.d) away = { x, z, d };
+    }
+  }
+  player.teleport(new V(away.x, nav.groundAt(away.x, away.z) + 0.5, away.z));
+  window.__paintball.stepSim(0.4);
+  return { near, far: read(), away };
+}, crates[0]);
+check('the HUD points at a crate you are near, and not at one you are not',
+      marker.near === true && marker.far === false && marker.away.d > 70,
+      `near=${marker.near}, far=${marker.far} from ${marker.away.d.toFixed(0)}m away`);
 
 // Each must be somewhere a bot could also reach, or the round-end rule can stall.
 const reachable = await page.evaluate(() => {

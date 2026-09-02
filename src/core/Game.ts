@@ -164,7 +164,10 @@ export class Game {
     }
 
     if (draw) {
-      this.draw();
+      // Flagged as a real frame, which is what lets the renderer pace its
+      // adaptive resolution off it. `draw()` below is not one: it paints the
+      // current state for a screenshot without the loop having advanced.
+      this.render.render(this.loop.elapsed, true);
       this.perfHud.update(dt, this.render.renderer, this.loop.lastStepCount);
     }
 

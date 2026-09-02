@@ -299,6 +299,22 @@ export const paint = {
    * same number covered a whole torso face and scissored into a rectangle.
    */
   characterSplatRadius: 0.15,
+  /**
+   * Splat radius on the paint screen, as a fraction of the world radius.
+   *
+   * `NEXT_5.md` flagged the board's splats as "3% of its width — right for
+   * consistency with the park, possibly wrong for a thing whose purpose is to
+   * be painted on". Painting bots settled it: at the full world radius a hit is
+   * nearly a metre across on an eleven-metre board, and a drawing made of them
+   * is four blobs wide whatever it was meant to be.
+   *
+   * Set by drawing with it. At 0.55 the marks were 30cm across and a bot's cat
+   * came out as three dozen separate dots with daylight between them — the
+   * strokes have to overlap or the picture is a constellation. At 0.8 a mark is
+   * about 45cm, which joins up at the spacing `mural.dotSpacing` asks for and
+   * still leaves an eleven-metre board worth filling by hand.
+   */
+  screenSplatScale: 0.8,
   /** Splats scale up with impact speed, within these bounds. */
   minSplatScale: 0.7,
   maxSplatScale: 1.5,
@@ -317,6 +333,63 @@ export const paint = {
    */
   splatSpeedMin: ballistics.muzzleSpeed * 0.29,
   splatSpeedMax: ballistics.muzzleSpeed,
+} as const;
+
+/**
+ * Bots painting the board.
+ *
+ * A bot with paint to spare, nobody to shoot at and a wall in front of it goes
+ * and draws something. The numbers here are all about keeping that a moment
+ * rather than a mode: it takes a fifth of a load, it happens to at most two
+ * bots at a time, it is abandoned the instant anything else happens, and a bot
+ * that has just finished one will not start another for the best part of a
+ * minute.
+ */
+export const mural = {
+  /** A bot needs this much paint before art is a reasonable use of it. */
+  minAmmo: 80,
+  /** How far away it can be and still think of going. */
+  noticeRange: 60,
+  /** Seconds of nobody in sight before a bot's mind wanders to the wall. */
+  quietSeconds: 3,
+  /** Where it stands to paint, in metres out from the board. */
+  standoffMin: 8,
+  standoffMax: 11,
+  /** How far off the board's normal that stance may sit, in degrees. */
+  offAxisDeg: 20,
+  /**
+   * Aim cone while painting, in degrees.
+   *
+   * An order of magnitude tighter than a bot's fighting aim, which is 4.5 to 12
+   * degrees and would put a metre-and-a-half group on the board at this range.
+   * Not zero: a perfectly rasterised drawing looks printed, and this game is
+   * drawn by hand everywhere else.
+   */
+  aimErrorDeg: 0.4,
+  /** Seconds between marks. Slower than a fight — this is deliberate work. */
+  fireInterval: 0.32,
+  /** Give up on a drawing after this long, wherever it got to. */
+  timeoutSeconds: 45,
+  /** And do not start another for this long afterwards. */
+  cooldownSeconds: 45,
+  /**
+   * Marks per drawing. A budget: see `dotsFor`.
+   *
+   * Fifty-six at `fireInterval` is eighteen seconds of standing still, plus the
+   * walk in. That is most of `timeoutSeconds` and it is meant to be: a drawing
+   * should be a thing a bot commits to and can be interrupted in the middle of.
+   */
+  maxDots: 56,
+  /**
+   * Spacing between marks, as a fraction of a splat's diameter.
+   *
+   * Under 1 by necessity — the marks have to overlap to read as a line rather
+   * than as a row of dots — and not far under, because every mark is a shot and
+   * a drawing that costs eighty rounds is a bot that has stopped playing.
+   */
+  dotSpacing: 0.7,
+  /** Odds that a painter signs with its own initial instead of drawing. */
+  letterChance: 0.22,
 } as const;
 
 /**
@@ -367,6 +440,36 @@ export const paintColors = [
 export const render = {
   /** Device pixel ratio is clamped — 4K at DPR 3 is not worth the frame time. */
   maxPixelRatio: 2,
+  /**
+   * The floor the adaptive resolution will drop to, and the frame times it
+   * moves between.
+   *
+   * A cap alone is a bet that every machine can afford the same number, and on
+   * a high-DPI laptop that bet is what "the mouse feels laggy" is: the look
+   * itself has no smoothing in it, so what a player feels when panning is
+   * simply how long a frame takes. The renderer now walks the ratio down when
+   * frames run long and back up when they do not.
+   *
+   * The window between the two thresholds is wide on purpose. Anything
+   * narrower oscillates, and every step reallocates the render targets — a
+   * change that costs a hitch of its own.
+   */
+  minPixelRatio: 1,
+  pixelRatioStep: 0.25,
+  /** Above this median frame time, give up resolution. 20ms is 50fps. */
+  slowFrameMs: 20,
+  /** Below this, ask for it back. 12ms is 83fps. */
+  fastFrameMs: 12,
+  /** Seconds between resolution changes, so it settles rather than hunts. */
+  resolutionSettleSeconds: 2.5,
+  /**
+   * Fixed steps between shadow-map redraws.
+   *
+   * The sun does not move; only seven characters and the ball do. A full second
+   * scene render into a 2048 map every frame buys a shadow edge that is one
+   * frame fresher, which nobody has ever seen.
+   */
+  shadowUpdateInterval: 2,
   shadowMapSize: 2048,
   /** Outline width in pixels, held roughly constant across distance. */
   outlineWidthPx: 3.0,

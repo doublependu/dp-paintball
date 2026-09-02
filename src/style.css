@@ -180,6 +180,57 @@ body {
   color: rgba(42, 36, 56, 0.72);
 }
 
+/*
+ * The crate marker: a paint-drop pip over the nearest crate, or a chevron
+ * pinned to the edge of the screen pointing at one off camera.
+ *
+ * Positioned by `transform` on an element anchored at the top-left rather than
+ * by `left`/`top`, so moving it every frame stays on the compositor and never
+ * touches layout.
+ */
+.hud__crate-marker {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: -22px 0 0 -13px;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+.hud__crate-marker.is-visible { opacity: 0.92; }
+
+.hud__crate-arrow {
+  width: 26px;
+  height: 26px;
+  /* Points up over a crate on screen; turned to face one that is not. */
+  transform: rotate(var(--crate-angle, 0rad));
+  fill: #ffd23f;
+  stroke: #2a2438;
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px rgba(42, 36, 56, 0.35));
+}
+
+/* Over a crate you can see, the pip is small and quiet — you have found it. */
+.hud__crate-marker:not(.is-offscreen) .hud__crate-arrow {
+  width: 17px;
+  height: 17px;
+}
+
+.hud__crate-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #fdf6e3;
+  -webkit-text-stroke: 2px #2a2438;
+  paint-order: stroke fill;
+  font-variant-numeric: tabular-nums;
+}
+
 .hud__toast {
   position: absolute;
   left: 50%;
@@ -646,6 +697,9 @@ body {
  */
 .results__share-button {
   pointer-events: auto;
+  /* One of these is an `<a>`: see `renderShareRow`. */
+  display: inline-block;
+  text-decoration: none;
   font: inherit;
   font-size: 11px;
   font-weight: 800;
@@ -657,6 +711,22 @@ body {
   background: #fff6d8;
   color: #2a2438;
   cursor: pointer;
+}
+
+/*
+ * The line under the buttons saying what the X flow actually is.
+ *
+ * It is a sentence rather than a tooltip because it describes a step the
+ * player has to take by hand, and a step nobody expects: the tweet intent has
+ * never accepted an image.
+ */
+.results__share-note {
+  flex-basis: 100%;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.35;
+  opacity: 0.72;
 }
 
 .results__share-button:hover {

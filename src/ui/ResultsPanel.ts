@@ -1,10 +1,17 @@
 import { isTouchDevice } from '../core/Device';
-import type { PaintScreen } from '../world/PaintScreen';
 import type { ScoreRow } from './Hud';
+import type { Souvenir } from './PosterCapture';
 
+/** The source, for the badge. */
 const REPO_URL = 'https://github.com/doublependu/dp-paintball';
+/**
+ * The game, for sharing. Two different links doing two different jobs: nobody
+ * who is handed a picture of a painted park wants to be sent to a repository,
+ * and this used to send them to one.
+ */
+const GAME_URL = 'https://v0.maize.live';
 const SHARE_TITLE = 'Central Park paintball';
-const SHARE_TEXT = 'We painted the park.';
+const SHARE_TEXT = 'We painted the park. Come and add to it:';
 
 /** GitHub's mark, as a path on a 16×16 viewBox. Inlined so it costs no request. */
 const GITHUB_MARK =
@@ -51,7 +58,7 @@ export class ResultsPanel {
         </div>
         <div class="results__main">
           <figure class="results__mural" data-results-mural hidden>
-            <img data-results-image alt="The park's paint screen at the end of the round" />
+            <img data-results-image alt="The park's painting wall at the end of the round" />
             <figcaption class="results__share" data-results-share></figcaption>
           </figure>
           <div class="results__scores">
@@ -133,7 +140,7 @@ export class ResultsPanel {
     title: string,
     rows: readonly ScoreRow[],
     splatsById: Map<string, number>,
-    screen: PaintScreen | null,
+    souvenir: Souvenir | null,
   ): void {
     const sorted = [...rows].sort((a, b) => b.hitsGiven - a.hitsGiven || a.hitsTaken - b.hitsTaken);
     const awards = ResultsPanel.awardsFor(rows);
@@ -173,7 +180,7 @@ export class ResultsPanel {
       })
       .join('');
 
-    this.showMural(screen);
+    this.showMural(souvenir);
     this.root.classList.add('is-visible');
   }
 
@@ -211,15 +218,15 @@ export class ResultsPanel {
    * system share sheet is the whole feature. Same reason the download URL is
    * minted up front: `window.open` after an await meets the popup blocker.
    */
-  private showMural(screen: PaintScreen | null): void {
+  private showMural(souvenir: Souvenir | null): void {
     this.releaseDownload();
     this.share.innerHTML = '';
-    this.mural.hidden = screen === null;
-    if (!screen) return;
+    this.mural.hidden = souvenir === null;
+    if (!souvenir) return;
 
-    this.image.src = screen.toDataURL();
+    this.image.src = souvenir.toDataURL();
 
-    void screen.toBlob().then((blob) => {
+    void souvenir.toBlob().then((blob) => {
       // The round can end, be dismissed and restart inside the time this takes.
       if (!this.isVisible || !blob) return;
       this.file = new File([blob], 'central-park-paintball.png', { type: 'image/png' });
@@ -246,17 +253,26 @@ export class ResultsPanel {
       typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
     const canCopy = typeof ClipboardItem === 'function' && Boolean(navigator.clipboard?.write);
 
-    const buttons: string[] = [];
+    const parts: string[] = [];
     if (canShareFile) {
-      buttons.push(button('share', 'Share the painting'));
+      parts.push(button('share', 'Share the painting'));
     }
-    buttons.push(button('save', 'Save PNG'));
+    parts.push(button('save', 'Save PNG'));
     if (!canShareFile) {
-      buttons.push(button('x', 'Post to X'));
-      if (canCopy) buttons.push(button('copy', 'Copy image'));
+      // An anchor, not a button that calls `window.open`.
+      //
+      // It used to be a button that saved the image *and* opened the intent in
+      // one click. A gesture that starts a download and opens a popup is
+      // exactly what browsers throttle, and the popup is the half that loses —
+      // silently. A real link is not a popup and is never blocked.
+      parts.push(link('x', 'Post to X', intentUrl()));
+      if (canCopy) parts.push(button('copy', 'Copy image'));
+      // Said plainly, because it is the step people otherwise wait for: the
+      // tweet intent takes text and a URL and has never accepted an image.
+      parts.push('<span class="results__share-note">save the PNG and attach it — X can\u2019t take a picture from a link</span>');
     }
 
-    this.share.innerHTML = buttons.join('');
+    this.share.innerHTML = parts.join('');
   }
 
   private onShareAction(action: string): void {
@@ -266,20 +282,16 @@ export class ResultsPanel {
     switch (action) {
       case 'share':
         void navigator
-          .share({ files: [file], title: SHARE_TITLE, text: SHARE_TEXT })
+          .share({ files: [file], title: SHARE_TITLE, text: `${SHARE_TEXT} ${GAME_URL}` })
           // A cancelled share sheet rejects, and it is not a fault.
           .catch(() => {});
         return;
       case 'save':
         this.download();
         return;
-      case 'x': {
-        // Saved first, because the intent cannot carry the image itself.
-        this.download();
-        const params = new URLSearchParams({ text: SHARE_TEXT, url: REPO_URL });
-        window.open(`https://x.com/intent/post?${params.toString()}`, '_blank', 'noopener');
+      case 'x':
+        // Nothing to do: the control is a link and the browser is following it.
         return;
-      }
       case 'copy':
         void navigator.clipboard
           .write([new ClipboardItem({ 'image/png': file })])
@@ -351,4 +363,14 @@ function hex(color: number): string {
 
 function button(action: string, label: string): string {
   return `<button type="button" class="results__share-button" data-share-action="${action}">${label}</button>`;
+}
+
+function link(action: string, label: string, href: string): string {
+  return `<a class="results__share-button" data-share-action="${action}" href="${href}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+}
+
+/** The tweet intent, prefilled with everything it is able to carry. */
+function intentUrl(): string {
+  const params = new URLSearchParams({ text: SHARE_TEXT, url: GAME_URL });
+  return `https://x.com/intent/post?${params.toString()}`;
 }

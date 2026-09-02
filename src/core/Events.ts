@@ -29,8 +29,15 @@ export interface GameEventMap {
   'shot:fired': { shooterId: string; color: number; origin: Vector3; direction: Vector3 };
   /** The trigger was pulled with nothing left to fire. */
   'weapon:dry': { shooterId: string };
-  /** A paint crate was placed in the world. */
-  'loot:spawned': { position: Vector3; rounds: number };
+  /**
+   * A paint crate was placed in the world.
+   *
+   * `where` is the hand-written name of the hiding place from `LOOT_SPOTS` —
+   * "the arcade undercroft, west bay" — which is what the HUD says out loud.
+   * The park's places have names and the game already knew them; it used to
+   * throw this one away at the point of spawning.
+   */
+  'loot:spawned': { position: Vector3; rounds: number; where: string; announce: boolean };
   /** Somebody reached a crate first. */
   'loot:taken': { characterId: string; rounds: number; position: Vector3 };
   /** Score counters changed for someone. */

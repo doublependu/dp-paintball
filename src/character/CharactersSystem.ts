@@ -8,6 +8,7 @@ import type { BallisticsSystem } from '../gameplay/Ballistics';
 import type { LootState } from '../gameplay/LootSystem';
 import { isPlaying, type MatchState } from '../gameplay/MatchState';
 import type { PlayerState } from '../gameplay/PlayerState';
+import type { MuralBoard } from '../world/PaintScreen';
 import { SplatAtlas } from '../paint/SplatAtlas';
 import { Character } from './Character';
 import type { CharacterRegistry } from './CharacterRegistry';
@@ -59,6 +60,11 @@ export class CharactersSystem implements System {
     private readonly sharedAtlas: SplatAtlas,
     private readonly match: MatchState,
     private readonly loot: LootState,
+    /**
+     * The painting wall, handed to every bot. Null on the test course, which
+     * has no board — and a bot with no board never enters `muralist`.
+     */
+    private readonly board: MuralBoard | null,
     private readonly botSpecs: BotSpec[] = [],
     /**
      * Only used to put the player back at their spawn between rounds. Optional
@@ -108,7 +114,7 @@ export class CharactersSystem implements System {
         new Vector3(spec.position.x, this.nav.groundAt(spec.position.x, spec.position.z), spec.position.z);
 
       const bot = new Bot(spec.id, PERSONALITIES[spec.personality % PERSONALITIES.length]!,
-                          character, grounded, ctx, this.match, this.loot);
+                          character, grounded, ctx, this.match, this.loot, this.board);
       this.characters.register(bot.collider.handle, spec.id);
       this.spawns.set(spec.id, grounded.clone());
       this.bots.push(bot);

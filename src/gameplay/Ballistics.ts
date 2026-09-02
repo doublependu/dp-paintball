@@ -327,13 +327,18 @@ export class BallisticsSystem implements System {
     return false;
   }
 
+  /** The projectile's collision shape, made once. See `sweep`. */
+  private sweepShape?: RapierNS.Ball;
+
   /** Swept sphere cast over this step's motion. Returns the hit, or null. */
   private sweep(
     physics: GameContext['physics'],
     projectile: Projectile,
     distance: number,
   ): RapierNS.ColliderShapeCastHit | null {
-    const shape = new physics.api.Ball(config.radius);
+    // Built once. This runs for every projectile on every fixed step, and a
+    // Rapier shape is a wasm-backed object rather than a plain one.
+    const shape = this.sweepShape ?? (this.sweepShape = new physics.api.Ball(config.radius));
     return physics.w.castShape(
       projectile.position,
       IDENTITY_ROTATION,

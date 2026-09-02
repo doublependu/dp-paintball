@@ -1,10 +1,24 @@
-import { Group, Material, Mesh, BoxGeometry, SphereGeometry, Vector3 } from 'three';
+import {
+  AdditiveBlending,
+  BufferAttribute,
+  Color,
+  CylinderGeometry,
+  DoubleSide,
+  Group,
+  Material,
+  Mesh,
+  MeshBasicMaterial,
+  BoxGeometry,
+  SphereGeometry,
+  Vector3,
+} from 'three';
 import type { NavGrid } from '../ai/NavGrid';
 import type { CharactersSystem } from '../character/CharactersSystem';
 import { match as matchConfig, paintColors } from '../core/Config';
 import { Rng } from '../core/Random';
 import type { GameContext, System } from '../core/System';
 import { createCelMaterial } from '../render/CelMaterial';
+import { NO_OUTLINE_LAYER } from '../render/NprPipeline';
 import { LOOT_SPOTS } from '../world/ParkLayout';
 import { grant, type MatchState } from './MatchState';
 import type { PlayerState } from './PlayerState';
@@ -15,6 +29,8 @@ export interface LootCrate {
   readonly position: Vector3;
   /** Rounds it is holding. */
   rounds: number;
+  /** The hiding place's written name, for anything that has to say it aloud. */
+  readonly where: string;
 }
 
 /**
@@ -74,6 +90,26 @@ const BOB_RATE = 1.7;
 const SPIN_RATE = 0.5;
 
 /**
+ * The beacon: a shaft of light standing over every crate.
+ *
+ * A crate is 0.68m of brown box in a 130m park with hills, benches and a
+ * woodland belt in it, and the bots read its position out of shared state the
+ * instant it lands. The player was the only participant actually playing
+ * hide-and-seek, which is not the game this is meant to be.
+ *
+ * Eight metres clears the benches, the lamp posts and most of the understorey.
+ * The depth test stays *on* — a hill or the terrace still hides it — so finding
+ * a crate is still a matter of going and looking, just not of luck.
+ *
+ * One colour for every crate, deliberately: a signal you can learn is worth
+ * more than one that matches the paint inside.
+ */
+const BEACON_COLOR = 0xffd23f;
+const BEACON_HEIGHT = 8;
+const BEACON_BASE_RADIUS = 0.42;
+const BEACON_TOP_RADIUS = 0.14;
+
+/**
  * A crate's own slot: its mesh, whatever it is holding, and its timer.
  *
  * The group is built once and hidden between lives rather than being rebuilt,
@@ -82,6 +118,8 @@ const SPIN_RATE = 0.5;
  */
 interface CrateSlot {
   group: Group;
+  /** The shaft over it, held so the pulse costs no scene-graph lookup. */
+  beacon: Mesh;
   /** The live crate, or null while this slot is waiting to respawn. */
   crate: LootCrate | null;
   /** Where the group sits before the bob is applied. */
@@ -129,18 +167,19 @@ export class LootSystem implements System {
 
     this.ctx = ctx;
     for (let i = 0; i < matchConfig.lootCrates; i++) {
-      const group = this.buildCrate();
+      const { group, beacon } = this.buildCrate();
       group.visible = false;
       ctx.scene.add(group);
       this.slots.push({
         group,
+        beacon,
         crate: null,
         base: new Vector3(),
         respawnTimer: 0,
         lastSpotIndex: -1,
       });
     }
-    for (const slot of this.slots) this.spawn(slot, ctx);
+    for (const slot of this.slots) this.spawn(slot, ctx, false);
   }
 
   /**
@@ -161,7 +200,7 @@ export class LootSystem implements System {
       slot.crate = null;
       slot.group.visible = false;
       slot.respawnTimer = 0;
-      this.spawn(slot, ctx);
+      this.spawn(slot, ctx, false);
     }
   }
 
@@ -174,7 +213,7 @@ export class LootSystem implements System {
       // at 0 a taken crate is gone for the rest of the round.
       if (matchConfig.lootRespawnSeconds <= 0) continue;
       slot.respawnTimer -= dt;
-      if (slot.respawnTimer <= 0) this.spawn(slot, ctx);
+      if (slot.respawnTimer <= 0) this.spawn(slot, ctx, true);
     }
 
     this.checkPickup(ctx);
@@ -192,11 +231,23 @@ export class LootSystem implements System {
       const phase = ctx.elapsed + index * 0.83;
       group.position.y = slot.base.y + BOB_HEIGHT * (1 + Math.sin(phase * BOB_RATE)) * 0.5;
       group.rotation.y = phase * SPIN_RATE;
+      // The beacon breathes rather than blinks. A hard flash reads as an alert
+      // in a game that has nothing to be alarmed about.
+      const material = slot.beacon.material as MeshBasicMaterial;
+      material.opacity = 0.78 + 0.22 * Math.sin(phase * 1.1);
     });
   }
 
-  /** Places one slot's crate at a fresh hiding place. */
-  private spawn(slot: CrateSlot, ctx: GameContext): void {
+  /**
+   * Places one slot's crate at a fresh hiding place.
+   *
+   * `announce` is false for the crates a round opens with and true for one that
+   * arrives on a respawn timer. Three toasts stacking on top of each other at
+   * the whistle is noise, and the whistle is the one moment a player is already
+   * being told several things; a crate appearing thirty-five seconds into a
+   * fight is genuinely news, and it is the round's pacing signal.
+   */
+  private spawn(slot: CrateSlot, ctx: GameContext, announce: boolean): void {
     const nav = this.characters.navGrid;
     if (!nav) return;
 
@@ -207,13 +258,19 @@ export class LootSystem implements System {
     slot.group.position.copy(slot.base);
     slot.group.visible = true;
 
-    const crate: LootCrate = { position: slot.base.clone(), rounds: matchConfig.lootAmmo };
+    const crate: LootCrate = {
+      position: slot.base.clone(),
+      rounds: matchConfig.lootAmmo,
+      where: spot.where,
+    };
     slot.crate = crate;
     this.loot.crates.push(crate);
 
     ctx.events.emit('loot:spawned', {
       position: crate.position.clone(),
       rounds: crate.rounds,
+      where: crate.where,
+      announce,
     });
   }
 
@@ -296,34 +353,36 @@ export class LootSystem implements System {
    * something to take cover behind and to block shots — neither of which a
    * pickup should do.
    */
-  private buildCrate(): Group {
+  private buildCrate(): { group: Group; beacon: Mesh } {
     const group = new Group();
 
+    // Grown from 0.52. At the old size a crate read as a rock from twenty
+    // metres, which is most of the park.
     const body = new Mesh(
-      new BoxGeometry(0.52, 0.36, 0.52),
+      new BoxGeometry(0.68, 0.47, 0.68),
       createCelMaterial({ color: 0x9c6f5c, rimStrength: 0.25 }),
     );
-    body.position.y = 0.18;
+    body.position.y = 0.235;
     body.castShadow = true;
     body.receiveShadow = true;
     group.add(body);
 
     const lid = new Mesh(
-      new BoxGeometry(0.58, 0.07, 0.58),
+      new BoxGeometry(0.76, 0.09, 0.76),
       createCelMaterial({ color: 0x6f4b3c, rimStrength: 0.25 }),
     );
-    lid.position.y = 0.39;
+    lid.position.y = 0.51;
     lid.castShadow = true;
     group.add(lid);
 
     // Loose paintballs on the lid, in the match's own colours — the one part of
     // the crate that says what is in it from a distance.
-    const ballGeometry = new SphereGeometry(0.07, 10, 8);
+    const ballGeometry = new SphereGeometry(0.09, 10, 8);
     const offsets: Array<[number, number]> = [
-      [-0.12, -0.08],
-      [0.1, -0.1],
-      [0.02, 0.11],
-      [0.15, 0.06],
+      [-0.16, -0.1],
+      [0.13, -0.13],
+      [0.03, 0.14],
+      [0.2, 0.08],
     ];
     offsets.forEach(([x, z], index) => {
       const ball = new Mesh(
@@ -334,12 +393,77 @@ export class LootSystem implements System {
           rimPower: 2,
         }),
       );
-      ball.position.set(x, 0.47, z);
+      ball.position.set(x, 0.62, z);
       ball.castShadow = true;
       group.add(ball);
     });
 
-    return group;
+    const beacon = this.buildBeacon();
+    group.add(beacon);
+
+    return { group, beacon };
+  }
+
+  /**
+   * The shaft of light over a crate.
+   *
+   * An open-ended cone, additively blended, fading out along its own height
+   * through a per-vertex alpha rather than through a texture or a shader — the
+   * geometry has two rings of vertices and the fade is linear, so a four-channel
+   * colour attribute is the whole gradient.
+   *
+   * Three details that are all load-bearing:
+   *
+   * - **`NO_OUTLINE_LAYER`.** The NPR prepass swaps every visible mesh for a
+   *   normal material and renders it, and a beacon in that buffer would come
+   *   back inked and ambient-occluded like a solid post. The sky solves the same
+   *   problem the same way: the prepass turns this layer off, the main camera
+   *   leaves it on.
+   * - **`depthWrite: false`, `depthTest: true`.** It is a glow, so it must not
+   *   occlude anything — and it must still be occluded, or a crate behind the
+   *   terrace advertises itself through solid stone.
+   * - **No shadow.** A column of light casting a shadow is a column of smoke.
+   */
+  private buildBeacon(): Mesh {
+    const geometry = new CylinderGeometry(
+      BEACON_TOP_RADIUS,
+      BEACON_BASE_RADIUS,
+      BEACON_HEIGHT,
+      10,
+      1,
+      true,
+    );
+    geometry.translate(0, BEACON_HEIGHT / 2, 0);
+
+    const position = geometry.getAttribute('position');
+    const colors = new Float32Array(position.count * 4);
+    const tint = new Color(BEACON_COLOR);
+    for (let i = 0; i < position.count; i++) {
+      // Bright and solid where it leaves the crate, gone by the top.
+      const t = position.getY(i) / BEACON_HEIGHT;
+      colors[i * 4] = tint.r;
+      colors[i * 4 + 1] = tint.g;
+      colors[i * 4 + 2] = tint.b;
+      colors[i * 4 + 3] = 0.62 * Math.pow(1 - t, 1.4);
+    }
+    geometry.setAttribute('color', new BufferAttribute(colors, 4));
+
+    const beacon = new Mesh(
+      geometry,
+      new MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        blending: AdditiveBlending,
+        depthWrite: false,
+        side: DoubleSide,
+        toneMapped: false,
+      }),
+    );
+    beacon.castShadow = false;
+    beacon.receiveShadow = false;
+    beacon.layers.set(NO_OUTLINE_LAYER);
+    beacon.position.y = 0.45;
+    return beacon;
   }
 
   dispose(): void {

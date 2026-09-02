@@ -97,6 +97,9 @@ export const LOOT_SPOTS: ReadonlyArray<{ x: number; z: number; where: string }> 
   { x: -76, z: 72, where: 'the south-west woods' },
   { x: 11, z: 82, where: "the Mall's south end, off the allée" },
   { x: 58, z: 5, where: 'the wooded rise on the east flank' },
+  // Added when the paint screen moved to the meadow's west rim: the board is a
+  // place people go now, and a crate near it gives them a second reason to.
+  { x: -58, z: 36, where: 'the meadow, beside the painting wall' },
   { x: 52, z: -69, where: 'the north-east shore, above the water' },
 ];
 

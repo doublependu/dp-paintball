@@ -14,6 +14,21 @@ const LIVE_HINT =
   'right-click aim &nbsp;·&nbsp; t wave &nbsp;·&nbsp; tab scores';
 const LIVE_SCOREBOARD_TITLE = 'Nobody wins. Everybody gets messy.';
 
+/**
+ * Where the nearest paint crate is, in screen terms.
+ *
+ * `offscreen` means the crate is outside the viewport or behind the camera and
+ * the marker has been pinned to the edge pointing at it; `angle` is where to
+ * point, in radians, and is meaningless otherwise.
+ */
+export interface CrateMarker {
+  x: number;
+  y: number;
+  angle: number;
+  distance: number;
+  offscreen: boolean;
+}
+
 export interface ScoreRow {
   id: string;
   label: string;
@@ -44,6 +59,8 @@ export class Hud {
   private scoreboard: HTMLDivElement;
   private scoreboardBody: HTMLDivElement;
   private hint: HTMLDivElement;
+  private crateMarker: HTMLDivElement;
+  private crateLabel: HTMLElement;
 
   private toastTimer = 0;
   private roundOver = false;
@@ -69,6 +86,12 @@ export class Hud {
           <span class="hud__label">tagged you</span>
         </div>
       </div>
+      <div class="hud__crate-marker" data-crate-marker>
+        <svg class="hud__crate-arrow" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M6 0 12 11H0Z" />
+        </svg>
+        <span class="hud__crate-label" data-crate-label></span>
+      </div>
       <div class="hud__toast" data-toast></div>
       <div class="hud__hint" data-hint>${LIVE_HINT}</div>
       <div class="hud__scoreboard" data-scoreboard>
@@ -90,6 +113,8 @@ export class Hud {
     this.scoreboard = this.root.querySelector('[data-scoreboard]')!;
     this.scoreboardBody = this.root.querySelector('[data-scoreboard-body]')!;
     this.hint = this.root.querySelector('[data-hint]')!;
+    this.crateMarker = this.root.querySelector('[data-crate-marker]')!;
+    this.crateLabel = this.root.querySelector('[data-crate-label]')!;
     // See the note on LIVE_HINT. The reference is kept so the setters below
     // stay unconditional; they simply operate on a node nobody can see.
     if (isTouchDevice()) this.hint.remove();
@@ -143,6 +168,7 @@ export class Hud {
       this.toastTimer = 0;
       this.toast.classList.remove('is-visible');
       this.scoreboard.classList.remove('is-visible');
+      this.crateMarker.classList.remove('is-visible');
     }
   }
 
@@ -162,6 +188,35 @@ export class Hud {
     element.classList.remove('is-bumped');
     void element.offsetWidth;
     element.classList.add('is-bumped');
+  }
+
+  /**
+   * Points at the nearest paint crate, or hides the marker when given null.
+   *
+   * The one piece of HUD in this game that tells you where to go, and it was
+   * added reluctantly: the park is meant to be looked at rather than solved
+   * off a minimap. It earns its place because the bots read crate positions
+   * out of shared state the moment one lands, so without it the player is the
+   * only participant who has to search. It shows one crate, only within the
+   * range a bot would notice one, and it says how far rather than drawing a
+   * line to it.
+   */
+  setCrateMarker(marker: CrateMarker | null): void {
+    if (!marker || this.roundOver) {
+      this.crateMarker.classList.remove('is-visible');
+      return;
+    }
+    this.crateMarker.classList.add('is-visible');
+    this.crateMarker.classList.toggle('is-offscreen', marker.offscreen);
+    this.crateMarker.style.transform = `translate(${marker.x.toFixed(1)}px, ${marker.y.toFixed(1)}px)`;
+    // The arrow only turns when it is pinned to an edge; over the crate itself
+    // it sits upright as a marker rather than as a direction.
+    this.crateMarker.style.setProperty(
+      '--crate-angle',
+      marker.offscreen ? `${marker.angle.toFixed(3)}rad` : '0rad',
+    );
+    const label = `${Math.round(marker.distance)}m`;
+    if (this.crateLabel.textContent !== label) this.crateLabel.textContent = label;
   }
 
   showToast(message: string, color: number, seconds = 1.6): void {

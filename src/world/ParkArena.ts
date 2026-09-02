@@ -251,8 +251,8 @@ export class ParkArenaSystem implements System {
       this.birds?.scatter(origin.x, origin.z);
     });
     this.placeArchitecture(ctx);
-    // Before the furniture, which reads the screen's footprint to keep the
-    // bench ring off it.
+    // Before the furniture and the trees, both of which read the screen's
+    // footprint to keep out of it.
     this.screen.build(ctx);
     this.placeFurniture(ctx, rng);
     this.placeNature(ctx, rng);
@@ -679,9 +679,9 @@ export class ParkArenaSystem implements System {
     }
     // Not on the sign, which is its own three colliders on the paving.
     if (Math.hypot(x - SIGN.x, z - SIGN.z) < 2.2) return false;
-    // Not against the paint screen. The plaza's bench ring passes within a
-    // metre of both its ends; the margin also keeps a lamp post from standing
-    // in front of the canvas and casting a bar across it.
+    // Not against the paint screen. This kept the plaza's bench ring off its
+    // ends when it stood there; on the meadow it keeps a lamp post from
+    // standing in front of the canvas and casting a bar across it.
     if (screenBlocks(x, z, 2)) return false;
     return true;
   }
@@ -834,6 +834,11 @@ export class ParkArenaSystem implements System {
     if (Math.abs(x) < TERRACE.halfWidth + 6 && z > TERRACE.northZ - 8 && z < TERRACE.southZ + 8) {
       return false;
     }
+    // Not through the paint screen. It stands on the meadow's west rim now, and
+    // `meadowMask` alone is not enough: the mask falls off across the last few
+    // metres of the board's width, which is exactly where a tree would grow out
+    // of the canvas. The margin also keeps a canopy from leaning over the face.
+    if (screenBlocks(x, z, 3)) return false;
     return true;
   }
 
@@ -1157,6 +1162,9 @@ export class ParkArenaSystem implements System {
     this.fountain?.update(ctx.elapsed);
     this.foliage?.update(ctx.elapsed);
     this.birds?.update(dt, ctx.elapsed);
+    // The mural's canvas is handed to the GPU here rather than on every hit —
+    // see `PaintScreen.update` for what that costs when it is not.
+    this.screen.update(dt);
 
     // Keep the shadow frustum over the player. Snapped to whole metres, because
     // sliding it continuously makes every shadow edge crawl as you walk.

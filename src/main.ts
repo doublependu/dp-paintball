@@ -1,5 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
+import { MURAL_DESIGNS, dotsFor, letterDesign } from './ai/MuralDesigns';
 import { CharacterRegistry } from './character/CharacterRegistry';
 import { CharactersSystem, type BotSpec } from './character/CharactersSystem';
 import { AudioSystem } from './audio/AudioSystem';
@@ -19,6 +20,7 @@ import { SplatAtlas } from './paint/SplatAtlas';
 import { SurfaceRegistry } from './paint/SurfaceRegistry';
 import { HudSystem } from './ui/HudSystem';
 import { PauseSystem } from './ui/PauseSystem';
+import { PosterCapture } from './ui/PosterCapture';
 import { ResultsSystem } from './ui/ResultsSystem';
 import { TouchControlsSystem } from './ui/TouchControls';
 import { PaintScreen } from './world/PaintScreen';
@@ -71,9 +73,10 @@ const bots: BotSpec[] = useTestCourse
   ? []
   : [
       { id: 'bot-a', position: new Vector3(-16, 0, 4), colorIndex: 1, personality: 0 },
-      // Moved off (16, 6) when the paint screen went up on the plaza's east
-      // rim: that spawn was two metres behind the board, so this one opened
-      // every round facing the back of a wall.
+      // Moved off (16, 6) in iteration 5, when the paint screen stood on the
+      // plaza's east rim and that spawn was two metres behind it. The board has
+      // since gone to the meadow; this spawn stays because it spreads the
+      // opening better than the one it replaced.
       { id: 'bot-b', position: new Vector3(19, 0, 13), colorIndex: 2, personality: 1 },
       { id: 'bot-c', position: new Vector3(4, 0, 42), colorIndex: 3, personality: 2 },
       // Respread when the map grew: this one used to sit in the Ramble, which
@@ -108,6 +111,7 @@ const charactersSystem = new CharactersSystem(
   splatAtlas,
   match,
   loot,
+  useTestCourse ? null : paintScreen,
   bots,
   // Only used to put the player back at their spawn when a round restarts.
   player,
@@ -115,10 +119,15 @@ const charactersSystem = new CharactersSystem(
 const lootSystem = new LootSystem(match, loot, playerState, charactersSystem, lootSeed);
 const matchSystem = new MatchSystem(match, charactersSystem, ballistics, loot, lootSystem);
 const audio = new AudioSystem(playerState);
-const hud = new HudSystem(container, charactersSystem, splatAtlas, match);
+const hud = new HudSystem(container, charactersSystem, splatAtlas, match, loot, playerState);
 // One solver shared by the gun and the scene crosshair, so the mark on the
 // ground is traced from the same muzzle and direction the ball actually leaves.
 const aim = new AimSolver();
+// The souvenir: one frame of the park with the mural in it, taken at the
+// whistle. It has to run before `ResultsSystem`, which reparents every
+// character onto the results stage — a photograph taken after that is of an
+// empty meadow.
+const poster = new PosterCapture(game.render, useTestCourse ? null : paintScreen, match);
 
 // Registration order is execution order, and it matters:
 //   player writes renderPosition -> camera reads it and writes avatarOpacity
@@ -152,6 +161,8 @@ game
   .add(new TouchControlsSystem(container, match))
   // After the HUD, whose bottom hint it replaces while the round is held.
   .add(new PauseSystem(container, charactersSystem, match))
+  // Before the results, and that ordering is the whole contract. See above.
+  .add(poster)
   // Last: it draws over the finished frame, and it takes the characters out of
   // the world, which everything above expects to still be there while playing.
   .add(
@@ -161,6 +172,7 @@ game
       match,
       game.render,
       useTestCourse ? null : paintScreen,
+      useTestCourse ? null : poster,
     ),
   );
 
@@ -185,6 +197,7 @@ declare global {
       ballistics: BallisticsSystem;
       paint: PaintSystem;
       paintScreen: PaintScreen;
+      poster: PosterCapture;
       characters: CharactersSystem;
       audio: AudioSystem;
       hud: HudSystem;
@@ -198,6 +211,12 @@ declare global {
       stepSim: (seconds: number) => number;
       bootTimings: () => Array<{ phase: string; ms: number }>;
       impacts: ImpactRecord[];
+      /** The bots' drawing catalogue, so the suite can check it directly. */
+      mural: {
+        designs: typeof MURAL_DESIGNS;
+        dotsFor: typeof dotsFor;
+        letterDesign: typeof letterDesign;
+      };
     };
   }
 }
@@ -226,6 +245,7 @@ window.__paintball = {
   ballistics,
   paint,
   paintScreen,
+  poster,
   characters: charactersSystem,
   audio,
   hud,
@@ -239,6 +259,7 @@ window.__paintball = {
   stepSim: (seconds) => game.stepSim(seconds),
   bootTimings: () => game.bootTimings,
   impacts,
+  mural: { designs: MURAL_DESIGNS, dotsFor, letterDesign },
 };
 
 game.events.on('load:progress', ({ phase, progress }) => {
