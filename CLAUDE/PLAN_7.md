@@ -1,140 +1,20 @@
-# Plan 7 — the pedestal that eats paint, a park that says where you are, and the bots' side quest
+# Plan 7 — a park that says where you are, and the bots' side quest
 
-`CLAUDE/prompt_7.md`, three items, after its update. Items 1 and 3 are both
-about the board on Sheep Meadow and both are the same shape of problem:
-something we believe about the mural is not true in play. Item 1 is a bug with a
-measured cause. Item 3 is a feature that exists, is tested, and never happens —
-which is worse, and the measurement below says exactly why. Item 2 is new
-content with one interesting constraint: every sign is a collider, and every
-collider is a navgrid obstacle.
+`CLAUDE/prompt_7.md`, two items after its second update, and they are
+independent: item 1 is new content in `ParkArena` and `SignPlaque`, item 2 is
+`Bot`, `PaintScreen` and `Config`. Nothing forces an order, so take them in the
+prompt's — the signs first, because the work is mechanical and its tests are
+cheap arithmetic over an exported table, and the mural second, because it is the
+one with a judgement call in it that wants a look at the screen before it is
+settled.
 
-Order of work: 1, then 3, then 2. Item 1 is the smallest diff and it opens
-`PaintScreen.ts`, which item 3 also has to change; doing them together is one
-read of that file rather than two. Item 2 is last because it is the largest and
-it wants the shared sign builder extracted before anything else touches
-`ParkArena`.
+The interesting item is the second one, and not for the reason the prompt
+expects: bots painting the mural is already built and already tested, and it
+still never happens in a real round. The measurement is below.
 
 ---
 
-## 1. The plinth
-
-### What is actually wrong
-
-The prompt names the plinth and the prompt is right, and it is right about
-slightly less than the whole bug. The canvas itself accepts paint over its whole
-surface; `screen-test` already stamps at `v = 0.8` and lands there, and a sweep
-of real shots confirms the accepted band runs to the canvas's bottom edge.
-
-What is wrong is everything *below and around* the canvas. Sweeping pitch from
--6° to +26° at 8m, 14m and 22m in front of the board and logging every
-`hit:world` in the board's own frame — the canvas runs y ∈ [-3.094, 3.094], the
-frame's front face sits at z = 0.225 and the plinth's at z = 0.395, so a ball
-centre reported at z = 0.28 struck the frame and one at z = 0.45 struck the
-plinth:
-
-```
-from 14m   pitch=0   4 hits, 0 splats   y = -3.70 -3.53 -3.50 -3.46 at z=0.45
-from 14m   pitch=2   4 hits, 1 splat    y = -3.10 -3.21 -2.95 -3.22 at z=0.28
-from 22m   pitch=0   4 hits, 0 splats   y = -4.42 -4.50 -4.41 -4.26 at z=0.45
-from 22m   pitch=2   4 hits, 0 splats   y = -3.63 -3.56 -3.52 -3.40 at z=0.45
-from  8m   pitch=0   4 hits, 2 splats   y = -3.24 -3.15 -3.23 -2.76 at z=0.28
-```
-
-Every zero-splat row there is a clean hit on the board that produced no paint
-anywhere in the game. The reason is in `PaintScreen.build`: it creates its two
-static boxes with `ctx.physics.createStaticBox` (`PaintScreen.ts:442` and
-`:447`) and never calls `surfaces.registerMesh` on either. The class header
-defends this — "Deliberately *not* a `SurfaceRegistry` receiver, so world decals
-never land on it" — and `onHit`'s own comment repeats it: "the plinth and frame
-reject themselves by geometry". Both are right about the *canvas* and both were
-over-applied to the whole board. `PaintSystem.paint` looks the handle up, gets
-`undefined`, and returns. So:
-
-- the **plinth**, `PLINTH_HEIGHT` 1.1m of clear standing height plus the buried
-  part, which is what the prompt is pointing at, and
-- the **frame's timber border**, `BORDER` 0.32m all the way round,
-
-are the only large colliders in the park that swallow a paintball whole. That is
-1.42m of board face directly under the picture, against a 6.19m picture — a
-quarter of the board's visible front — and it is exactly where the ballistic arc
-deposits anything aimed low. `SceneCrosshair`'s own header measures the drop at
-0.80m at 15m; the board is 72m from spawn and most shots at it are long ones.
-
-### The fix
-
-Register both, but not naively — the frame's collider is one box spanning the
-whole board, so registering its *box geometry* would mint a world decal for
-every hit on the canvas too. That is double paint and it is the vertex-budget
-blowout the class header correctly refuses.
-
-`PaintSystem.paint` gives us the way out, and it is already written down there:
-
-> A decal that clipped nothing means the impact point missed the receiver's
-> triangles — nothing to draw.
-
-So the receiver's geometry decides where paint can land, independently of what
-the collider's shape is. Three changes in `PaintScreen.build`:
-
-1. **The plinth** gets `surfaces.registerMesh(plinthCollider.handle, plinth)`.
-   It is its own collider and lies entirely below the canvas, so there is no
-   overlap to reason about. This is the same treatment the dedication sign's
-   posts already get, and it is the item the prompt asks for.
-
-2. **The frame** gets a purpose-built receiver: a "mount" geometry of eight
-   quads — the border ring just proud of the front face, and the same ring just
-   proud of the back — registered against the frame collider's handle via
-   `surfaces.register(handle, { geometry, matrixWorld })`. A hit in the middle
-   of the canvas clips none of those triangles and costs one `DecalGeometry`
-   that returns zero vertices; a hit on the border clips four and paints.
-   `PROJECTION_DEPTH` is 0.5 and the box is centred on the impact, so a front
-   hit reaches z ∈ [0.03, 0.53] in board-local space and cannot catch the back
-   ring at -0.237. That margin is why one geometry can hold both rings.
-
-3. **`PaintScreen` has to be given the `SurfaceRegistry`.** `GameContext` does
-   not carry one — `src/core/System.ts:11` — so `build(ctx)` cannot reach it.
-   `ParkArenaSystem` holds both (`ParkArena.ts:219`) and calls
-   `this.screen.build(ctx)` at `ParkArena.ts:256`, so widen `build` to
-   `build(ctx, surfaces)` and pass `this.surfaces` there. That keeps
-   `main.ts:61`'s one-argument constructor alone and keeps the registry out of
-   `PaintScreen`'s lifetime.
-
-### What is deliberately not done
-
-**Repainting the plinth.** An earlier draft of this plan argued for a stone grey
-against the canvas cream, on the grounds that `0xd8cdb8` and `#f7f4ec` are
-indistinguishable from the meadow and a player would call the plinth "the bottom
-of the mural". The updated prompt says "plinth". The player can evidently tell
-them apart, the recolour was only ever a fix for a confusion that isn't there,
-and the board reads better as one object. Dropped.
-
-**Extending the canvas over the whole outer board** — one texture holding the
-border and the plinth, with the 16:9 region cropped out for the poster — is the
-architecturally purer answer and it is the wrong trade here. It grows the
-per-upload payload from 9.4MB to about 11.9MB at the same 20Hz, it puts the
-timber and the stone inside the thing `toDataURL` exports, and it rewrites the
-geometry, the poster crop and half of `screen-test` to fix a bug that three
-registrations fix. Revisit it only if the border ever needs to hold something
-the world-paint budget cannot.
-
-### Tests
-
-`tools/screen-test.mjs` gains three checks, and they have to be shots rather
-than stamped impacts, because the whole bug lives between the ballistic arc and
-the registry:
-
-- firing at the plinth raises `paintSystem.placedCount` and leaves
-  `paintScreen.splatCount` alone;
-- firing at the frame's bottom border does the same;
-- firing at the canvas raises `splatCount` and does **not** raise
-  `placedCount` — the guard against the double-paint regression, and the one
-  that would have caught a naive registration.
-
-The pitch sweep above is the shape to reuse: teleport to a known distance on the
-board's normal, step pitch, and read the two counters.
-
----
-
-## 2. Signs for the places
+## 1. Signs for the places
 
 The park is laid out from real ground — `ParkLayout.ts` names Bethesda Terrace,
 the Mall, Sheep Meadow, the Lake, Bow Bridge, the Ramble, Cherry Hill and the
@@ -236,7 +116,7 @@ lettering read at walking distance" is not a number.
 
 ---
 
-## 3. Bots painting the mural
+## 2. Bots painting the mural
 
 ### We did implement it
 
@@ -432,26 +312,35 @@ board, because "is that a heart" is not a number either.
 
 ## Not in this iteration
 
-The **post to X** item from the first version of `prompt_7.md` was removed when
-the prompt was updated, and nothing here plans for it. The two pieces it asked
-for are still written up in the previous draft of this file if they come back:
-a one-line copy change in `ResultsPanel.SHARE_TEXT`, and leading the share row
-with the already-implemented "copy the picture" path, since the X intent has
-never accepted an image and will not start.
+Two items have been dropped from `prompt_7.md` across its two updates, and
+nothing here plans for either. Both are written up in this file's earlier drafts
+in git if they come back.
+
+- **The plinth taking paint.** Measured and diagnosed before it was withdrawn,
+  and the finding stands on its own: `PaintScreen.build` creates its frame and
+  plinth colliders (`PaintScreen.ts:442`, `:447`) and registers neither with the
+  `SurfaceRegistry`, so both swallow a paintball whole — a pitch sweep at 14m
+  and 22m produced clean hits on the board with no paint anywhere in the game.
+  That is 1.42m of board face under a 6.19m picture, and it is still true. The
+  fix was three registrations, one of them a purpose-built eight-quad receiver
+  for the frame so canvas hits do not double-paint.
+- **Post to X.** A one-line copy change in `ResultsPanel.SHARE_TEXT`, and
+  leading the share row with the already-implemented "copy the picture" path,
+  since the X intent has never accepted an image and will not start.
 
 ## What cannot be tested on this machine
 
 - **Frame time on real hardware.** `tools/perf.mjs` still needs a GPU behind
   ANGLE and the page never boots for it here. Nothing in this iteration should
-  move it much — ten small static meshes and a handful of decal receivers — but
-  the normal prepass named in `PLAN_6.md` is still the largest known cost and
-  still the first thing to do on a machine that can measure it.
+  move it much — ten small static meshes, and bots that fire fewer shots than
+  they do now — but the normal prepass named in `PLAN_6.md` is still the largest
+  known cost and still the first thing to do on a machine that can measure it.
 - **Whether a corner drawing reads.** The fill table is a proxy for legibility,
   not legibility. It is good enough to reject the dense half of the catalogue
   and not good enough to accept the sparse half; that wants `npm run stills` and
   a pair of eyes, and if 2.8m turns out to be too small the honest fix is 3.2m
   and two painters rather than a cleverer design.
-- **One seed.** Every number in item 3 comes from a single 300-second run with
+- **One seed.** Every number in item 2 comes from a single 300-second run with
   the player standing still. The direction of the result is not in doubt — three
   splats is not a sampling artefact — but the exact split between "has a target"
   and "too far" will move with the seed and with a player who actually plays.
