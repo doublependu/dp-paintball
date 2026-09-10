@@ -152,7 +152,10 @@ game
   .add(new CameraRig(playerState))
   .add(ballistics)
   .add(new WeaponSystem(playerState, ballistics, aim, match))
-  // After the camera, which it aims from; before paint, which does not care.
+  // After the camera, and that one is load-bearing rather than tidy: the
+  // crosshair traces down the camera's forward axis in its own `update`, so
+  // registered ahead of the rig it would aim down the previous frame's view
+  // and the mark would trail the mouse. Before paint, which does not care.
   .add(new SceneCrosshairSystem(playerState, ballistics, aim))
   .add(paint)
   .add(charactersSystem)

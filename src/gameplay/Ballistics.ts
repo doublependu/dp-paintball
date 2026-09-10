@@ -89,8 +89,9 @@ export class BallisticsSystem implements System {
   private readonly hitNormal = new Vector3();
   private readonly renderPosition = new Vector3();
   // Prediction scratch. Kept apart from the live-step scratch above: the scene
-  // crosshair predicts from its own fixedUpdate, and sharing would let one
-  // overwrite the other mid-trace.
+  // crosshair predicts from its own update, in the same frame this system is
+  // stepping live projectiles, and sharing would let one overwrite the other
+  // mid-trace.
   private readonly predictPosition = new Vector3();
   private readonly predictVelocity = new Vector3();
   private readonly predictChordStart = new Vector3();

@@ -101,7 +101,7 @@ export class AimSolver {
    * It stays analytic rather than reading the posed joint matrix: the rig is
    * posed in `update()` and shots are fired from `fixedUpdate()`, so a matrix
    * read here would be a frame stale, and the scene crosshair traces from this
-   * same point every step. `character-test` asserts the two agree.
+   * same point every frame. `character-test` asserts the two agree.
    */
   private computeMuzzle(state: PlayerState): void {
     const yaw = state.yaw;
@@ -110,8 +110,13 @@ export class AimSolver {
     this.forward.set(-Math.sin(yaw), 0, -Math.cos(yaw));
     this.lateral.set(Math.cos(yaw), 0, -Math.sin(yaw));
 
-    // Simulation position, not renderPosition: this runs in fixedUpdate, where
-    // the interpolated visual transform is a frame stale.
+    // Simulation position, not renderPosition, on both of this solver's two
+    // callers. The gun fires from `fixedUpdate`, where the interpolated visual
+    // transform is a frame stale; the scene crosshair solves from `update`,
+    // where it is not, but it reads the same number on purpose so the mark and
+    // the shot cannot disagree. What is left is at most one fixed step of
+    // travel — 12cm at a sprint — applied as a translation of the muzzle,
+    // which barely moves an aim point solved by tracing from the camera.
     this.muzzle
       .copy(state.position)
       .addScaledVector(UP, 1.29 * heightRatio)

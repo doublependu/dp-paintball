@@ -285,7 +285,8 @@ const cost = await page.evaluate(() => {
   for (let i = 0; i < N; i++) ballistics.predict(game.physics, origin, dir, out);
   return (performance.now() - t0) / N;
 });
-// One prediction per fixed step; a fixed step's whole budget is 16.6ms.
+// One prediction per rendered frame; a 60fps frame's whole budget is 16.6ms,
+// and a machine drawing at 240 has a quarter of that to spend on everything.
 check('a prediction costs well under a frame', cost < 1.5, `${cost.toFixed(3)}ms per solve`);
 
 check('no console or page errors', consoleErrors.length === 0, consoleErrors[0] ?? 'clean');

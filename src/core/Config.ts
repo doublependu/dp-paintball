@@ -253,8 +253,6 @@ export const sceneCrosshair = {
    * while the ring keeps the mark feeling planted on the surface.
    */
   dotAngularSize: 0.013,
-  /** Damping toward each freshly solved point. */
-  lambda: 26,
   /** Spacing between arc droplets, in fixed steps. */
   arcStride: 2,
   /** Arc droplet radius in metres. */
