@@ -27,7 +27,9 @@
     "encode": "node tools/encode.mjs",
     "perf": "node tools/perf.mjs",
     "perf:attribute": "node tools/perf-attribute.mjs",
-    "test:mural": "node tools/mural-test.mjs"
+    "test:mural": "node tools/mural-test.mjs",
+    "record:match": "node tools/record-match.mjs",
+    "playtest": "node tools/playtest.mjs"
   },
   "devDependencies": {
     "@types/three": "^0.185.4",

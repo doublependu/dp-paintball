@@ -17,11 +17,14 @@
  * capture of a browser that is taking 75ms per frame never could.
  *
  * Usage: node tools/record-match.mjs [--out DIR] [--fps N] [--seed N]
- *          [--round SECONDS] [--dry] [--no-encode] [--url URL]
+ *          [--round SECONDS] [--policy film|play] [--dry] [--no-encode]
+ *          [--no-share] [--url URL]
  *
- *   --round   shorten the round, for test runs (default: the full 300s)
- *   --dry     simulate the round without screenshots and write the log only;
- *             sample stills every ten seconds so the play can be judged
+ *   --round    shorten the round, for test runs (default: the full 300s)
+ *   --policy   how the autopilot plays — see tools/autopilot.js (default: film)
+ *   --dry      simulate the round without screenshots and write the log only;
+ *              sample stills every ten seconds so the play can be judged
+ *   --no-share skip the second, smaller encode for sending to people
  */
 import { chromium } from 'playwright-core';
 import { execFileSync } from 'node:child_process';
@@ -42,8 +45,10 @@ const HEIGHT = Number(opt('height', 1080));
 const SEED = Number(opt('seed', 20260917));
 const ROUND = opt('round', null) === null ? null : Number(opt('round'));
 const URL = opt('url', 'http://localhost:4173/');
+const POLICY = opt('policy', 'film');
 const DRY = flag('dry');
 const ENCODE = !flag('no-encode') && !DRY;
+const SHARE = ENCODE && !flag('no-share');
 
 const PREROLL = 3.5;
 const RESULTS = 14;
@@ -146,6 +151,7 @@ const cdp = await page.context().newCDPSession(page);
 await cdp.send('Animation.enable');
 const setAnimationRate = (rate) => cdp.send('Animation.setPlaybackRate', { playbackRate: rate });
 
+await page.evaluate(([policy, seed]) => { window.__autopilotConfig = { policy, seed }; }, [POLICY, SEED]);
 await page.addScriptTag({ path: 'tools/autopilot.js' });
 if (ROUND !== null) await page.evaluate((r) => { window.__paintball.match.timeLeft = r; }, ROUND);
 
@@ -235,6 +241,7 @@ const snapshot = () => page.evaluate(() => {
     pos: [+state.position.x.toFixed(1), +state.position.z.toFixed(1)],
     target: window.__autopilot.target?.id ?? null,
     wetCamera: window.__autopilot.wetCameraFrames,
+    cameraInside: window.__autopilot.cameraInsideFrames,
     scores: characters.allCharacters.map((c) => `${c.hitsGiven}/${c.hitsTaken}`).join(' '),
     bots: characters.allBots.map((b) => b.state[0]).join(''),
   };
@@ -279,9 +286,10 @@ for (let f = 0; f < resultsFrames; f++) {
 
 const final = await snapshot();
 const log = await page.evaluate(() => window.__autopilot.log);
+const metrics = await page.evaluate(() => window.__autopilot.metrics);
 writeFileSync(join(OUT, 'match.json'), JSON.stringify({
-  fps: FPS, width: WIDTH, height: HEIGHT, seed: SEED, preroll: PREROLL,
-  matchFirstFrame, matchFrames, frames: frameIndex, final, timeline, log, errors,
+  fps: FPS, width: WIDTH, height: HEIGHT, seed: SEED, policy: POLICY, preroll: PREROLL,
+  matchFirstFrame, matchFrames, frames: frameIndex, final, metrics, timeline, log, errors,
 }, null, 2));
 console.log(`final scores (player first, given/taken): ${final.scores}`);
 
@@ -353,4 +361,22 @@ if (ENCODE) {
   ], { stdio: ['ignore', 'ignore', 'inherit'] });
   // Frames and stems stay behind for a re-cut; the mp4 is the deliverable.
   console.log(`-> ${outPath}`);
+
+  // The master is for uploading; at 16Mbps five minutes is over 600MB, which
+  // is not something to send anybody. This one is: re-encoded from the master
+  // rather than from the frames, which is quicker and loses nothing that
+  // CRF 23 would have kept.
+  if (SHARE) {
+    const sharePath = join(OUT, 'central-park-paintball-full-round-share.mp4');
+    console.log('encoding the share copy...');
+    execFileSync(FFMPEG, [
+      '-y', '-loglevel', 'warning', '-i', outPath,
+      '-c:v', 'libx264', '-preset', 'slow', '-crf', '23', '-maxrate', '6M', '-bufsize', '12M',
+      '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-g', String(FPS * 2),
+      '-c:a', 'aac', '-b:a', '160k',
+      '-movflags', '+faststart',
+      sharePath,
+    ], { stdio: ['ignore', 'ignore', 'inherit'] });
+    console.log(`-> ${sharePath}`);
+  }
 }

@@ -57,6 +57,18 @@ export const TERRACE = {
   southZ: 27,
   halfWidth: 30,
   slabThickness: 0.7,
+  /**
+   * The undercroft's back wall. South of here the lawn ramps up toward the
+   * Mall under the slab's rear strip, so the room ends before the ground
+   * starts to rise, and the strip is solid from here to `southZ` — except for
+   * the passage out.
+   */
+  undercroftBackZ: 23.8,
+  /**
+   * Half-width of the open-air passage from the undercroft up to the Mall,
+   * lined up with the arcade's three central bays.
+   */
+  passageHalfWidth: 6,
 };
 /** North facade of the undercroft — the arcade colonnade. */
 export const ARCADE = { z: 16, bays: 5, bayWidth: 4 };

@@ -149,6 +149,91 @@ check('arcade undercroft is walkable through an arch',
       undercroft.grounded && undercroft.y < 1.5 && undercroft.z > 16.5,
       `reached z=${undercroft.z.toFixed(1)} at y=${undercroft.y.toFixed(2)}, under a 4.2m slab`);
 
+// --- The undercroft is a room, and the passage out of it is open ------------
+// It used to have no back: the lawn climbing to the Mall ran on under the
+// slab, so the rear of the room was a floor rising into the ceiling across
+// its whole width — a crawlspace a camera could end up in, and did, twice in
+// the first recorded round. It has a back wall either side of the passage now,
+// and the passage itself is open to the sky.
+const undercroftShape = await page.evaluate(() => {
+  const { game, layout, state } = window.__paintball;
+  const V = game.render.camera.position.constructor;
+  const south = new V(0, 0, 1);
+  // The walk above leaves the player standing in the passage's mouth.
+  const me = state.collider ?? undefined;
+  const up = new V(0, 1, 0);
+  const wallAt = (x) => {
+    const hit = game.physics.raycast(new V(x, 1.2, 20), south, 12, me);
+    return hit ? hit.point.z : Infinity;
+  };
+  const skyOver = (z) => game.physics.raycast(new V(0, layout.heightAt(0, z) + 1.5, z), up, 20, me) === null;
+  return {
+    wests: [-24, -12].map(wallAt),
+    easts: [12, 24].map(wallAt),
+    passage: [24.5, 26, 27.5].map(skyOver),
+  };
+});
+const backs = [...undercroftShape.wests, ...undercroftShape.easts];
+check('the undercroft has a back wall either side of the passage',
+      backs.every((z) => z < 24.5),
+      `back wall at z=${backs.map((z) => z.toFixed(1)).join(', ')}`);
+check('the passage out of the undercroft is open to the sky',
+      undercroftShape.passage.every(Boolean),
+      `open at z=24.5/26/27.5: ${undercroftShape.passage.join('/')}`);
+
+// And it goes somewhere: on up to the Mall, as the real arcade does.
+await page.keyboard.down('w');
+await waitSim(4.5);
+await page.keyboard.up('w');
+await waitSim(0.5);
+const upPassage = await read();
+check('the undercroft leads out and up to the Mall',
+      upPassage.grounded && upPassage.z > 29 && upPassage.y > 2,
+      `reached z=${upPassage.z.toFixed(1)} at y=${upPassage.y.toFixed(2)}`);
+
+// --- The camera never ends up inside anything --------------------------------
+// The arm is sphere-cast back from the shoulder, and the shoulder sits half a
+// metre to the player's right — so with a trunk or a sign board at the right
+// elbow, the cast started inside it and the camera stayed there. The playtest
+// harness found it at every one of these spots; each is swept through eight
+// headings with the player pressed against whatever is there.
+const cameraSweep = await page.evaluate(async () => {
+  const { player, state, stepSim, game, signs } = window.__paintball;
+  const V = state.position.constructor;
+  const spots = [
+    // From playtest logs: a tree on the east rise, one in the Ramble, the
+    // dedication sign, the fountain sign, a sign on the west drive.
+    [60.5, 8.7], [-31.6, -76.8], [-15.1, 5.5], [-9.7, 9.3], [-40.8, 11.5],
+    [-7.1, 21.3], [5, 23],
+  ];
+  // Both faces of every place sign, a step off the board.
+  for (const s of signs.places) {
+    const dx = s.faceX - s.x, dz = s.faceZ - s.z, len = Math.hypot(dx, dz) || 1;
+    spots.push([s.x + (dx / len) * 0.6, s.z + (dz / len) * 0.6]);
+    spots.push([s.x - (dx / len) * 0.6, s.z - (dz / len) * 0.6]);
+  }
+  const inside = [];
+  for (const [x, z] of spots) {
+    for (let k = 0; k < 8; k++) {
+      state.yaw = (k / 8) * Math.PI * 2;
+      state.pitch = -0.1;
+      player.teleport(new V(x, window.__paintball.layout.heightAt(x, z) + 1, z));
+      stepSim(0.5);
+      const cam = game.render.camera.position;
+      let hit = null;
+      game.physics.w.intersectionsWithPoint({ x: cam.x, y: cam.y, z: cam.z }, (c) => {
+        if (c.isSensor() || c.handle === state.collider?.handle) return true;
+        hit = c;
+        return false;
+      });
+      if (hit) inside.push(`(${x.toFixed(1)}, ${z.toFixed(1)}) yaw ${k * 45}`);
+    }
+  }
+  return { spots: spots.length, inside };
+});
+check('the camera never ends up inside geometry', cameraSweep.inside.length === 0,
+      cameraSweep.inside.slice(0, 4).join('; ') || `${cameraSweep.spots} spots x 8 headings`);
+
 // --- The grand stairs actually climb ---------------------------------------
 // They did not. Three flights were placed on the plateau *behind* the terrace,
 // climbing down a slope that rises to meet them: the bottom flight was buried,
@@ -333,6 +418,27 @@ const stranded = reach.filter((r) => !(r.distance <= 4.5));
 check('every sign has walkable ground beside it', stranded.length === 0,
       stranded.map((r) => `${r.name} ${r.distance.toFixed(1)}m`).join('; ') ||
       `furthest ${Math.max(...reach.map((r) => r.distance)).toFixed(1)}m`);
+
+// And the navgrid sees every board. A board is 0.12m thick against a 2m
+// grid, and the grid used to probe each cell at its centre and diagonals only,
+// which never reach a cell's edge: Cherry Hill's board stands on one, so bots
+// walked through it and the player walked into it.
+const unseen = await page.evaluate((table) => {
+  const nav = window.__paintball.characters.navGrid;
+  const missed = [];
+  for (const sign of table) {
+    const yaw = Math.atan2(sign.faceX - sign.x, sign.faceZ - sign.z);
+    const along = [Math.cos(yaw), -Math.sin(yaw)];
+    for (let a = -sign.half + 0.1; a <= sign.half - 0.1; a += 0.2) {
+      const x = sign.x + along[0] * a;
+      const z = sign.z + along[1] * a;
+      if (nav.isWalkable(x, z)) { missed.push(sign.name); break; }
+    }
+  }
+  return missed;
+}, signs.map(({ name, x, z, faceX, faceZ, half }) => ({ name, x, z, faceX, faceZ, half })));
+check('the navgrid blocks every sign board', unseen.length === 0,
+      unseen.join('; ') || `${signs.length} boards`);
 
 // And a sign takes paint, fired at rather than stamped — the whole point of
 // registering the boards is that they are ordinary park geometry, and neither

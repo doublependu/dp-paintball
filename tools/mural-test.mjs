@@ -210,6 +210,7 @@ for (let round = 0; round < ROUNDS; round++) {
 
   const rolls = new Set([cast.join(',')]);
   const designs = {};
+  const stall = { run: {}, last: {}, worst: 0, who: '' };
   for (let t = 0; t < 292; t += 4) {
     await waitSim(4);
     const snap = await page.evaluate(() => {
@@ -218,12 +219,35 @@ for (let round = 0; round < ROUNDS; round++) {
         roll: characters.allBots.filter((b) => b.isPainter).map((b) => b.id).join(','),
         bots: characters.allBots
           .filter((b) => b.isPainter)
-          .map((b) => ({ id: b.id, design: b.muralDesign })),
+          .map((b) => ({
+            id: b.id,
+            design: b.muralDesign,
+            state: b.state,
+            x: b.position.x,
+            z: b.position.z,
+            toStance: Math.hypot(b.position.x - b.muralStance.x, b.position.z - b.muralStance.z),
+          })),
       };
     });
     rolls.add(snap.roll);
-    for (const b of snap.bots) if (b.design) (designs[b.id] ??= new Set()).add(b.design);
+    for (const b of snap.bots) {
+      if (b.design) (designs[b.id] ??= new Set()).add(b.design);
+      // On the way to the board and not moving: the stall this iteration
+      // fixed, where a painter whose route was cleared by grazing a wall stood
+      // a hundred metres out until its 45-second timer ran down.
+      const last = stall.last[b.id];
+      const stuck = b.state === 'muralist' && b.toStance > 2.5 && last &&
+        Math.hypot(b.x - last.x, b.z - last.z) < 0.3;
+      stall.run[b.id] = stuck ? (stall.run[b.id] ?? 0) + 4 : 0;
+      if (stall.run[b.id] > stall.worst) {
+        stall.worst = stall.run[b.id];
+        stall.who = `${b.id} at (${b.x.toFixed(0)}, ${b.z.toFixed(0)}), ${b.toStance.toFixed(0)}m out`;
+      }
+      stall.last[b.id] = { x: b.x, z: b.z };
+    }
   }
+  check(`round ${round + 1}: no painter stands still on the way to the board`, stall.worst < 12,
+        stall.worst ? `longest ${stall.worst}s: ${stall.who}` : 'always moving or painting');
 
   const tally = await page.evaluate(() => ({
     splats: window.__paintball.paintScreen.splatCount,

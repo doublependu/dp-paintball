@@ -427,15 +427,28 @@ export class ParkArenaSystem implements System {
   // --- layout --------------------------------------------------------------
 
   private placeArchitecture(ctx: GameContext): void {
-    // Upper terrace slab — a walkable roof over the arcade undercroft.
-    const slabZ = (TERRACE.northZ + TERRACE.southZ) / 2;
-    const slabDepth = TERRACE.southZ - TERRACE.northZ;
+    // Upper terrace slab — a walkable roof over the arcade undercroft. The
+    // roof over the undercroft proper, full width, then the strip behind it
+    // on either side of the passage out to the Mall — see below.
+    const slabY = TERRACE.y - TERRACE.slabThickness / 2;
+    const roofDepth = TERRACE.undercroftBackZ - TERRACE.northZ;
     this.placeBox(
       ctx,
-      new Vector3(TERRACE.halfWidth * 2, TERRACE.slabThickness, slabDepth),
-      new Vector3(0, TERRACE.y - TERRACE.slabThickness / 2, slabZ),
+      new Vector3(TERRACE.halfWidth * 2, TERRACE.slabThickness, roofDepth),
+      new Vector3(0, slabY, TERRACE.northZ + roofDepth / 2),
       palette.stoneLit,
     );
+    const backDepth = TERRACE.southZ - TERRACE.undercroftBackZ;
+    const wingWidth = TERRACE.halfWidth - TERRACE.passageHalfWidth;
+    for (const side of [-1, 1]) {
+      this.placeBox(
+        ctx,
+        new Vector3(wingWidth, TERRACE.slabThickness, backDepth),
+        new Vector3(side * (TERRACE.passageHalfWidth + wingWidth / 2), slabY,
+                    TERRACE.undercroftBackZ + backDepth / 2),
+        palette.stoneLit,
+      );
+    }
 
     // Arcade colonnade across the undercroft's north face.
     const half = ((ARCADE.bays - 1) * ARCADE.bayWidth) / 2;
@@ -464,6 +477,33 @@ export class ParkArenaSystem implements System {
           palette.stoneShade,
         );
       }
+    }
+
+    // The back of the undercroft, and the way out of it to the Mall.
+    //
+    // The lawn that climbs from the plaza to the Mall runs under the slab's
+    // rear strip, so the undercroft used to end in a wedge: a floor rising to
+    // meet the ceiling across the whole sixty metres, leaving a slot of
+    // daylight at the top. It was a real route — bots and players walked it
+    // up to the Mall, which is also how the real arcade works — but it was a
+    // crawlspace, and a camera in it saw a tilted floor meeting a ceiling,
+    // twice in the first recorded round.
+    //
+    // So the rear strip is solid either side, and open to the sky over the
+    // passage between: the three central bays lead straight out onto an
+    // open-air ramp up to the Mall, and nothing low is left to stand under.
+    const floorY = -1;
+    const ceilingY = TERRACE.y - TERRACE.slabThickness;
+    const fillDepth = TERRACE.southZ - TERRACE.undercroftBackZ;
+    const fillWidth = TERRACE.halfWidth - TERRACE.passageHalfWidth;
+    for (const side of [-1, 1]) {
+      this.placeBox(
+        ctx,
+        new Vector3(fillWidth, ceilingY - floorY, fillDepth),
+        new Vector3(side * (TERRACE.passageHalfWidth + fillWidth / 2), (ceilingY + floorY) / 2,
+                    TERRACE.undercroftBackZ + fillDepth / 2),
+        palette.stoneShade,
+      );
     }
 
     this.placeStairs(ctx);

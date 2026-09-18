@@ -25,6 +25,7 @@ export class CameraRig implements System {
   // Annotated: Config is `as const`, so these would otherwise infer as literal
   // types and reject any other value.
   private currentArm: number = cameraConfig.armLength;
+  private currentShoulder: number = cameraConfig.shoulderOffset * 0.75;
   private currentFov: number = cameraConfig.fov;
   private readonly smoothedPivot = new Vector3();
   private pivotInitialised = false;
@@ -91,14 +92,29 @@ export class CameraRig implements System {
     // character sits off-centre and the aim line stays clear. This must go to a
     // separate vector — folding it back into smoothedPivot would re-apply the
     // offset every frame and walk the camera sideways.
-    const shoulder = state.aiming
+    const wantShoulder = state.aiming
       ? cameraConfig.shoulderOffset
       : cameraConfig.shoulderOffset * 0.75;
-    this.orbitPoint.copy(this.smoothedPivot).addScaledVector(this.rightDir, shoulder);
 
     // --- Collision --------------------------------------------------------
+    // The shoulder first. The arm below is cast *from* the shoulder point, so
+    // a shoulder that is already inside something — a trunk or a sign board
+    // at the player's right elbow — starts the arm's cast inside it too, and
+    // the camera stayed there: the autopilot's playtests caught it in tree
+    // trunks and in the fountain's sign, one to a hundred frames a round.
+    const allowedShoulder = this.castBall(physics, this.smoothedPivot, this.rightDir, wantShoulder, 0);
+    this.currentShoulder = damp(
+      this.currentShoulder,
+      allowedShoulder,
+      allowedShoulder < this.currentShoulder
+        ? cameraConfig.collisionInLambda
+        : cameraConfig.collisionOutLambda,
+      dt,
+    );
+    this.orbitPoint.copy(this.smoothedPivot).addScaledVector(this.rightDir, this.currentShoulder);
+
     const wantArm = state.aiming ? cameraConfig.armLengthAimed : cameraConfig.armLength;
-    const allowedArm = this.castArm(physics, wantArm);
+    const allowedArm = this.castBall(physics, this.orbitPoint, this.backDir, wantArm, 0.25);
 
     // Instant in, slow out.
     const armLambda =
@@ -136,12 +152,20 @@ export class CameraRig implements System {
   private armShape?: RapierNS.Ball;
 
   /**
-   * Sphere-casts backward from the pivot and returns how far the arm may
-   * extend. A sphere rather than a ray, so the near plane never pokes through a
-   * wall the ray happened to miss.
+   * Sphere-casts from `origin` along `direction` and returns how far the
+   * camera may go, up to `want` and never under `floor`. A sphere rather than a
+   * ray, so the near plane never pokes through a wall the ray happened to miss.
+   * Used for the arm, backward from the shoulder, and for the shoulder itself,
+   * sideways from the pivot.
    */
-  private castArm(physics: GameContext['physics'], wantArm: number): number {
-    if (!physics.isReady) return wantArm;
+  private castBall(
+    physics: GameContext['physics'],
+    origin: Vector3,
+    direction: Vector3,
+    want: number,
+    floor: number,
+  ): number {
+    if (!physics.isReady) return want;
 
     // Made once rather than per frame: this is the only per-frame wasm
     // allocation left in the render path, and at 240Hz it was thousands of
@@ -149,22 +173,22 @@ export class CameraRig implements System {
     const shape =
       this.armShape ?? (this.armShape = new physics.api.Ball(cameraConfig.collisionRadius));
     const hit = physics.w.castShape(
-      this.orbitPoint,
+      origin,
       IDENTITY_ROTATION,
-      this.backDir,
+      direction,
       shape,
       0,
-      wantArm,
+      want,
       true,
       undefined,
       undefined,
       this.state.collider ?? undefined,
     );
 
-    if (!hit) return wantArm;
+    if (!hit) return want;
     // Back off slightly so the camera sits proud of the surface rather than
     // z-fighting flush against it.
-    return Math.max(0.25, hit.time_of_impact - 0.08);
+    return Math.max(floor, hit.time_of_impact - 0.08);
   }
 }
 

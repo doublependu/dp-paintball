@@ -12,12 +12,44 @@
  * real thing. Look is written to the player state directly, because there is
  * no pointer lock to synthesise mouse deltas from.
  *
- * It does cheat in one respect: it knows where every bot is, the way a
- * spectator would. That is what keeps five minutes from containing two minutes
- * of wandering an empty meadow.
+ * Two policies, set through `window.__autopilotConfig` before injection:
+ *
+ *   film — the default, and what `record-match.mjs` shoots. It cheats in one
+ *          respect: it knows where every bot is, the way a spectator would,
+ *          and it keeps a sightseeing schedule. That is what keeps five minutes
+ *          from containing two minutes of wandering an empty meadow — and what
+ *          makes it useless for asking how the game plays.
+ *   play — what `playtest.mjs` measures with. No schedule and no wallhack: it
+ *          only engages a bot it can see inside its view, and only knows where
+ *          one is otherwise by hearing it — a shot fired nearby, or being hit.
+ *          Between fights it walks between the park's named places, the way
+ *          somebody new to the map would. Crates are fair game, because the
+ *          HUD points at the nearest one for a person too.
+ *
+ * Everything random is drawn from a seeded generator, so a seed replays the
+ * same round — the game's own randomness is seeded by `?seed` already, and
+ * `Math.random` in here was the one thing that made two runs differ.
  */
 (() => {
   const { game, state, characters, match, loot, signs, layout } = window.__paintball;
+  const config = window.__autopilotConfig ?? {};
+  const POLICY = config.policy ?? 'film';
+  /**
+   * The round's length, read on the first frame rather than at injection:
+   * `record-match.mjs --round` shortens the clock after this script is in.
+   */
+  let ROUND = null;
+  /** mulberry32 — small, fast and plenty for footwork. */
+  const rand = (() => {
+    let a = (config.seed ?? 1) >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  })();
   const input = game.input;
   const physics = game.physics;
   const V = state.position.constructor;
@@ -33,6 +65,12 @@
   const REPATH_SECONDS = 1.5;
   /** The longest one fight is allowed to run before looking for another. */
   const FIGHT_SECONDS = 16;
+  /** `play` only: half-angle of what counts as in view, either side of the camera. */
+  const VIEW_HALF_ANGLE = 75 * Math.PI / 180;
+  /** `play` only: how far away a shot can be heard and placed. */
+  const HEARING_RANGE = 38;
+  /** `play` only: how long a heard position is worth walking toward. */
+  const HEARD_SECONDS = 10;
 
   const dampTo = (current, target, lambda, dt) =>
     target + (current - target) * Math.exp(-lambda * dt);
@@ -55,6 +93,17 @@
    */
   const wet = (x, z) => layout.lakeMask(x, z) > 0.01 &&
     (characters.navGrid?.groundAt(x, z) ?? 0) < WATER_Y + 1.8;
+  /**
+   * Standing on something built over the grid's ground — Bow Bridge's deck,
+   * the terrace — where the grid, which only knows the ground, has nothing
+   * useful to say. Measured from the player's feet, not the map: on the bridge
+   * the ground under the player is the lake bed, and asking `wet` about it had
+   * the player trying to walk sideways off the deck to dry land, into the
+   * parapet, until the rescue teleport — twice a round on two seeds of five.
+   */
+  const elevated = () =>
+    state.position.y > (characters.navGrid?.groundAt(state.position.x, state.position.z) ?? 0) + 1.2;
+  const playerWet = () => !elevated() && wet(state.position.x, state.position.z);
 
   const place = (name) => signs.places.find((s) => s.name === name);
   /** Somewhere to stand in front of a sign, looking the way it faces. */
@@ -75,7 +124,7 @@
    * which is the game, but it is not a video of the park. A stop starts at its
    * `at` second and lasts until the player has stood there for `linger`.
    */
-  const ITINERARY = [
+  const ITINERARY = POLICY === 'play' ? [{ kind: 'hunt', at: 0 }] : [
     { kind: 'hunt', at: 0 },
     { kind: 'visit', at: 40, label: 'The Mall', ...signStop('The Mall', 6), linger: 2 },
     { kind: 'visit', at: 0, label: 'Sheep Meadow', ...signStop('Sheep Meadow', 10), linger: 1.5 },
@@ -122,10 +171,29 @@
 
     /** Frames the camera spent at or below the lake's surface — should stay 0. */
     wetCameraFrames: 0,
+    /** Frames the camera spent inside a collider — should stay 0. */
+    cameraInsideFrames: 0,
+    /** `play`: the last place a bot gave itself away, and the bot that last hit us. */
+    heard: null,
+    hitBy: null,
+    searchSpot: null,
+    /** What `playtest.mjs` reads. All times in simulated seconds. */
+    metrics: {
+      time: { fight: 0, restock: 0, travel: 0, idle: 0 },
+      firstContact: null,
+      fights: 0,
+      fightEnds: { lost: 0, timeout: 0, paint: 0, stuck: 0, ammo: 0 },
+      longestQuiet: 0,
+      shots: 0,
+      stuck: 0,
+      rescues: 0,
+      crates: 0,
+    },
+    quietSince: 0,
     huntIgnore: new Map(),
 
     note(message) {
-      const stamp = (300 - match.timeLeft).toFixed(1);
+      const stamp = ((ROUND ?? match.timeLeft) - match.timeLeft).toFixed(1);
       this.log.push(`${stamp}s ${message}`);
     },
 
@@ -177,11 +245,85 @@
         const range = bot.position.distanceTo(state.position);
         if (range > reach || range >= bestRange) continue;
         if ((this.ignoreUntil.get(bot.id) ?? 0) > this.t) continue;
+        if (POLICY === 'play' && !this.inView(bot)) continue;
         if (!this.canSee(bot)) continue;
         best = bot;
         bestRange = range;
       }
       return best;
+    },
+
+    /**
+     * Inside the camera's view, or the one that just hit us — a person turns
+     * toward being shot, and that is the one thing they learn from behind.
+     */
+    inView(bot) {
+      if (this.hitBy && this.hitBy.id === bot.id && this.t - this.hitBy.at < 2) return true;
+      const dx = bot.position.x - state.position.x;
+      const dz = bot.position.z - state.position.z;
+      return Math.abs(angleDelta(state.yaw, yawToward(dx, dz))) < VIEW_HALF_ANGLE;
+    },
+
+    /** `play`: where to look for a fight, from what could be heard or read off a sign. */
+    searchGoal() {
+      const px = state.position.x, pz = state.position.z;
+      if (this.heard && this.t - this.heard.at < HEARD_SECONDS) {
+        if (Math.hypot(this.heard.x - px, this.heard.z - pz) > 4) return this.heard;
+        this.heard = null;
+      }
+      if (!this.searchSpot || Math.hypot(this.searchSpot.x - px, this.searchSpot.z - pz) < 5) {
+        this.searchSpot = this.pickSearchSpot();
+        if (this.searchSpot) this.note(`exploring toward ${this.searchSpot.name}`);
+      }
+      return this.searchSpot;
+    },
+
+    pickSearchSpot() {
+      const nav = characters.navGrid;
+      const px = state.position.x, pz = state.position.z;
+      const options = [];
+      for (const s of signs.places) {
+        const spot = nav.nearestWalkable(s.faceX, s.faceZ, 6);
+        if (!spot || wet(spot.x, spot.z)) continue;
+        if (Math.hypot(spot.x - px, spot.z - pz) < 15) continue;
+        options.push({ name: s.name, x: spot.x, z: spot.z });
+      }
+      return options.length ? options[Math.floor(rand() * options.length)] : null;
+    },
+
+    /** `play`: what a person could hear. Wired once, below. */
+    listen() {
+      game.events.on('shot:fired', (e) => {
+        if (e.shooterId === 'player') {
+          this.metrics.shots++;
+          return;
+        }
+        if (POLICY !== 'play') return;
+        const d = Math.hypot(e.origin.x - state.position.x, e.origin.z - state.position.z);
+        if (d > HEARING_RANGE) return;
+        // Placed by ear: roughly, and worse the further off it is.
+        const slop = d * 0.12;
+        this.heard = {
+          x: e.origin.x + (rand() - 0.5) * 2 * slop,
+          z: e.origin.z + (rand() - 0.5) * 2 * slop,
+          at: this.t,
+        };
+      });
+      game.events.on('hit:character', (e) => {
+        if (e.targetId !== 'player') return;
+        this.hitBy = { id: e.shooterId, at: this.t };
+        const bot = characters.allBots.find((b) => b.id === e.shooterId);
+        if (POLICY === 'play' && bot) this.heard = { x: bot.position.x, z: bot.position.z, at: this.t };
+      });
+      game.events.on('loot:taken', (e) => {
+        if (e.characterId === 'player') this.metrics.crates++;
+      });
+    },
+
+    endFight(reason) {
+      this.metrics.fightEnds[reason]++;
+      this.quietSince = this.t;
+      this.target = null;
     },
 
     nearestBot() {
@@ -222,7 +364,7 @@
         const path = start ? nav.findPath(start, new V(x, state.position.y, z)) : null;
         this.path = path ? (onGrid ? path : [start, ...path]) : [];
         this.pathIndex = 0;
-        if (this.path.some((p, i) => i > 0 && wet(p.x, p.z)) && !wet(state.position.x, state.position.z)) {
+        if (this.path.some((p, i) => i > 0 && wet(p.x, p.z)) && !playerWet() && !elevated()) {
           this.note(`route to (${x.toFixed(0)}, ${z.toFixed(0)}) runs along the shore, not taking it`);
           this.path = [];
           this.giveUp();
@@ -301,7 +443,7 @@
       const mag = Math.hypot(move[0], move[1]);
       if (mag < 0.05) return move;
       const px = state.position.x, pz = state.position.z;
-      if (!nav.isWalkable(px, pz) || wet(px, pz)) return move;
+      if (elevated() || !nav.isWalkable(px, pz) || wet(px, pz)) return move;
       const yaw = state.yaw;
       const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
       const rx = Math.cos(yaw), rz = -Math.sin(yaw);
@@ -340,6 +482,7 @@
         return;
       }
       this.stuckStrikes = (this.stuckStrikes ?? 0) + 1;
+      if (this.stuckStrikes === 1) this.metrics.stuck++;
       this.jumpFrames = 3;
       this.path = [];
       if (this.stuckStrikes === 4) {
@@ -349,6 +492,7 @@
         const nav = characters.navGrid;
         const spot = nav.nearestWalkable(state.position.x, state.position.z, 20);
         if (spot) window.__paintball.player.teleport(new V(spot.x, spot.y + 0.1, spot.z));
+        this.metrics.rescues++;
         this.note(`RESCUE teleport to (${spot?.x.toFixed(0)}, ${spot?.z.toFixed(0)})`);
         this.stuckStrikes = 0;
       }
@@ -357,12 +501,15 @@
     giveUp() {
       if (this.target) {
         this.ignoreUntil.set(this.target.id, this.t + 20);
-        this.target = null;
+        this.endFight('stuck');
       } else if (this.crate) {
         this.crateBlocked.set(this.crate, this.t + 25);
         this.crate = null;
       } else if (this.errand.kind !== 'hunt') {
         this.nextErrand('stuck');
+      } else if (POLICY === 'play') {
+        this.heard = null;
+        this.searchSpot = null;
       } else if (this.huntTarget) {
         this.huntIgnore.set(this.huntTarget.id, this.t + 25);
         this.huntTarget = null;
@@ -372,6 +519,7 @@
     },
 
     frame(dt) {
+      ROUND ??= match.timeLeft;
       this.t += dt;
       this.trackVelocities(dt);
 
@@ -383,6 +531,7 @@
 
       // --- the opening beat: hold on the fountain as the whistle goes ---
       if (this.t < 1.6) {
+        this.metrics.time.idle += dt;
         return this.apply(cmd, dt, state.yaw, -0.04, 2);
       }
 
@@ -391,7 +540,7 @@
       // A scheduled stop comes due even mid-fight; the fight gets the errand's
       // shorter leash from here.
       const due = ITINERARY[this.errandIndex + 1];
-      if (this.errand.kind === 'hunt' && due && 300 - match.timeLeft >= due.at) {
+      if (this.errand.kind === 'hunt' && due && ROUND - match.timeLeft >= due.at) {
         this.nextErrand('time for the next stop');
       }
 
@@ -403,7 +552,7 @@
       if (this.crate && this.target) {
         this.note(`breaking off ${this.target.id} for paint (${ammo} left)`);
         this.ignoreUntil.set(this.target.id, this.t + 8);
-        this.target = null;
+        this.endFight('paint');
       }
 
       // --- is there a fight? ---
@@ -413,13 +562,13 @@
         this.targetLostFor = visible ? 0 : this.targetLostFor + dt;
         if (this.targetLostFor > 1.4 || range > HOLD_RANGE || ammo <= 0) {
           this.note(`lost ${this.target.id}`);
-          this.target = null;
+          this.endFight(ammo <= 0 ? 'ammo' : 'lost');
           this.path = [];
         } else if (this.engagedTime > (this.errand.kind === 'hunt' ? FIGHT_SECONDS : FIGHT_SECONDS_ERRAND)) {
           // Long enough. A minute spent on one bot is a minute of the same shot.
           this.note(`done with ${this.target.id} after ${this.engagedTime.toFixed(0)}s`);
           this.ignoreUntil.set(this.target.id, this.t + 18);
-          this.target = null;
+          this.endFight('timeout');
           this.path = [];
         }
       }
@@ -430,7 +579,10 @@
           this.targetLostFor = 0;
           this.burstClock = 0;
           this.engagedTime = 0;
-          this.strafeSeed = Math.random() * 10;
+          this.strafeSeed = rand() * 10;
+          this.metrics.fights++;
+          this.metrics.firstContact ??= this.t;
+          this.metrics.longestQuiet = Math.max(this.metrics.longestQuiet, this.t - this.quietSince);
           this.note(`engage ${seen.id} @ ${seen.position.distanceTo(state.position).toFixed(1)}m (${ammo} paint)`);
         }
       }
@@ -488,20 +640,29 @@
           cmd.move = [stick[0] + s * 0.3, stick[1]];
         }
       } else if (this.crate) {
-        const { yaw } = this.travel(cmd, this.crate.position.x, this.crate.position.z, dt, 6);
+        const crate = this.crate;
+        if (this.lastCrateNote !== crate) {
+          this.lastCrateNote = crate;
+          this.note(`restock at ${crate.where}, ${crateRange.toFixed(0)}m (${ammo} left)`);
+        }
+        // May give the crate up on the way — `routeTo` refuses a shoreline
+        // route by calling `giveUp`, which clears `this.crate` under us.
+        const { yaw } = this.travel(cmd, crate.position.x, crate.position.z, dt, 6);
         wantYaw = yaw;
         moving = true;
-        if (this.lastCrateNote !== this.crate) {
-          this.lastCrateNote = this.crate;
-          this.note(`restock at ${this.crate.where}, ${crateRange.toFixed(0)}m (${ammo} left)`);
-        }
       } else {
         const errand = this.errand;
         this.errandClock += dt;
         const upcoming = ITINERARY[this.errandIndex + 1];
         if (errand.kind === 'hunt') {
-          if (upcoming && 300 - match.timeLeft >= upcoming.at) {
+          if (upcoming && ROUND - match.timeLeft >= upcoming.at) {
             this.nextErrand('time for the next stop');
+          } else if (POLICY === 'play') {
+            const goal = this.searchGoal();
+            if (goal) {
+              wantYaw = this.travel(cmd, goal.x, goal.z, dt, 30).yaw;
+              moving = true;
+            }
           } else if (this.t > (this.huntBlocked ?? 0)) {
             const bot = this.nearestBot();
             this.huntTarget = bot;
@@ -533,7 +694,7 @@
 
       // Standing on the shore anyway — knocked there, or strafed there before
       // the check could stop it: walk straight to the nearest dry ground.
-      if (wet(state.position.x, state.position.z)) {
+      if (playerWet()) {
         if (!this.wasWet) this.note(`on the shore at (${state.position.x.toFixed(0)}, ${state.position.z.toFixed(0)}), getting off it`);
         this.wasWet = true;
         const dry = this.nearestDry();
@@ -547,6 +708,22 @@
       }
       const cam = game.render.camera.position;
       if (cam.y < WATER_Y + 0.25 && layout.lakeMask(cam.x, cam.z) > 0.01) this.wetCameraFrames++;
+      if (this.cameraInside(cam)) {
+        if (!this.wasCameraInside) {
+          this.note(`camera inside geometry at (${cam.x.toFixed(1)}, ${cam.y.toFixed(1)}, ${cam.z.toFixed(1)}), ` +
+                    `player at (${state.position.x.toFixed(1)}, ${state.position.y.toFixed(1)}, ${state.position.z.toFixed(1)})`);
+        }
+        this.wasCameraInside = true;
+        this.cameraInsideFrames++;
+      } else {
+        this.wasCameraInside = false;
+      }
+
+      const mode = this.target ? 'fight'
+        : this.crate ? 'restock'
+        : this.lingerLeft === null && moving ? 'travel'
+        : 'idle';
+      this.metrics.time[mode] += dt;
 
       cmd.move = this.safeStick(cmd.move);
       this.unstick(moving, dt);
@@ -558,6 +735,17 @@
       // A slow hand on the mouse, so the camera is never perfectly still.
       const sway = Math.sin(this.t * 0.47) * 0.012 + Math.sin(this.t * 0.83 + 1) * 0.006;
       return this.apply(cmd, dt, wantYaw ?? state.yaw, wantPitch + sway * 0.5, lookLambda, sway);
+    },
+
+    /** Whether the camera is inside something solid. Sensors, like crates, do not count. */
+    cameraInside(cam) {
+      let inside = false;
+      physics.w.intersectionsWithPoint({ x: cam.x, y: cam.y, z: cam.z }, (collider) => {
+        if (collider.isSensor() || collider.handle === state.collider?.handle) return true;
+        inside = true;
+        return false;
+      });
+      return inside;
     },
 
     apply(cmd, dt, wantYaw, wantPitch, lambda, sway = 0) {
@@ -581,5 +769,6 @@
     },
   };
 
+  ap.listen();
   window.__autopilot = ap;
 })();

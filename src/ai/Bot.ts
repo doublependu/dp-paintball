@@ -718,11 +718,22 @@ export class Bot {
   }
 
   /** Walks to the firing stance, then stands still. */
-  private approachStance(speedLimit: number): void {
+  private approachStance(nav: NavGrid, speedLimit: number): void {
     this.toTarget.subVectors(this.muralStance, this.position).setY(0);
     const distance = this.toTarget.length();
     if (distance <= STANCE_RADIUS) return;
     if (distance > 2.5) {
+      // `integrate` throws the path away whenever a step is refused, and the
+      // other errands survive that because they repath. This one did not: a
+      // painter that grazed a wall on the way across the park stood where it
+      // was, a hundred metres from the board, until `timeoutSeconds` ran out —
+      // three times in one recorded round, and most of the reason the board
+      // was nearly empty at the whistle. Rate-limited on the repath timer, so
+      // a stance the grid cannot route to costs one A* per interval, not one
+      // per step.
+      if (this.pathIndex >= this.path.length && this.repathTimer <= 0) {
+        this.setPath(nav.findPath(this.position, this.muralStance));
+      }
       this.followPath(speedLimit);
       return;
     }
@@ -1024,7 +1035,7 @@ export class Bot {
     } else if (this.state === 'restock') {
       this.approachLoot(speedLimit);
     } else if (this.state === 'muralist') {
-      this.approachStance(speedLimit);
+      this.approachStance(nav, speedLimit);
     } else if (this.state === 'reposition' && this.target) {
       this.repositionAround(nav, ctx, speedLimit);
     } else if (this.state === 'engage' && this.target) {
@@ -1133,10 +1144,17 @@ export class Bot {
       this.position.z = nextZ;
     } else {
       // Try each axis alone, so a bot grazing a wall slides instead of sticking.
+      //
+      // Only a step that went nowhere costs the route. A slide is progress
+      // along it, and throwing the path away on every graze left a bot at a
+      // corner taking one step per repath — or, for an errand that never
+      // repathed, standing there until its timer ran out.
       if (nav.isWalkable(nextX, this.position.z)) this.position.x = nextX;
       else if (nav.isWalkable(this.position.x, nextZ)) this.position.z = nextZ;
-      else this.velocity.set(0, 0, 0);
-      this.path = [];
+      else {
+        this.velocity.set(0, 0, 0);
+        this.path = [];
+      }
     }
 
     this.position.y = nav.groundAt(this.position.x, this.position.z);

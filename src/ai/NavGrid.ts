@@ -14,13 +14,29 @@ const MAX_STEP = playerConfig.maxStepHeight;
 /** Tangent of the steepest walkable slope. */
 const MAX_SLOPE_TAN = Math.tan(playerConfig.maxSlopeClimb * DEG2RAD);
 
-/** Offsets probed within each cell, in metres. Centre plus the four quadrants. */
+/**
+ * Offsets probed within each cell, in metres: the centre, and the middle of
+ * each edge.
+ *
+ * The outer four used to sit on the diagonals, which leaves the cell's edges
+ * themselves unprobed: from (±0.64, ±0.64) a 0.3m ball reaches 0.94m out, and
+ * the edge is at 1.0m. A sign board is 0.12m thick, and the Cherry Hill board
+ * stands on a cell boundary — so the grid never saw it, bots walked through
+ * it, and the player walked into it: playtests found the autopilot stuck
+ * against it on two seeds of five. A board or a wall long enough to matter
+ * crosses the middle of the edge it lies along, and these reach 0.96m there.
+ * Same count, so the same build cost.
+ *
+ * Probing the whole cell — a capsule the cell's width, in three rows — was
+ * tried and rejected: every arcade bay has a column at a cell edge, and it
+ * closed the colonnade to bots entirely.
+ */
 const CELL_SAMPLES: Array<[number, number]> = [
   [0, 0],
-  [-CELL * 0.32, -CELL * 0.32],
-  [CELL * 0.32, -CELL * 0.32],
-  [-CELL * 0.32, CELL * 0.32],
-  [CELL * 0.32, CELL * 0.32],
+  [-CELL * 0.33, 0],
+  [CELL * 0.33, 0],
+  [0, -CELL * 0.33],
+  [0, CELL * 0.33],
 ];
 
 interface Node {

@@ -334,11 +334,23 @@ const restock = await page.evaluate(() => {
   // Empty it, and stand it a short walk from the crate — inside the range at
   // which it is allowed to notice one, but well outside grabbing distance.
   match.ammo.set(bot.id, 0);
-  // Aimed at one specific crate: the nearest to where the bot is put, which is
-  // the one `nearestCrate` will hand it.
+  // Aimed at one specific crate, and the only one: crates hide somewhere new
+  // every run, and with three out the bot was sometimes put nearer another
+  // one — which it rightly took, failing a check that watches crate 0.
+  loot.crates.splice(1);
   const target = loot.crates[0].position;
-  const from = nav.nearestWalkable(target.x + 9, target.z + 3)
-    ?? nav.nearestWalkable(target.x - 9, target.z);
+  // A short walk away by path, not just by line: "9m east" of the undercroft
+  // crate is on the far side of an obstacle, sixty metres round, which no bot
+  // walks in the twelve seconds given. The first offset whose route is short.
+  const V = state.position.constructor;
+  const routeLength = (from) => {
+    const path = nav.findPath(from, new V(target.x, 0, target.z));
+    if (!path) return Infinity;
+    return path.reduce((sum, p, i) => (i ? sum + Math.hypot(p.x - path[i - 1].x, p.z - path[i - 1].z) : 0), 0);
+  };
+  const from = [[9, 3], [-9, 0], [0, 9], [0, -9], [7, -6], [-7, 6]]
+    .map(([dx, dz]) => nav.nearestWalkable(target.x + dx, target.z + dz))
+    .find((p) => p && p.distanceTo(target) > 6 && routeLength(p) < 14);
   bot.position.copy(from);
   window.__target = { x: target.x, z: target.z };
   // Keep the player out of it, so the player cannot take the crate first.
@@ -347,11 +359,19 @@ const restock = await page.evaluate(() => {
   // finds someone to shoot at will have spent some of it by the time we look.
   window.__taker = null;
   game.events.on('loot:taken', ({ characterId }) => { window.__taker = characterId; });
-  return { id: bot.id, distance: bot.position.distanceTo(loot.crates[0].position) };
+  return {
+    id: bot.id,
+    distance: bot.position.distanceTo(loot.crates[0].position),
+    target: { x: target.x, z: target.z },
+  };
 });
 await stepSim(12);
 const restocked = await page.evaluate(() => ({
   taker: window.__taker,
+  bot: (() => {
+    const b = window.__paintball.characters.allBots[0];
+    return `${b.state} at (${b.position.x.toFixed(1)}, ${b.position.z.toFixed(1)})`;
+  })(),
   // That particular crate, not merely "fewer crates": another one respawning
   // elsewhere would otherwise mask the bot never arriving.
   crateGone: !window.__paintball.loot.crates.some((c) =>
@@ -360,7 +380,8 @@ const restocked = await page.evaluate(() => ({
 check('a bot out of paint walks to the crate and takes it',
       restocked.taker === restock.id && restocked.crateGone,
       `${restock.id} started 0 rounds and ${restock.distance.toFixed(1)}m away;` +
-        ` crate taken by ${restocked.taker ?? 'nobody'}`);
+        ` crate at (${restock.target.x.toFixed(0)}, ${restock.target.z.toFixed(0)})` +
+        ` taken by ${restocked.taker ?? 'nobody'}; bot ended ${restocked.bot}`);
 
 // --- ...and gives up on one it cannot reach -------------------------------
 // A crate the navgrid cannot route to used to mean a bot repathing every single
