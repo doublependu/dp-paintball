@@ -41,6 +41,11 @@ claude --dangerously-skip-permissions
 
 
 
+
 ## Backed by
 
-Man & Bot ®
+Man & Bot
+
+Browse web games at [Maize.Live](https://maize.live)
+, or watch on YouTube [@RadWebGame](https://www.youtube.com/@RadWebGame)
+
