@@ -147,6 +147,13 @@ export class PaintSystem implements System {
     return this.writeOffset;
   }
 
+  /** Takes all world paint off, for a room whose paint comes from its log. */
+  clear(): void {
+    this.records = [];
+    this.writeOffset = 0;
+    this.dirty = true;
+  }
+
   private paint(
     impact: {
       point: Vector3;
@@ -154,9 +161,13 @@ export class PaintSystem implements System {
       color: number;
       impactSpeed: number;
       colliderHandle: number;
+      cosmetic?: boolean;
+      variant?: number;
+      roll?: number;
     },
     ctx: GameContext,
   ): void {
+    if (impact.cosmetic) return;
     const receiver = this.surfaces.get(impact.colliderHandle);
     if (!receiver || !this.atlas) return;
 
@@ -180,7 +191,7 @@ export class PaintSystem implements System {
     // Orient the decal box so it projects along the surface normal, with a
     // random roll so repeated hits on one wall don't stamp identically.
     this.quaternion.setFromUnitVectors(FORWARD, impact.normal);
-    this.rollQuaternion.setFromAxisAngle(FORWARD, ctx.rng.range(0, Math.PI * 2));
+    this.rollQuaternion.setFromAxisAngle(FORWARD, impact.roll ?? ctx.rng.range(0, Math.PI * 2));
     this.quaternion.multiply(this.rollQuaternion);
     this.orientation.setFromQuaternion(this.quaternion);
 
@@ -201,7 +212,7 @@ export class PaintSystem implements System {
     // triangles — nothing to draw.
     if (vertexCount === 0 || vertexCount > MAX_VERTS_PER_DECAL) return;
 
-    const variant = ctx.rng.int(0, this.atlas.variants);
+    const variant = impact.variant ?? ctx.rng.int(0, this.atlas.variants);
     const tile = this.atlas.getTileTransform(variant);
     this.color.setHex(impact.color);
 

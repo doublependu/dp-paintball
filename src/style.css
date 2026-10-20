@@ -525,6 +525,60 @@ body {
   color: rgba(42, 36, 56, 0.5);
 }
 
+/* p3p2's panel: playing with friends. Second to "back to it", so it is drawn lighter. */
+.pause__friends {
+  width: min(240px, 100%);
+  padding: 10px 20px;
+  border: 3px solid #2a2438;
+  border-radius: 999px;
+  background: #fff8ec;
+  color: #2a2438;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  box-shadow: 0 4px 0 rgba(42, 36, 56, 0.25);
+}
+
+.pause__friends:hover {
+  background: #ffffff;
+}
+
+/* FRIENDS and where a room comes from, as one item of the card's stack. */
+.pause__friends-group {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.pause__friends-group[hidden] {
+  display: none;
+}
+
+.pause__p3p2 {
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  color: rgba(42, 36, 56, 0.55);
+}
+
+.pause__p3p2 a {
+  color: #2a2438;
+  font-weight: 800;
+}
+
+/* The repo and more games, side by side; stacked when the card is narrow. */
+.pause__links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 10px 12px;
+}
+
 /* The controls, written down somewhere at last. */
 .pause__keys {
   display: flex;
@@ -1314,11 +1368,17 @@ body {
 
 .is-touch .pause { padding: 12px; }
 
+/* A landscape phone is wide and short: the card spends width to save height,
+   which puts the key legend on one row at 844 wide. With FRIENDS and the
+   Maize.Live link on it, the 560px card ran 58px past a 390px-tall screen. */
 .is-touch .pause__card {
-  gap: 8px;
+  width: min(800px, 100%);
+  gap: 6px;
   padding: 14px 18px 12px;
   border-radius: 18px;
 }
+
+.is-touch .pause__eyebrow { display: none; }
 
 .is-touch .pause__title { font-size: 1.7rem; }
 .is-touch .pause__subtitle { margin-top: -4px; font-size: 0.8rem; }
@@ -1326,7 +1386,53 @@ body {
 .is-touch .pause__stat-value { font-size: 20px; }
 .is-touch .pause__resume { padding: 10px 18px; font-size: 0.92rem; }
 .is-touch .pause__key { padding: 3px 7px; font-size: 10px; }
-.is-touch .fork-badge--hero { padding: 9px 18px; font-size: 0.8rem; }
+.is-touch .fork-badge--hero { padding: 7px 16px; font-size: 0.74rem; }
+.is-touch .fork-badge--hero svg { width: 18px; height: 18px; }
+.is-touch .pause__links { gap: 8px 10px; }
+
+/* FRIENDS with its note beside it rather than under it. */
+.is-touch .pause__friends-group {
+  grid-template-columns: auto auto;
+  justify-content: center;
+  align-items: center;
+  gap: 4px 12px;
+}
+.is-touch .pause__friends { width: auto; padding: 7px 22px; font-size: 0.8rem; }
+.is-touch .pause__p3p2 { max-width: 200px; text-align: left; font-size: 10px; }
 
 .is-touch #loader h1 { font-size: 1.5rem; }
 .is-touch #loader { gap: 0.9rem; }
+.is-touch .maize-link { padding: 7px 16px; font-size: 0.74rem; }
+
+/* Every corner of a phone is taken, so the build goes in the 20px gutter under
+   the right trigger (.touch__btn--fire): 4px up and 10px tall, it clears the
+   button's edge and its 4px shadow. */
+.is-touch .build-tag {
+  right: calc(8px + env(safe-area-inset-right));
+  bottom: calc(4px + env(safe-area-inset-bottom));
+  font-size: 10px;
+}
+
+/* Friends' names over their heads, in a room (src/net/NameTags.ts). */
+.net-tags {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 2;
+}
+
+.net-tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 2px 9px;
+  border: 3px solid #2a2438;
+  border-radius: 999px;
+  background: rgba(255, 248, 236, 0.92);
+  color: #2a2438;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+  will-change: transform;
+}

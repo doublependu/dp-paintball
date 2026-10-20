@@ -152,6 +152,28 @@ const engaged = await state();
 check('a tap takes the controls', engaged.engaged && engaged.live && !engaged.startVisible,
       `engaged=${engaged.engaged} live=${engaged.live}`);
 
+// --- The version, in the one gap a phone has --------------------------------
+//
+// Every corner is a button here, so the build sits in the gutter under the
+// right trigger. It must clear every button, shadow included, or it reads as
+// a label on one of them.
+const tagClear = await page.evaluate(() => {
+  const tag = document.querySelector('[data-build-tag]')?.getBoundingClientRect();
+  if (!tag) return { missing: true };
+  const hits = [...document.querySelectorAll('.touch__btn')]
+    .filter((b) => {
+      const r = b.getBoundingClientRect();
+      // The buttons' 4px drop shadow counts as the button.
+      return r.width > 0 && tag.left < r.right && tag.right > r.left &&
+        tag.top < r.bottom + 4 && tag.bottom > r.top;
+    })
+    .map((b) => b.className);
+  return { hits, right: innerWidth - tag.right, bottom: innerHeight - tag.bottom };
+});
+check('the version clears every touch button', !tagClear.missing && tagClear.hits.length === 0,
+      tagClear.missing ? 'no label' : tagClear.hits.join(', ') ||
+        `${tagClear.right.toFixed(0)}px from the right, ${tagClear.bottom.toFixed(0)}px from the bottom`);
+
 // --- The stick ---------------------------------------------------------------
 
 const before = await state();
@@ -293,6 +315,17 @@ await tap(pauseButton.x, pauseButton.y, 6);
 const paused = await state();
 check('the pause button holds the round', paused.phase === 'paused' && paused.pauseVisible,
       `phase=${paused.phase}`);
+
+// Everything on the card in one look: FRIENDS and the two links are at the
+// bottom, and a card that scrolls hides exactly those.
+const cardFit = await page.evaluate(() => {
+  const card = document.querySelector('.pause__card');
+  const links = document.querySelector('.pause__links').getBoundingClientRect();
+  return { overflow: card.scrollHeight - card.clientHeight, linksBottom: links.bottom, height: innerHeight };
+});
+check('the pause card fits a landscape phone without scrolling',
+      cardFit.overflow <= 1 && cardFit.linksBottom <= cardFit.height,
+      `${cardFit.overflow}px over, links end at ${Math.round(cardFit.linksBottom)} of ${cardFit.height}`);
 
 // On the card, but not on its repo link — which is the one thing here that
 // deliberately does not resume.

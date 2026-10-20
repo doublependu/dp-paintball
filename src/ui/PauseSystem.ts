@@ -25,6 +25,10 @@ export class PauseSystem implements System {
   readonly name = 'pause';
 
   private overlay?: PauseOverlay;
+  /** The way to friends, set from `main.ts` when the page has p3p2. */
+  friends: (() => void) | null = null;
+  /** Whether the page is in a room, where a pause holds only this player. */
+  shared: () => boolean = () => false;
   private retryTimer?: ReturnType<typeof setTimeout>;
 
   constructor(
@@ -43,6 +47,8 @@ export class PauseSystem implements System {
     overlay.setResumeHandler(() => this.resume(ctx));
 
     ctx.events.on('match:paused', () => {
+      overlay.setFriendsHandler(this.friends);
+      overlay.setShared(this.shared());
       const player = this.characters.playerCharacter;
       overlay.show({
         timeLeft: this.match.timeLeft,

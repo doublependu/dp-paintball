@@ -312,6 +312,26 @@ export class VoxelRig {
     return joint;
   }
 
+  /**
+   * Repaints one part in place: in a room a figure's colour is its place's, which the
+   * page learns after the figure is built. A part is 24 vertices, in the parts' order.
+   */
+  setPartColor(name: string, color: number): void {
+    const index = this.parts.findIndex((part) => part.name === name);
+    if (index < 0) return;
+    const attribute = this.geometry.getAttribute('color') as BufferAttribute;
+    const colors = attribute.array as Float32Array;
+    const r = ((color >> 16) & 255) / 255;
+    const g = ((color >> 8) & 255) / 255;
+    const b = (color & 255) / 255;
+    for (let v = index * 24; v < (index + 1) * 24; v++) {
+      colors[v * 3] = r;
+      colors[v * 3 + 1] = g;
+      colors[v * 3 + 2] = b;
+    }
+    attribute.needsUpdate = true;
+  }
+
   private buildGeometry(): BufferGeometry {
     const partCount = this.parts.length;
     const vertexCount = partCount * 24;

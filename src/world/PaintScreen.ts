@@ -594,9 +594,17 @@ export class PaintScreen {
    * that is the one frame in which the two faces are simply +Z and -Z.
    */
   private onHit(
-    impact: { point: Vector3; color: number; impactSpeed: number },
+    impact: {
+      point: Vector3;
+      color: number;
+      impactSpeed: number;
+      cosmetic?: boolean;
+      variant?: number;
+      roll?: number;
+    },
     rng: Rng,
   ): void {
+    if (impact.cosmetic) return;
     // Into the board's own frame: +X is its width, +Y its height, +Z out of the
     // front.
     this.localPoint.copy(impact.point);
@@ -651,7 +659,7 @@ export class PaintScreen {
     const x = u * face.width;
     const y = (0.5 - this.localPoint.y / BOARD_HEIGHT) * face.height;
 
-    this.stampSplat(face, x, y, radius * pixelsPerMetre, impact.color, rng);
+    this.stampSplat(face, x, y, radius * pixelsPerMetre, impact.color, rng, impact.variant, impact.roll);
   }
 
   /**
@@ -668,8 +676,10 @@ export class PaintScreen {
     radius: number,
     color: number,
     rng: Rng,
+    givenVariant?: number,
+    givenRoll?: number,
   ): void {
-    const variant = rng.int(0, this.atlas.variants);
+    const variant = givenVariant ?? rng.int(0, this.atlas.variants);
     const tileX = (variant % this.atlas.tilesPerRow) * this.tileSize;
     const tileY = Math.floor(variant / this.atlas.tilesPerRow) * this.tileSize;
 
@@ -695,7 +705,7 @@ export class PaintScreen {
     context.translate(x, y);
     // A random roll, so repeated hits in one place do not stamp identically —
     // the same reason `PaintSystem` rolls its decal box.
-    context.rotate(rng.range(0, Math.PI * 2));
+    context.rotate(givenRoll ?? rng.range(0, Math.PI * 2));
 
     // Twice, at two sizes, which is how the wet rim gets here.
     //

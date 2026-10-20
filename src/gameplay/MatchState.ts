@@ -36,6 +36,14 @@ export interface MatchState {
    * to be left.
    */
   readonly sandbox: boolean;
+  /**
+   * In a room the round cannot stop for one player: a pause holds only this player's
+   * legs and marker, and the park goes on. Also set while the page has no place in the
+   * room's park.
+   */
+  held?: boolean;
+  /** In a room: this page has no place in the park (it is full), and only watches. */
+  benched?: boolean;
 }
 
 export function createMatchState(
@@ -66,7 +74,12 @@ export function isPlaying(match: MatchState): boolean {
 
 /** True while the round is on hold, waiting for the pointer to come back. */
 export function isPaused(match: MatchState): boolean {
-  return match.phase === 'paused';
+  return match.phase === 'paused' || match.held === true;
+}
+
+/** True while this player may move and shoot: the round is live, and not held for them. */
+export function inPlay(match: MatchState): boolean {
+  return match.phase === 'playing' && match.held !== true && match.benched !== true;
 }
 
 /** Rounds left for `id`. `Infinity` in sandbox mode, and 0 for a stranger. */

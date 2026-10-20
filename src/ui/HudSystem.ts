@@ -71,7 +71,8 @@ export class HudSystem implements System {
     this.atlas = this.sharedAtlas;
     this.splash = new SplashOverlay(this.container, this.atlas);
 
-    ctx.events.on('hit:character', ({ targetId, shooterId, color }) => {
+    ctx.events.on('hit:character', ({ targetId, shooterId, color, cosmetic }) => {
+      if (cosmetic) return;
       if (targetId === 'player') {
         // Paint on the lens, in the colour of whoever tagged us.
         this.splash?.splash(color, 1, () => ctx.rng.next());
@@ -79,6 +80,13 @@ export class HudSystem implements System {
       } else if (shooterId === 'player') {
         this.hud?.showToast(ctx.rng.pick(SCORED_LINES), color, 1.2);
       }
+    });
+
+    // In a room, a tag judged on another page: shown here when the room counts it.
+    ctx.events.on('tag:applied', ({ targetId, color, judgedHere }) => {
+      if (judgedHere || targetId !== 'player') return;
+      this.splash?.splash(color, 1, () => ctx.rng.next());
+      this.hud?.showToast(ctx.rng.pick(TAGGED_LINES), color, 1.5);
     });
 
     ctx.events.on('weapon:dry', ({ shooterId }) => {
@@ -255,7 +263,7 @@ export class HudSystem implements System {
   }
 
   private buildRows(): ScoreRow[] {
-    return this.characters.allCharacters.map((character) => ({
+    return this.characters.shownCharacters.map((character) => ({
       id: character.id,
       label: displayName(character.id),
       color: character.color,

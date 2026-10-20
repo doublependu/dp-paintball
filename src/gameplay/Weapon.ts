@@ -4,7 +4,7 @@ import { DEG2RAD, clamp, damp } from '../core/MathUtils';
 import type { GameContext, System } from '../core/System';
 import { AimSolver, spreadConeRadius } from './Aim';
 import type { BallisticsSystem } from './Ballistics';
-import { consume, isPlaying, type MatchState } from './MatchState';
+import { consume, inPlay, type MatchState } from './MatchState';
 import type { PlayerState } from './PlayerState';
 
 /** Pitch kick per shot, in radians. Deliberately tiny — this is a calm game. */
@@ -30,7 +30,8 @@ export class WeaponSystem implements System {
   private recoil = 0;
   /** Latches the empty-marker click to one per trigger pull. */
   private dryClicked = false;
-  readonly color: number;
+  /** In a room, the colour of this player's place. */
+  color: number;
 
   private readonly muzzle = new Vector3();
   private readonly shotDirection = new Vector3();
@@ -54,7 +55,7 @@ export class WeaponSystem implements System {
 
     // No shooting after the whistle. Ahead of the input read so a trigger still
     // held as the round ends does not click on the results screen.
-    if (!isPlaying(this.match)) {
+    if (!inPlay(this.match)) {
       this.dryClicked = false;
       return;
     }

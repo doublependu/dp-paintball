@@ -1,6 +1,13 @@
 import { isTouchDevice } from '../core/Device';
 
 const REPO_URL = 'https://github.com/doublependu/dp-paintball';
+/** More games, as on the loading card. */
+const MAIZE_URL = 'https://maize.live';
+/**
+ * Where a player finds out what a room URL is and how to get one: the p3p2
+ * panel takes one, and says nothing about where it comes from.
+ */
+const P3P2_URL = 'https://p3p2.me';
 
 /** What the card says under the button. Anywhere on it resumes, either way. */
 const RESUME_NOTE = isTouchDevice() ? 'or tap anywhere' : 'or click anywhere';
@@ -78,7 +85,11 @@ export class PauseOverlay {
   private readonly taken: HTMLElement;
   private readonly ammo: HTMLElement;
   private readonly note: HTMLElement;
+  private readonly subtitle: HTMLElement;
+  /** FRIENDS and the note under it, shown and hidden together. */
+  private readonly friends: HTMLElement;
   private onResume?: () => void;
+  private onFriends?: () => void;
 
   constructor(container: HTMLElement) {
     this.root = document.createElement('div');
@@ -110,6 +121,13 @@ export class PauseOverlay {
 
         <button class="pause__resume" type="button" data-pause-resume>Back to it</button>
         <div class="pause__note" data-pause-note>${RESUME_NOTE}</div>
+        <div class="pause__friends-group" data-pause-friends-group hidden>
+          <button class="pause__friends" type="button" data-pause-friends>Friends</button>
+          <div class="pause__p3p2">
+            Friends join through a p3p2 server of your own ·
+            <a href="${P3P2_URL}" target="_blank" rel="noopener noreferrer">p3p2.me</a>
+          </div>
+        </div>
 
         <div class="pause__keys">
           ${(isTouchDevice() ? TOUCH_KEYS : KEYS).map(
@@ -118,15 +136,23 @@ export class PauseOverlay {
           ).join('')}
         </div>
 
-        <a
-          class="fork-badge fork-badge--hero"
-          href="${REPO_URL}"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="${GITHUB_MARK}" /></svg>
-          Fork me on GitHub
-        </a>
+        <div class="pause__links">
+          <a
+            class="fork-badge fork-badge--hero"
+            href="${REPO_URL}"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="${GITHUB_MARK}" /></svg>
+            Fork me on GitHub
+          </a>
+          <a
+            class="maize-link"
+            href="${MAIZE_URL}"
+            target="_blank"
+            rel="noopener noreferrer"
+          >More games on Maize.Live</a>
+        </div>
       </div>
     `;
     container.append(this.root);
@@ -136,13 +162,15 @@ export class PauseOverlay {
     this.taken = this.root.querySelector('[data-pause-taken]')!;
     this.ammo = this.root.querySelector('[data-pause-ammo]')!;
     this.note = this.root.querySelector('[data-pause-note]')!;
+    this.subtitle = this.root.querySelector('.pause__subtitle')!;
+    this.friends = this.root.querySelector('[data-pause-friends-group]')!;
 
     this.root.addEventListener('pointerdown', this.onPointerDown);
   }
 
   /**
-   * Anywhere on the card resumes — except the repo link, which is the single
-   * thing here a player might want without giving up the pause. Grabbing the
+   * Anywhere on the card resumes — except the links and FRIENDS, the things
+   * here a player might want without giving up the pause. Grabbing the
    * pointer as a new tab opens would be a small hostage situation.
    *
    * `pointerdown` rather than `click`, and that is a phone fix rather than a
@@ -154,9 +182,28 @@ export class PauseOverlay {
    * existed. The link still works, because a link is followed on click.
    */
   private onPointerDown = (event: PointerEvent): void => {
-    if ((event.target as HTMLElement | null)?.closest('a')) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('a')) return;
+    if (target?.closest('[data-pause-friends]')) {
+      this.onFriends?.();
+      return;
+    }
     this.onResume?.();
   };
+
+  /**
+   * The way to friends (p3p2's panel), or null for none. Here because every corner of a
+   * phone's screen is taken, and on a computer the pointer is free only on this card.
+   */
+  setFriendsHandler(handler: (() => void) | null): void {
+    this.onFriends = handler ?? undefined;
+    this.friends.hidden = handler === null;
+  }
+
+  /** In a room the park does not wait, and the card says so. */
+  setShared(shared: boolean): void {
+    this.subtitle.textContent = shared ? 'The park goes on without you.' : 'The paint will wait.';
+  }
 
   /** Registers what a press on the card means. */
   setResumeHandler(handler: () => void): void {

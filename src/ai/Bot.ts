@@ -95,6 +95,9 @@ export class Bot {
   private readonly velocity = new Vector3();
   private readonly body: RapierNS.RigidBody;
   readonly collider: RapierNS.Collider;
+  private readonly api: GameContext['physics']['api'];
+  /** The capsule's height: a friend who crouches is a smaller target. */
+  private height: number = playerConfig.height;
 
   private path: Vector3[] = [];
   private pathIndex = 0;
@@ -173,6 +176,12 @@ export class Bot {
   isPainter = false;
 
   /**
+   * False for a place in a room that nobody is in: no figure, no collider, nobody's
+   * target. Only the first player's place can be empty; a bot fills the others.
+   */
+  present = true;
+
+  /**
    * Simulation time as of this step, for the handful of things that need it
    * outside `fixedUpdate` — `onHit` arrives from the hit router, which has no
    * clock to hand and no business acquiring one.
@@ -228,6 +237,7 @@ export class Bot {
     this.position.copy(spawn);
 
     const halfHeight = playerConfig.height / 2 - playerConfig.radius;
+    this.api = ctx.physics.api;
     this.body = ctx.physics.w.createRigidBody(
       ctx.physics.api.RigidBodyDesc.kinematicPositionBased().setTranslation(
         spawn.x,
@@ -278,6 +288,74 @@ export class Bot {
     this.abandonMural();
     this.muralBlockedUntil = -Infinity;
     this.muralsFinished = 0;
+  }
+
+  /** Empties or fills this place in a room. See `present`. */
+  setPresent(present: boolean): void {
+    if (present === this.present) return;
+    this.present = present;
+    this.collider.setEnabled(present);
+    this.character.setPresent(present);
+    this.velocity.set(0, 0, 0);
+  }
+
+  /**
+   * Forgets what this bot was doing, keeping where it stands: for a figure that the AI
+   * on this page takes over, in a room, from another page that was moving it.
+   */
+  resetMind(): void {
+    this.velocity.set(0, 0, 0);
+    this.path = [];
+    this.pathIndex = 0;
+    this.target = null;
+    this.state = 'wander';
+    this.stateTimer = 0;
+    this.repathTimer = 0;
+    this.reactionTimer = 0;
+    this.restockTarget = null;
+    this.abandonMural();
+    this.setCrouched(false);
+  }
+
+  /**
+   * In a room: the figure is somebody else's, a friend's or a bot on the host's page, and
+   * goes where their reports say. `flags`: 1 aiming, 2 crouching, 4 on the ground.
+   */
+  drive(
+    x: number,
+    y: number,
+    z: number,
+    yaw: number,
+    vx: number,
+    vy: number,
+    vz: number,
+    flags: number,
+    pitch: number,
+  ): void {
+    this.position.set(x, y, z);
+    this.yaw = yaw;
+    this.velocity.set(vx, 0, vz);
+    this.setCrouched((flags & 2) !== 0);
+    this.body.setNextKinematicTranslation({ x, y: y + this.height / 2, z });
+
+    const speed = Math.hypot(vx, vz);
+    this.animation.speed = speed;
+    this.animation.aiming = (flags & 1) !== 0;
+    this.animation.crouching = (flags & 2) !== 0;
+    this.animation.grounded = (flags & 4) !== 0;
+    this.animation.verticalVelocity = vy;
+    this.animation.aimPitch = pitch;
+    const inv = speed > 0.001 ? 1 / speed : 0;
+    this.animation.moveLocalX = (vx * Math.cos(yaw) - vz * Math.sin(yaw)) * inv;
+    this.animation.moveLocalY = (-vx * Math.sin(yaw) - vz * Math.cos(yaw)) * inv;
+    if (isPlaying(this.match)) this.character.setTransform(this.position, this.yaw);
+  }
+
+  private setCrouched(crouched: boolean): void {
+    const height = crouched ? playerConfig.crouchHeight : playerConfig.height;
+    if (height === this.height) return;
+    this.height = height;
+    this.collider.setShape(new this.api.Capsule(height / 2 - playerConfig.radius, playerConfig.radius));
   }
 
   /** Called when this bot is hit, to make it react. */
@@ -1112,7 +1190,7 @@ export class Bot {
   /** Keeps bots from piling into one another. */
   private applySeparation(others: Bot[], speedLimit: number): void {
     for (const other of others) {
-      if (other === this) continue;
+      if (other === this || !other.present) continue;
       const dx = this.position.x - other.position.x;
       const dz = this.position.z - other.position.z;
       const distance = Math.hypot(dx, dz);
@@ -1282,8 +1360,18 @@ export class Bot {
     this.character.setTransform(this.position, this.yaw);
   }
 
+  /** How it is moving, in m/s: for a room's report of it. */
+  get motion(): Vector3 {
+    return this.velocity;
+  }
+
   get animationInput(): AnimationInput {
     return this.animation;
+  }
+
+  /** Whom it is after, by id, or null. */
+  get targetId(): string | null {
+    return this.target?.id ?? null;
   }
 
   get hasTarget(): boolean {

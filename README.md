@@ -46,6 +46,9 @@ claude --dangerously-skip-permissions
 
 Man & Bot
 
+Play with friends through [p3p2.me](https://p3p2.me): open the pause card, press FRIENDS, and
+paste a room URL from a p3p2 server of your own.
+
 Browse web games at [Maize.Live](https://maize.live)
 , or watch on YouTube [@RadWebGame](https://www.youtube.com/@RadWebGame)
 

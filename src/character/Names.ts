@@ -18,8 +18,20 @@ const BOT_NAMES: Readonly<Record<string, string>> = {
   'bot-f': 'Fitz',
 };
 
+/**
+ * In a room, the names of the friends in the bots' places (`net/`): the name for a
+ * character's id, or undefined for a bot.
+ */
+let friendName: ((id: string) => string | undefined) | null = null;
+
+export function setFriendNames(names: ((id: string) => string | undefined) | null): void {
+  friendName = names;
+}
+
 /** What to call a character on screen. Ids stay the wire format. */
 export function displayName(id: string): string {
   if (id === 'player') return 'you';
+  const friend = friendName?.(id);
+  if (friend !== undefined) return friend;
   return BOT_NAMES[id] ?? id.replace('bot-', 'bot ');
 }

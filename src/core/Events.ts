@@ -14,6 +14,11 @@ export interface GameEventMap {
     point: Vector3;
     normal: Vector3;
     impactSpeed: number;
+    /**
+     * In a room: a ball this page does not judge (`net/`). It is heard and seen to
+     * burst, and nothing else: the page that judges it says what it did.
+     */
+    cosmetic?: boolean;
   };
   /** A paintball landed on the world. */
   'hit:world': {
@@ -24,9 +29,30 @@ export interface GameEventMap {
     impactSpeed: number;
     /** Rapier collider handle, so the paint system can find the receiving mesh. */
     colliderHandle: number;
+    /** As on `hit:character`: a ball this page does not judge, so it leaves no paint. */
+    cosmetic?: boolean;
+    /** Paint from the room's log, landed on another page: painted, and not heard again. */
+    quiet?: boolean;
+    /**
+     * The splat's shape and roll, when they are already chosen: in a room every page
+     * has to draw the same one. Without them the paint draws its own.
+     */
+    variant?: number;
+    roll?: number;
   };
-  /** A paintball was fired. */
-  'shot:fired': { shooterId: string; color: number; origin: Vector3; direction: Vector3 };
+  /** A paintball was fired. `remote`: by another page in the room, and flown here too. */
+  'shot:fired': {
+    shooterId: string;
+    color: number;
+    origin: Vector3;
+    direction: Vector3;
+    remote?: boolean;
+  };
+  /**
+   * A tag from the room's log was counted. `judgedHere`: this page judged the ball,
+   * and has already shown the hit as `hit:character`.
+   */
+  'tag:applied': { targetId: string; shooterId: string; color: number; judgedHere: boolean };
   /** The trigger was pulled with nothing left to fire. */
   'weapon:dry': { shooterId: string };
   /**

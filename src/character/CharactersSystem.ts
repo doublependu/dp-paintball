@@ -11,9 +11,29 @@ import { isPlaying, type MatchState } from '../gameplay/MatchState';
 import type { PlayerState } from '../gameplay/PlayerState';
 import type { MuralBoard } from '../world/PaintScreen';
 import { SplatAtlas } from '../paint/SplatAtlas';
-import { Character } from './Character';
+import { Character, type Tag } from './Character';
 import type { CharacterRegistry } from './CharacterRegistry';
 import type { AnimationInput } from './CharacterAnimator';
+import type { GameEventMap } from '../core/Events';
+
+/** A hit as `hit:character` reports it. */
+export type CharacterHit = GameEventMap['hit:character'];
+
+/**
+ * What this system asks of a room (`net/`), when the page is in one. Unset, or not
+ * `active`, everything is as it is alone.
+ */
+export interface CharactersNet {
+  readonly active: boolean;
+  /** Whether this page's AI moves the bot with this id. The others are moved from outside. */
+  runs(id: string): boolean;
+  /** Whether a bot may shoot at this character. */
+  targetable(id: string): boolean;
+  /** The id of the figure whose spawn is this player's: the place this page is in. */
+  readonly home: string;
+  /** A hit this page judged: the room counts it, or not, for everybody. */
+  tag(hit: CharacterHit, target: Character): void;
+}
 
 export interface BotSpec {
   id: string;
@@ -43,6 +63,8 @@ export class CharactersSystem implements System {
   private readonly spawns = new Map<string, Vector3>();
   /** Rebuilt each step; bots read it to find someone to shoot at. */
   private targets: BotTarget[] = [];
+  /** The room, while the page is in one. See `CharactersNet`. */
+  net?: CharactersNet;
 
   private readonly input: AnimationInput = {
     speed: 0,
@@ -142,17 +164,8 @@ export class CharactersSystem implements System {
     ctx.events.on('hit:character', (event) => this.onHit(event, ctx));
   }
 
-  private onHit(
-    event: {
-      targetId: string;
-      shooterId: string;
-      color: number;
-      point: Vector3;
-      normal: Vector3;
-      impactSpeed: number;
-    },
-    ctx: GameContext,
-  ): void {
+  private onHit(event: CharacterHit, ctx: GameContext): void {
+    if (event.cosmetic) return;
     const target = this.find(event.targetId);
     if (!target || !this.splatAtlas) return;
     // Nothing counts after the whistle. Shots already in the air when the clock
@@ -160,6 +173,11 @@ export class CharactersSystem implements System {
     // is not tagged — the alternative is a scoreboard that keeps moving after
     // it has been shown as final.
     if (!isPlaying(this.match)) return;
+    // In a room the tag is the room's: this page only judged it.
+    if (this.net?.active) {
+      this.net.tag(event, target);
+      return;
+    }
 
     const registered = target.takeHit(
       event.point,
@@ -185,9 +203,30 @@ export class CharactersSystem implements System {
     });
   }
 
-  private find(id: string): Character | undefined {
+  /**
+   * In a room: a tag the room counted, the same on every page. What `onHit` does alone,
+   * from what the judging page worked out.
+   */
+  applyTag(targetId: string, shooterId: string, tag: Tag, rng: Rng): void {
+    const target = this.find(targetId);
+    const shooter = this.find(shooterId);
+    if (!target) return;
+    target.applyTag(tag, shooter?.color ?? target.color);
+    if (shooter && shooter !== target) shooter.hitsGiven++;
+    // The bots this page runs react, as they do alone.
+    if (this.net?.runs(targetId)) this.bots.find((b) => b.id === targetId)?.onHit(rng);
+    if (this.net?.runs(shooterId)) this.bots.find((b) => b.id === shooterId)?.onScored(rng);
+  }
+
+  /** The character with this id, if there is one. */
+  find(id: string): Character | undefined {
     if (id === 'player') return this.player;
     return this.bots.find((b) => b.id === id)?.character;
+  }
+
+  /** Where a character started, which in a room is where whoever takes its place starts. */
+  spawnOf(id: string): Vector3 | undefined {
+    return this.spawns.get(id);
   }
 
   fixedUpdate(dt: number, ctx: GameContext): void {
@@ -201,21 +240,27 @@ export class CharactersSystem implements System {
     if (!this.nav) return;
 
     // One shared candidate list per step, rather than each bot rebuilding it.
+    const net = this.net?.active ? this.net : undefined;
     this.targets.length = 0;
-    this.targets.push({
-      id: 'player',
-      position: PLAYER_CHEST.set(
-        this.state.position.x,
-        this.state.position.y + 1.25,
-        this.state.position.z,
-      ),
-      collider: this.state.collider ?? undefined,
-    });
+    if (!net || net.targetable('player')) {
+      this.targets.push({
+        id: 'player',
+        position: PLAYER_CHEST.set(
+          this.state.position.x,
+          this.state.position.y + 1.25,
+          this.state.position.z,
+        ),
+        collider: this.state.collider ?? undefined,
+      });
+    }
     for (const bot of this.bots) {
+      if (!bot.present || (net && !net.targetable(bot.id))) continue;
       this.targets.push({ id: bot.id, position: bot.chest.clone(), collider: bot.collider });
     }
 
     for (const bot of this.bots) {
+      // In a room, a figure this page does not run is moved by `net/` instead.
+      if (!bot.present || (net && !net.runs(bot.id))) continue;
       bot.fixedUpdate(dt, ctx, this.nav, this.targets, this.bots, this.ballistics);
     }
   }
@@ -288,12 +333,14 @@ export class CharactersSystem implements System {
    */
   respawnAll(): void {
     if (this.painterRng) this.choosePainters(this.painterRng);
-    const playerSpawn = this.spawns.get('player');
+    const net = this.net?.active ? this.net : undefined;
+    const playerSpawn = this.spawns.get(net?.home ?? 'player');
     if (playerSpawn && this.controller) {
       this.controller.teleport(playerSpawn);
       this.state.velocity.set(0, 0, 0);
     }
     for (const bot of this.bots) {
+      if (net && !net.runs(bot.id)) continue;
       const spawn = this.spawns.get(bot.id);
       if (spawn) bot.respawn(spawn);
     }
@@ -311,6 +358,11 @@ export class CharactersSystem implements System {
   get allCharacters(): Character[] {
     const bots = this.bots.map((b) => b.character);
     return this.player ? [this.player, ...bots] : bots;
+  }
+
+  /** Everybody standing in the park: in a room, an empty place has nobody in it. */
+  get shownCharacters(): Character[] {
+    return this.allCharacters.filter((character) => this.bots.find((b) => b.character === character)?.present ?? true);
   }
 
   get allBots(): Bot[] {

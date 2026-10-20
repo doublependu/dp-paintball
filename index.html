@@ -149,6 +149,60 @@
       @media (prefers-reduced-motion: reduce) {
         .fork-badge { animation: none; }
       }
+      /*
+        The way to more games, shared with the pause card the same way the
+        badge is. The quieter of the two links on purpose: cream and ink, like
+        the pause card's FRIENDS, rather than a second yellow wobble competing
+        with the first.
+      */
+      .maize-link {
+        display: inline-flex;
+        align-items: center;
+        padding: 9px 20px;
+        border: 3px solid #2a2438;
+        border-radius: 999px;
+        background: #fff8ec;
+        color: #2a2438;
+        font-size: 0.82rem;
+        font-weight: 800;
+        text-decoration: none;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        box-shadow: 0 4px 0 rgba(42, 36, 56, 0.25);
+        transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+      }
+      .maize-link:hover {
+        transform: translateY(-2px);
+        background: #ffffff;
+        box-shadow: 0 6px 0 rgba(42, 36, 56, 0.25);
+      }
+      .maize-link:active {
+        transform: translateY(1px);
+        box-shadow: 0 2px 0 rgba(42, 36, 56, 0.25);
+      }
+      /*
+        The build, in the one corner nothing else uses (bottom right; on a
+        phone, the gutter under the right trigger — see .is-touch .build-tag in
+        src/style.css). Over the loading card and everything in #app, which
+        is fixed and so stacks as one layer under this. Never in the way:
+        nothing to press, nothing to select.
+      */
+      .build-tag {
+        position: fixed;
+        right: calc(10px + env(safe-area-inset-right));
+        bottom: calc(8px + env(safe-area-inset-bottom));
+        z-index: 11;
+        color: rgba(42, 36, 56, 0.55);
+        text-shadow: 0 0 3px rgba(255, 255, 255, 0.7);
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1;
+        letter-spacing: 0.06em;
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
     </style>
   </head>
   <body>
@@ -172,7 +226,15 @@
         </svg>
         Fork me on GitHub
       </a>
+      <a
+        class="maize-link"
+        href="https://maize.live"
+        target="_blank"
+        rel="noopener noreferrer"
+      >More games on Maize.Live</a>
     </div>
+
+    <div class="build-tag" data-build-tag>__BUILD_TAG__</div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

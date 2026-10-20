@@ -11,6 +11,21 @@ import { createRigMaterial, type RigMaterialHandle } from './RigMaterial';
 import { NO_OUTLINE_LAYER } from '../render/NprPipeline';
 import { HUMAN_PARTS, VoxelRig, type RigPart } from './VoxelRig';
 
+/**
+ * A tag, judged on one page and applied on all of them (`net/`): where on the body the
+ * paint goes, in the joint's own frame, so that it lands in the same place on a figure
+ * that every page has in a slightly different pose.
+ */
+export interface Tag {
+  /** The joint the paint is on, or -1 for a hit on the capsule clear of every box. */
+  joint: number;
+  point: Vector3;
+  normal: Vector3;
+  radius: number;
+  variant: number;
+  rotation: number;
+}
+
 export interface CharacterOptions {
   id: string;
   /** Team colour, used for the shirt and this character's own paint. */
@@ -32,7 +47,8 @@ export class Character {
   readonly hull: Mesh;
   readonly animator = new CharacterAnimator();
   readonly paint: CharacterPaint;
-  readonly color: number;
+  /** The team colour. Changes only in a room, where it is the colour of the figure's place. */
+  color: number;
 
   /** Score counters. Nobody dies; this is the whole scoreboard. */
   hitsTaken = 0;
@@ -58,21 +74,9 @@ export class Character {
     // Tint the shirt to the team colour so who's who is readable at a glance.
     // Shirt, cap and sleeves all take the team colour, but the sleeves are
     // darkened so the arms still read as separate limbs against the torso.
-    const sleeve = new Color(this.color).multiplyScalar(0.78).getHex();
     const parts: RigPart[] = HUMAN_PARTS.map((part) => {
-      if (
-        part.name === 'torso' ||
-        part.name === 'cap' ||
-        part.name === 'brim' ||
-        // The marker's hopper: the paint you're carrying is your own colour.
-        part.name === 'gunHopper'
-      ) {
-        return { ...part, color: this.color };
-      }
-      if (part.name === 'armL' || part.name === 'armR') {
-        return { ...part, color: sleeve };
-      }
-      return part;
+      const tint = teamTint(part.name, this.color);
+      return tint === null ? part : { ...part, color: tint };
     });
 
     this.rig = new VoxelRig(parts);
@@ -100,6 +104,22 @@ export class Character {
     this.rig.root.add(this.hull);
     this.rig.root.add(this.mesh);
     ctx.scene.add(this.rig.root);
+  }
+
+  /** Puts the figure in another team colour: in a room, its place's. */
+  recolor(colorIndex: number): void {
+    const color = paintColors[colorIndex % paintColors.length]!;
+    if (color === this.color) return;
+    this.color = color;
+    for (const part of HUMAN_PARTS) {
+      const tint = teamTint(part.name, color);
+      if (tint !== null) this.rig.setPartColor(part.name, tint);
+    }
+  }
+
+  /** Shows or hides the figure: in a room, a place with nobody in it is empty. */
+  setPresent(present: boolean): void {
+    this.rig.root.visible = present;
   }
 
   /** Associates a physics collider so impacts can be routed to this character. */
@@ -180,28 +200,44 @@ export class Character {
     // more generous than the figure inside it.
     if (joint < 0) return true;
 
-    const speedScale = clamp(
-      remap(
-        impactSpeed,
-        paintConfig.splatSpeedMin,
-        paintConfig.splatSpeedMax,
-        paintConfig.minSplatScale,
-        paintConfig.maxSplatScale,
-      ),
-      paintConfig.minSplatScale,
-      paintConfig.maxSplatScale,
-    );
-
     this.paint.add(
       this.paintPoint,
       this.paintNormal,
       joint,
-      paintConfig.characterSplatRadius * speedScale,
+      paintConfig.characterSplatRadius * splatScale(impactSpeed),
       color,
       variant,
       rotation,
     );
     return true;
+  }
+
+  /**
+   * In a room: what `takeHit` would paint, without painting it or counting it. The page
+   * that judges a ball works this out on its own figure and sends it to everybody.
+   */
+  aimTag(point: Vector3, normal: Vector3, impactSpeed: number, rng: Rng, splatVariants: number): Tag {
+    this.rig.root.updateMatrixWorld(true);
+    this.worldMatrix.copy(this.rig.root.matrixWorld);
+    const variant = rng.int(0, splatVariants);
+    const rotation = rng.range(0, Math.PI * 2);
+    const joint = this.rig.resolvePaintAnchor(point, normal, this.worldMatrix, this.paintPoint, this.paintNormal);
+    return {
+      joint,
+      point: this.paintPoint.clone(),
+      normal: this.paintNormal.clone(),
+      radius: paintConfig.characterSplatRadius * splatScale(impactSpeed),
+      variant,
+      rotation,
+    };
+  }
+
+  /** In a room: a tag the room has counted. It scores and paints, as `takeHit` does. */
+  applyTag(tag: Tag, color: number): void {
+    this.hitsTaken++;
+    this.animator.triggerFlinch();
+    if (tag.joint < 0) return;
+    this.paint.add(tag.point, tag.normal, tag.joint, tag.radius, color, tag.variant, tag.rotation);
   }
 
   dispose(): void {
@@ -210,4 +246,34 @@ export class Character {
     // No paint.dispose(): paint is three Float32Arrays now, not a GPU resource.
     this.material.dispose();
   }
+}
+
+/** How much a hit at this speed scales a splat. */
+function splatScale(impactSpeed: number): number {
+  return clamp(
+    remap(
+      impactSpeed,
+      paintConfig.splatSpeedMin,
+      paintConfig.splatSpeedMax,
+      paintConfig.minSplatScale,
+      paintConfig.maxSplatScale,
+    ),
+    paintConfig.minSplatScale,
+    paintConfig.maxSplatScale,
+  );
+}
+
+/** A part's colour in a team's colour, or null for a part the team colour leaves alone. */
+function teamTint(name: string, color: number): number | null {
+  if (
+    name === 'torso' ||
+    name === 'cap' ||
+    name === 'brim' ||
+    // The marker's hopper: the paint you're carrying is your own colour.
+    name === 'gunHopper'
+  ) {
+    return color;
+  }
+  if (name === 'armL' || name === 'armR') return new Color(color).multiplyScalar(0.78).getHex();
+  return null;
 }

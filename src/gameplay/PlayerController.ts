@@ -3,7 +3,7 @@ import { Vector3 } from 'three';
 import { physics as physicsConfig, player as playerConfig } from '../core/Config';
 import { damp, dampAngle } from '../core/MathUtils';
 import type { GameContext, System } from '../core/System';
-import { isPlaying, type MatchState } from './MatchState';
+import { inPlay, type MatchState } from './MatchState';
 import type { PlayerState } from './PlayerState';
 
 /** Grace window after walking off a ledge during which a jump still works. */
@@ -92,7 +92,7 @@ export class PlayerController implements System {
     // Hands off the controls once the round is over: the results are something
     // to read, not to walk away from. Gravity and the ground contact below still
     // run, so the character settles rather than freezing mid-air.
-    const playing = isPlaying(this.match);
+    const playing = inPlay(this.match);
     const move = playing ? input.getMoveVector() : NO_MOVE;
     state.sprinting = playing && input.isDown('sprint') && move.y > 0 && !state.crouching;
     this.wantsCrouch = playing && input.isDown('crouch');

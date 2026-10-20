@@ -52,15 +52,22 @@ export class AudioSystem implements System {
       else this.playAt(origin, (g, p) => this.synth?.shoot(g * 0.9, p));
     });
 
-    ctx.events.on('hit:world', ({ point, impactSpeed }) => {
+    ctx.events.on('hit:world', ({ point, impactSpeed, quiet }) => {
+      // Paint from the room's log: its ball was heard where it burst.
+      if (quiet) return;
       this.playAt(point, (g, p) =>
         this.synth?.splat(g, p, 0.85 + Math.min(impactSpeed, 42) / 60));
     });
 
-    ctx.events.on('hit:character', ({ point, targetId, shooterId }) => {
+    ctx.events.on('hit:character', ({ point, targetId, shooterId, cosmetic }) => {
       this.playAt(point, (g, p) => this.synth?.splat(g * 1.15, p, 1.15));
+      if (cosmetic) return;
       if (targetId === 'player') this.synth?.tagged(1);
       else if (shooterId === 'player') this.synth?.scored(1);
+    });
+
+    ctx.events.on('tag:applied', ({ targetId, judgedHere }) => {
+      if (!judgedHere && targetId === 'player') this.synth?.tagged(1);
     });
 
     ctx.events.on('weapon:dry', ({ shooterId }) => {

@@ -71,7 +71,7 @@ export class ResultsSystem implements System {
     const panel = this.panel;
     if (!stage || !panel) return;
 
-    const characters = this.characters.allCharacters;
+    const characters = this.characters.shownCharacters;
     stage.present(characters);
     this.render.setOverlay(stage);
 

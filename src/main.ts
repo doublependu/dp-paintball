@@ -1,5 +1,6 @@
 import './style.css';
 import { Vector3 } from 'three';
+import { P3P2 } from '@p3p2/client';
 import { MURAL_DESIGNS, designsForBox, dotsFor, letterDesign } from './ai/MuralDesigns';
 import { DEDICATION_SIGN, PLACE_SIGNS, signBlocks } from './world/PlaceSigns';
 import { ARCADE, PLAZA, TERRACE, heightAt, lakeMask, walkMask } from './world/ParkLayout';
@@ -28,6 +29,7 @@ import { TouchControlsSystem } from './ui/TouchControls';
 import { PaintScreen, screenBlocks } from './world/PaintScreen';
 import { ParkArenaSystem } from './world/ParkArena';
 import { TestCourseSystem } from './world/TestCourse';
+import { Net } from './net/Net';
 
 const container = document.querySelector<HTMLDivElement>('#app');
 if (!container) throw new Error('main: #app container missing');
@@ -139,19 +141,56 @@ const aim = new AimSolver();
 // empty meadow.
 const poster = new PosterCapture(game.render, useTestCourse ? null : paintScreen, match);
 
+const weapon = new WeaponSystem(playerState, ballistics, aim, match);
+const pause = new PauseSystem(container, charactersSystem, match);
+
+/**
+ * Friends in the bots' places, through a p3p2 server (`net/`). The library's entry is
+ * under 2 KB and asks no server anything on an ordinary visit; the rest loads when a
+ * room is opened. The panel has no button of its own: on a phone every corner is taken,
+ * and on a computer the pointer is free only on the pause card, where FRIENDS is. Not on
+ * the test course, which is a fixture.
+ */
+const p3p2 = useTestCourse
+  ? null
+  : new P3P2({ game: { id: 'dp-paintball', version: __BUILD__ }, ui: { button: false, chatKey: false } });
+const net = p3p2
+  ? new Net({
+      p3p2,
+      places: [{ id: 'player', colorIndex: 0 }, ...bots.map(({ id, colorIndex }) => ({ id, colorIndex }))],
+      events: game.events,
+      container,
+      state: playerState,
+      player,
+      characters: charactersSystem,
+      ballistics,
+      weapon,
+      paint,
+      screen: paintScreen,
+      atlas: splatAtlas,
+      match,
+      matchSystem,
+      lootSystem,
+      pause,
+    })
+  : null;
+
 // Registration order is execution order, and it matters:
 //   player writes renderPosition -> camera reads it and writes avatarOpacity
 //   -> avatar reads both.
+// The room comes straight after the player: it moves everybody else's figures, which
+// the characters then pose, and the bots then aim at.
+game.add(
+  useTestCourse
+    ? new TestCourseSystem(surfaces)
+    : new ParkArenaSystem(surfaces, paintScreen),
+);
+game.add(player);
+if (net) game.add(net);
 game
-  .add(
-    useTestCourse
-      ? new TestCourseSystem(surfaces)
-      : new ParkArenaSystem(surfaces, paintScreen),
-  )
-  .add(player)
   .add(new CameraRig(playerState))
   .add(ballistics)
-  .add(new WeaponSystem(playerState, ballistics, aim, match))
+  .add(weapon)
   // After the camera, and that one is load-bearing rather than tidy: the
   // crosshair traces down the camera's forward axis in its own `update`, so
   // registered ahead of the rig it would aim down the previous frame's view
@@ -173,7 +212,7 @@ game
   // could touch.
   .add(new TouchControlsSystem(container, match))
   // After the HUD, whose bottom hint it replaces while the round is held.
-  .add(new PauseSystem(container, charactersSystem, match))
+  .add(pause)
   // Before the results, and that ordering is the whole contract. See above.
   .add(poster)
   // Last: it draws over the finished frame, and it takes the characters out of
@@ -218,6 +257,8 @@ declare global {
       loot: LootState;
       lootSystem: LootSystem;
       matchSystem: MatchSystem;
+      /** The room, when the page has p3p2: null on the test course. */
+      net: Net | null;
       camera: () => { x: number; y: number; z: number };
       simTime: () => number;
       setManualSim: (on: boolean) => void;
@@ -288,6 +329,7 @@ window.__paintball = {
   loot,
   lootSystem,
   matchSystem,
+  net,
   camera: () => game.render.camera.position.clone(),
   simTime: () => game.simElapsed,
   setManualSim: (on) => game.setManualSim(on),
@@ -325,6 +367,10 @@ game.events.once('game:ready', () => {
   // Let the fade finish before pulling it out of the layer tree.
   setTimeout(() => loader?.remove(), 600);
 });
+
+// Back into the room after a reload, and "Join?" for a page opened from an invite.
+// After the park is built: a room's paint goes onto it.
+game.events.once('game:ready', () => void p3p2?.start().catch(() => {}));
 
 void game.boot().catch((error: unknown) => {
   console.error('Boot failed', error);

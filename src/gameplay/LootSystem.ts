@@ -20,7 +20,7 @@ import type { GameContext, System } from '../core/System';
 import { createCelMaterial } from '../render/CelMaterial';
 import { NO_OUTLINE_LAYER } from '../render/NprPipeline';
 import { LOOT_SPOTS } from '../world/ParkLayout';
-import { grant, type MatchState } from './MatchState';
+import { grant, isPlaying, type MatchState } from './MatchState';
 import type { PlayerState } from './PlayerState';
 
 /** One crate standing in the park. */
@@ -84,6 +84,19 @@ export function totalCrateRounds(loot: LootState): number {
   return total;
 }
 
+/**
+ * What the crates ask of a room (`net/`), when the page is in one: there the host's
+ * page places them and hands them out, and the others draw what it says.
+ */
+export interface LootNet {
+  readonly active: boolean;
+  readonly isHost: boolean;
+  /** Whether this page runs the character with this id, so may hand it a crate itself. */
+  runs(id: string): boolean;
+  /** This player is standing at a crate on a guest's page: ask the host for it. */
+  ask(slot: number): void;
+}
+
 /** Bob height and rate, so the crate reads as a pickup rather than scenery. */
 const BOB_HEIGHT = 0.09;
 const BOB_RATE = 1.7;
@@ -143,6 +156,8 @@ export class LootSystem implements System {
   readonly name = 'loot';
 
   private readonly slots: CrateSlot[] = [];
+  /** The room, while the page is in one. See `LootNet`. */
+  net?: LootNet;
   /** Held from init, so a crate can be placed outside the step. See respawn(). */
   private ctx?: GameContext;
   private readonly rng: Rng;
@@ -191,6 +206,8 @@ export class LootSystem implements System {
   respawn(): void {
     const ctx = this.ctx;
     if (!ctx || this.match.sandbox) return;
+    // A guest's crates are the host's; they arrive with its reports.
+    if (this.net?.active && !this.net.isHost) return;
     // Emptied outright rather than slot by slot. This system owns the list, and
     // a fresh round should end with exactly `lootCrates` crates in it whatever
     // the last one left behind — retiring only what the slots know about leaves
@@ -206,6 +223,10 @@ export class LootSystem implements System {
 
   fixedUpdate(dt: number, ctx: GameContext): void {
     if (this.match.sandbox) return;
+    if (this.net?.active && !this.net.isHost) {
+      this.askForPickup();
+      return;
+    }
 
     for (const slot of this.slots) {
       if (slot.crate) continue;
@@ -216,7 +237,7 @@ export class LootSystem implements System {
       if (slot.respawnTimer <= 0) this.spawn(slot, ctx, true);
     }
 
-    this.checkPickup(ctx);
+    this.checkPickup();
   }
 
   update(_dt: number, _alpha: number, ctx: GameContext): void {
@@ -253,7 +274,10 @@ export class LootSystem implements System {
 
     const spot = this.pickSpot(nav, slot);
     if (!spot) return;
+    this.place(slot, ctx, spot, announce);
+  }
 
+  private place(slot: CrateSlot, ctx: GameContext, spot: { point: Vector3; where: string }, announce: boolean): void {
     slot.base.copy(spot.point);
     slot.group.position.copy(slot.base);
     slot.group.visible = true;
@@ -315,7 +339,7 @@ export class LootSystem implements System {
   }
 
   /** First character within reach of a crate takes the lot. */
-  private checkPickup(ctx: GameContext): void {
+  private checkPickup(): void {
     const radius = matchConfig.lootPickupRadius;
 
     for (const slot of this.slots) {
@@ -323,10 +347,12 @@ export class LootSystem implements System {
       if (!crate) continue;
 
       let takerId: string | null = null;
-      if (this.playerState.position.distanceTo(crate.position) <= radius) {
+      if (this.playerState.position.distanceTo(crate.position) <= radius && !this.match.held) {
         takerId = 'player';
       } else {
         for (const bot of this.characters.allBots) {
+          // In a room a friend's figure asks for the crate from their own page.
+          if (!bot.present || (this.net?.active && !this.net.runs(bot.id))) continue;
           if (bot.position.distanceTo(crate.position) <= radius) {
             takerId = bot.id;
             break;
@@ -334,16 +360,71 @@ export class LootSystem implements System {
         }
       }
       if (!takerId) continue;
-
-      const rounds = crate.rounds;
-      const position = crate.position.clone();
-      grant(this.match, takerId, rounds);
-
-      ctx.events.emit('loot:taken', { characterId: takerId, rounds, position });
-
-      this.retire(slot);
-      slot.respawnTimer = matchConfig.lootRespawnSeconds;
+      this.take(this.slots.indexOf(slot), takerId);
     }
+  }
+
+  /**
+   * Hands a slot's crate to a character, and starts its respawn timer. On the host in a
+   * room this is also how a friend who asked gets it: `takerId` is then their figure's,
+   * and the paint goes to them by message.
+   */
+  take(index: number, takerId: string): number {
+    const slot = this.slots[index];
+    const crate = slot?.crate;
+    if (!slot || !crate || !this.ctx) return 0;
+    const rounds = crate.rounds;
+    const position = crate.position.clone();
+    grant(this.match, takerId, rounds);
+    this.ctx.events.emit('loot:taken', { characterId: takerId, rounds, position });
+    this.retire(slot);
+    slot.respawnTimer = matchConfig.lootRespawnSeconds;
+    return rounds;
+  }
+
+  /** A guest's player at a crate: the host is asked, and decides. */
+  private askForPickup(): void {
+    if (this.match.held) return;
+    const radius = matchConfig.lootPickupRadius;
+    this.slots.forEach((slot, index) => {
+      if (slot.crate && this.playerState.position.distanceTo(slot.crate.position) <= radius) this.net?.ask(index);
+    });
+  }
+
+  /** Where each slot's crate is, as an index into `LOOT_SPOTS`, or -1: what the host reports. */
+  get spots(): number[] {
+    return this.slots.map((slot) => (slot.crate ? slot.lastSpotIndex : -1));
+  }
+
+  /**
+   * A guest takes the host's crates as reported. A crate that is gone was taken by
+   * somebody: `takerId` when the page knows who, as it does for its own player. The
+   * crates a guest finds there when it comes in are not news: `announce` is false then.
+   */
+  showSpots(spots: readonly number[], announce: boolean, takerId = ''): void {
+    const ctx = this.ctx;
+    const nav = this.characters.navGrid;
+    if (!ctx || !nav) return;
+    spots.forEach((index, at) => {
+      const slot = this.slots[at];
+      if (!slot || index === (slot.crate ? slot.lastSpotIndex : -1)) return;
+      if (slot.crate) {
+        const crate = slot.crate;
+        this.retire(slot);
+        ctx.events.emit('loot:taken', { characterId: takerId, rounds: crate.rounds, position: crate.position.clone() });
+      }
+      const spot = LOOT_SPOTS[index];
+      if (!spot) return;
+      const walkable = nav.nearestWalkable(spot.x, spot.z, 3);
+      if (!walkable) return;
+      slot.lastSpotIndex = index;
+      this.place(slot, ctx, { point: walkable, where: spot.where }, announce && isPlaying(this.match));
+    });
+  }
+
+  /** A guest who becomes the host carries on: the empty slots wait their full time. */
+  adopt(): void {
+    for (const slot of this.slots) if (!slot.crate) slot.respawnTimer = matchConfig.lootRespawnSeconds;
   }
 
   /**

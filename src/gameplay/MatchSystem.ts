@@ -6,6 +6,21 @@ import { totalCrateRounds, type LootState, type LootSystem } from './LootSystem'
 import { isPaused, isPlaying, resetMatch, totalAmmo, type MatchState } from './MatchState';
 
 /**
+ * What the round asks of a room (`net/`), when the page is in one: there the round is
+ * the room's, kept in its log by the host. Unset, or not `active`, the round is the
+ * page's own.
+ */
+export interface MatchNet {
+  readonly active: boolean;
+  /** Seconds left in the room's round, by the server's clock. */
+  timeLeft(): number;
+  /** The round should end: the host says so to the room, once. */
+  over(reason: 'time' | 'ammo'): void;
+  /** The player asks for the next round, after the whistle. */
+  again(): void;
+}
+
+/**
  * The round: a clock, an ending, and a way to start another one.
  *
  * This is the piece that turns the sandbox into a game with a shape. Everything
@@ -19,6 +34,8 @@ export class MatchSystem implements System {
 
   /** Thresholds still to announce, largest first. */
   private pendingWarnings: number[] = [];
+  /** The room, while the page is in one. See `MatchNet`. */
+  net?: MatchNet;
 
   constructor(
     private readonly match: MatchState,
@@ -28,8 +45,11 @@ export class MatchSystem implements System {
     private readonly lootSystem: LootSystem,
   ) {}
 
+  private ctx?: GameContext;
+
   init(ctx: GameContext): void {
     if (this.match.sandbox) return;
+    this.ctx = ctx;
     this.pendingWarnings = [matchConfig.warnAtSeconds];
     ctx.events.emit('match:started', { duration: this.match.timeLeft });
 
@@ -41,7 +61,10 @@ export class MatchSystem implements System {
         // Getting the pointer back means one of two things, and which one it
         // means is the phase we were in when we lost it.
         if (isPaused(this.match)) this.resume(ctx);
-        else if (!isPlaying(this.match)) this.restart(ctx);
+        else if (!isPlaying(this.match)) {
+          if (this.net?.active) this.net.again();
+          else this.restart(ctx);
+        }
         return;
       }
       // Esc, alt-tab, or anything else that takes the pointer away mid-round.
@@ -60,12 +83,15 @@ export class MatchSystem implements System {
    * on the world, exactly as it does when the whistle goes.
    */
   private pause(ctx: GameContext): void {
-    this.match.phase = 'paused';
+    // A room's round goes on: only this player stands still.
+    if (this.net?.active) this.match.held = true;
+    else this.match.phase = 'paused';
     ctx.events.emit('match:paused', {});
   }
 
   private resume(ctx: GameContext): void {
-    this.match.phase = 'playing';
+    this.match.held = false;
+    if (this.match.phase === 'paused') this.match.phase = 'playing';
     ctx.events.emit('match:resumed', {});
   }
 
@@ -74,8 +100,10 @@ export class MatchSystem implements System {
     if (match.sandbox || !isPlaying(match)) return;
 
     // Simulated time, not wall clock: a round that runs short on a slow machine
-    // is not a round. See the Loop.elapsed / simElapsed note in CLAUDE.md.
-    match.timeLeft = Math.max(0, match.timeLeft - dt);
+    // is not a round. See the Loop.elapsed / simElapsed note in CLAUDE.md. In a
+    // room it is the server's clock, the one every page reads.
+    const net = this.net?.active ? this.net : undefined;
+    match.timeLeft = net ? net.timeLeft() : Math.max(0, match.timeLeft - dt);
 
     const next = this.pendingWarnings[0];
     if (next !== undefined && match.timeLeft <= next) {
@@ -84,10 +112,19 @@ export class MatchSystem implements System {
     }
 
     if (match.timeLeft <= 0) {
-      this.end(ctx, 'time');
+      if (net) net.over('time');
+      else this.end(ctx, 'time');
       return;
     }
-    if (this.outOfPaint()) this.end(ctx, 'ammo');
+    if (this.outOfPaint()) {
+      if (net) net.over('ammo');
+      else this.end(ctx, 'ammo');
+    }
+  }
+
+  /** In a room: the room's round is over. */
+  finish(reason: 'time' | 'ammo'): void {
+    if (this.ctx && this.match.phase !== 'ended') this.end(this.ctx, reason);
   }
 
   /**
@@ -113,6 +150,7 @@ export class MatchSystem implements System {
 
   private end(ctx: GameContext, reason: 'time' | 'ammo'): void {
     this.match.phase = 'ended';
+    this.match.held = false;
     this.match.endedBy = reason;
     this.match.timeLeft = 0;
     // Hand the cursor back so the player can read the board — and so the click
@@ -133,8 +171,8 @@ export class MatchSystem implements System {
    * round is more in keeping with this game than one that wipes clean every five
    * minutes.
    */
-  restart(ctx: GameContext): void {
-    if (this.match.sandbox) return;
+  restart(ctx: GameContext | undefined = this.ctx): void {
+    if (this.match.sandbox || !ctx) return;
 
     resetMatch(this.match);
     this.characters.resetScores();

@@ -10,6 +10,7 @@
  * Usage: node tools/ui-test.mjs [url]
  */
 import { chromium } from 'playwright-core';
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 const url = process.argv[2] ?? 'http://localhost:4173/';
@@ -29,6 +30,12 @@ const page = await browser.newPage({ viewport: { width: 1024, height: 576 } });
 const consoleErrors = [];
 page.on('pageerror', (e) => consoleErrors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+// Everything an ordinary visit asks for: p3p2's small entry loads with the
+// page, and the rest of it — and any server — only once a room is opened.
+const requests = [];
+const sockets = [];
+page.on('request', (r) => requests.push(r.url()));
+page.on('websocket', (ws) => sockets.push(ws.url()));
 
 await page.goto(url, { waitUntil: 'load' });
 
@@ -60,6 +67,78 @@ function check(name, pass, detail) {
 async function waitSim(seconds) {
   await page.evaluate((s) => window.__paintball.stepSim(s), seconds);
 }
+
+// --- Alone, the page asks no server anything --------------------------------
+//
+// Multiplayer is p3p2's, and a visit that opens no room must cost nothing for
+// it: no socket, nothing from any other origin, and of p3p2's own files only
+// the entry — its room client, panel and QR code load when a room is opened.
+const origin = new URL(url).origin;
+const elsewhere = requests.filter((u) => !u.startsWith(origin) && !/^(data|blob):/.test(u));
+check('an ordinary visit asks no other server anything',
+      elsewhere.length === 0 && sockets.length === 0,
+      elsewhere[0] ?? sockets[0] ?? `${requests.length} requests, all to ${origin}`);
+const p3p2Files = requests.filter((u) => /\/p3p2[-.]/.test(u)).map((u) => new URL(u).pathname);
+check('of p3p2, only its entry loads until a room is opened',
+      p3p2Files.length > 0 && !p3p2Files.some((p) => /p3p2-(core|panel|qr|local)-/.test(p)),
+      p3p2Files.join(', ') || 'p3p2 never loaded');
+const solo = await page.evaluate(() => ({
+  seat: window.__paintball.net?.seat,
+  room: window.__paintball.net?.room,
+  places: window.__paintball.net?.fingerprint().places.map((p) => p.who).join(),
+}));
+check('alone, the park is the player and six bots', solo.room === null && solo.seat === 0 &&
+      solo.places === 'me,bot,bot,bot,bot,bot,bot', JSON.stringify(solo));
+
+// --- The version in the corner, and the way to more games -------------------
+const loaderLink = await page.evaluate(async (u) => {
+  // The loader is gone by now; the page as served still has it.
+  const doc = new DOMParser().parseFromString(await (await fetch(u)).text(), 'text/html');
+  const a = doc.querySelector('#loader a.maize-link');
+  return a && { href: a.getAttribute('href'), target: a.getAttribute('target'), text: a.textContent.trim() };
+}, url);
+check('the loading card links to more games on Maize.Live',
+      loaderLink?.href === 'https://maize.live' && loaderLink.target === '_blank' &&
+      /more games on maize\.live/i.test(loaderLink.text),
+      JSON.stringify(loaderLink));
+
+const buildTag = await page.evaluate(() => {
+  const el = document.querySelector('[data-build-tag]');
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  // The fixed parts of the HUD; the crate marker roams the screen's edge and is
+  // left out.
+  const overlaps = [...document.querySelectorAll(
+    '.hud__counters, .hud__clock, .hud__hint, .hud__viewport-crosshair, .perf-hud',
+  )]
+    .filter((e) => {
+      const h = e.getBoundingClientRect();
+      return h.width > 0 && h.height > 0 && r.left < h.right && r.right > h.left &&
+        r.top < h.bottom && r.bottom > h.top;
+    })
+    .map((e) => e.className);
+  return {
+    text: el.textContent.trim(),
+    left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+    width: innerWidth, height: innerHeight,
+    overlaps,
+    events: getComputedStyle(el).pointerEvents,
+  };
+});
+let head = '';
+try {
+  head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+    .trim().slice(0, 4);
+} catch { /* no git: the format is still checked */ }
+check('the version reads v. and the commit’s first four characters',
+      /^v\.[0-9a-f]{4}$/.test(buildTag?.text ?? ''),
+      `${buildTag?.text}${head && buildTag?.text !== `v.${head}` ? ` — built from another commit than HEAD (${head}); rebuild` : ''}`);
+check('the version sits in the bottom-right corner',
+      buildTag && buildTag.left > buildTag.width * 0.8 && buildTag.top > buildTag.height * 0.85 &&
+      buildTag.right <= buildTag.width && buildTag.bottom <= buildTag.height,
+      buildTag && `${Math.round(buildTag.left)},${Math.round(buildTag.top)} on ${buildTag.width}×${buildTag.height}`);
+check('the version covers nothing on the HUD', buildTag?.overlaps.length === 0, buildTag?.overlaps.join(', '));
+check('the version takes no clicks', buildTag?.events === 'none', buildTag?.events);
 
 // --- Audio must not start before a gesture ---------------------------------
 const beforeGesture = await page.evaluate(() => window.__paintball.audio.engine.isReady);
@@ -260,6 +339,34 @@ await page.waitForTimeout(150);
 check('the repo link does not resume the round',
       (await page.evaluate(() => window.__paintball.match.phase)) === 'paused');
 
+// The other ways off the card: more games, and friends. FRIENDS itself is not
+// pressed here — it opens p3p2's panel, which is net-test's to try.
+const card = await page.evaluate(() => {
+  const link = (a) => a && { href: a.getAttribute('href'), target: a.getAttribute('target') };
+  const group = document.querySelector('[data-pause-friends-group]');
+  return {
+    maize: link(document.querySelector('.pause .maize-link')),
+    friends: Boolean(group && !group.hidden && getComputedStyle(group).display !== 'none'),
+    p3p2: link(document.querySelector('.pause__p3p2 a')),
+    subtitle: document.querySelector('.pause__subtitle')?.textContent,
+  };
+});
+check('the pause card links to more games on Maize.Live',
+      card.maize?.href === 'https://maize.live' && card.maize.target === '_blank', JSON.stringify(card.maize));
+check('FRIENDS is on the park’s pause card', card.friends === true);
+check('the pause card says where a room comes from: p3p2.me',
+      card.p3p2?.href === 'https://p3p2.me' && card.p3p2.target === '_blank', JSON.stringify(card.p3p2));
+check('alone, the pause card says the paint will wait', card.subtitle === 'The paint will wait.', card.subtitle);
+await page.evaluate(() => {
+  for (const a of document.querySelectorAll('.pause .maize-link, .pause__p3p2 a')) {
+    a.removeAttribute('href');
+    a.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+  }
+});
+await page.waitForTimeout(150);
+check('the Maize.Live and p3p2.me links do not resume the round',
+      (await page.evaluate(() => window.__paintball.match.phase)) === 'paused');
+
 // Clear of the second or so in which a browser refuses a lock after Esc.
 await page.waitForTimeout(1600);
 await page.click('[data-pause-resume]');
@@ -278,6 +385,21 @@ check('the round runs again once resumed', afterResume < heldFor,
       `${heldFor.toFixed(2)}s -> ${afterResume.toFixed(2)}s`);
 
 check('no console or page errors', consoleErrors.length === 0, consoleErrors[0] ?? 'clean');
+
+// --- The test course is a fixture, with no room and no FRIENDS -------------
+//
+// Its match is a sandbox that never pauses, so there is no card to look on;
+// what matters is that no room can be opened there at all.
+const course = await browser.newPage({ viewport: { width: 1024, height: 576 } });
+await course.goto(new URL('?scene=course', url).href, { waitUntil: 'load' });
+await course.waitForFunction(
+  () => window.__paintball?.bootTimings().some((t) => t.phase === 'TOTAL'), null, { timeout: 60_000 });
+const onCourse = await course.evaluate(() => ({
+  net: window.__paintball.net,
+  friends: document.querySelectorAll('[data-pause-friends-group]:not([hidden])').length,
+}));
+check('the test course has no room, and shows no FRIENDS',
+      onCourse.net === null && onCourse.friends === 0, JSON.stringify(onCourse));
 
 await browser.close();
 const failed = results.filter((r) => !r.pass);

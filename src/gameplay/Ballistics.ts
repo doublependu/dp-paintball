@@ -79,7 +79,15 @@ export class BallisticsSystem implements System {
    */
   constructor(private readonly characters?: CharacterRegistry) {}
 
+  /**
+   * In a room, whether this page judges an impact: what a ball does to a person or to
+   * the park is decided on one page only (`net/`). An impact this says no to still
+   * ends the ball, and is reported as `cosmetic`. Unset alone: every impact is real.
+   */
+  judge?: (shooterId: string, targetId: string | undefined) => boolean;
+
   private pool: Projectile[] = [];
+  private ctx?: GameContext;
   private mesh?: InstancedMesh;
   private nextIndex = 0;
 
@@ -103,6 +111,7 @@ export class BallisticsSystem implements System {
   private static readonly UNIT_SCALE = new Vector3(1, 1, 1);
 
   init(ctx: GameContext): void {
+    this.ctx = ctx;
     for (let i = 0; i < config.maxActive; i++) {
       this.pool.push({
         active: false,
@@ -128,13 +137,19 @@ export class BallisticsSystem implements System {
     ctx.scene.add(this.mesh);
   }
 
-  /** Launches a paintball. Recycles the oldest slot if the pool is exhausted. */
+  /**
+   * Launches a paintball. Recycles the oldest slot if the pool is exhausted.
+   *
+   * `lag` is for a shot fired on another page in the room, that many seconds ago: the
+   * ball is flown that far at once, so that it is where it is on the page that fired it.
+   */
   fire(
     origin: Vector3,
     direction: Vector3,
     shooterId: string,
     color: number,
     exclude?: RapierNS.Collider,
+    lag = 0,
   ): void {
     const projectile = this.acquire();
     projectile.active = true;
@@ -147,40 +162,46 @@ export class BallisticsSystem implements System {
     projectile.color = color;
     projectile.shooterId = shooterId;
     projectile.exclude = exclude;
+
+    const ctx = this.ctx;
+    if (!ctx || lag < FIXED_DT / 2) return;
+    for (let caught = 0; caught < lag && projectile.active; caught += FIXED_DT) this.step(projectile, FIXED_DT, ctx);
+    projectile.renderFrom.copy(projectile.position);
   }
 
   fixedUpdate(dt: number, ctx: GameContext): void {
-    const { physics, events } = ctx;
-
     for (const projectile of this.pool) {
-      if (!projectile.active) continue;
-
-      projectile.age += dt;
-      if (projectile.age > config.maxLifetime) {
-        projectile.active = false;
-        continue;
-      }
-
-      projectile.previous.copy(projectile.position);
-      projectile.renderFrom.copy(projectile.position);
-
-      BallisticsSystem.advance(projectile.velocity, dt);
-
-      this.delta.copy(projectile.velocity).multiplyScalar(dt);
-      const distance = this.delta.length();
-      if (distance < 1e-6) continue;
-      this.direction.copy(this.delta).divideScalar(distance);
-
-      const hit = this.sweep(physics, projectile, distance);
-      if (hit) {
-        projectile.active = false;
-        this.emitImpact(events, projectile, hit);
-        continue;
-      }
-
-      projectile.position.add(this.delta);
-      projectile.renderTo.copy(projectile.position);
+      if (projectile.active) this.step(projectile, dt, ctx);
     }
+  }
+
+  /** One fixed step of one ball's flight, ending in an impact if it meets something. */
+  private step(projectile: Projectile, dt: number, ctx: GameContext): void {
+    projectile.age += dt;
+    if (projectile.age > config.maxLifetime) {
+      projectile.active = false;
+      return;
+    }
+
+    projectile.previous.copy(projectile.position);
+    projectile.renderFrom.copy(projectile.position);
+
+    BallisticsSystem.advance(projectile.velocity, dt);
+
+    this.delta.copy(projectile.velocity).multiplyScalar(dt);
+    const distance = this.delta.length();
+    if (distance < 1e-6) return;
+    this.direction.copy(this.delta).divideScalar(distance);
+
+    const hit = this.sweep(ctx.physics, projectile, distance);
+    if (hit) {
+      projectile.active = false;
+      this.emitImpact(ctx.events, projectile, hit);
+      return;
+    }
+
+    projectile.position.add(this.delta);
+    projectile.renderTo.copy(projectile.position);
   }
 
   update(_dt: number, alpha: number): void {
@@ -391,6 +412,7 @@ export class BallisticsSystem implements System {
 
     const impactSpeed = speed * (0.4 + 0.6 * incidence);
     const targetId = this.characters?.getId(hit.collider.handle);
+    const cosmetic = this.judge && !this.judge(projectile.shooterId, targetId) ? true : undefined;
 
     if (targetId !== undefined) {
       events.emit('hit:character', {
@@ -400,6 +422,7 @@ export class BallisticsSystem implements System {
         point: this.hitPoint.clone(),
         normal: this.hitNormal.clone(),
         impactSpeed,
+        cosmetic,
       });
       return;
     }
@@ -411,6 +434,7 @@ export class BallisticsSystem implements System {
       normal: this.hitNormal.clone(),
       impactSpeed,
       colliderHandle: hit.collider.handle,
+      cosmetic,
     });
   }
 
