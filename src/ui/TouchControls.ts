@@ -86,7 +86,6 @@ export class TouchControlsSystem implements System {
   private ctx?: GameContext;
   private root?: HTMLDivElement;
   private startLayer?: HTMLDivElement;
-  private startLabel?: HTMLElement;
   private rotateGate?: HTMLDivElement;
   private stick?: HTMLDivElement;
   private knob?: HTMLElement;
@@ -169,14 +168,13 @@ export class TouchControlsSystem implements System {
     start.className = 'touch-start';
     start.innerHTML = `
       <div class="touch-start__card">
-        <div class="touch-start__label" data-start-label>tap to play</div>
+        <div class="touch-start__label">tap to play</div>
         <div class="touch-start__hint">${START_HINT}</div>
       </div>
       <div class="touch-install" data-install hidden></div>
     `;
     this.container.append(start);
     this.startLayer = start;
-    this.startLabel = start.querySelector('[data-start-label]')!;
     this.installPanel = start.querySelector('[data-install]')!;
 
     const gate = document.createElement('div');
@@ -219,6 +217,10 @@ export class TouchControlsSystem implements System {
     // The session, from the one place that owns it. Includes the pause card's
     // resume and the end of a round, neither of which comes through this file.
     ctx.events.on('input:lockChanged', ({ locked }) => this.setEngaged(locked));
+    // A round can also end or begin without the session changing: in a room,
+    // a friend's Play again starts it while this player is still on the card.
+    ctx.events.on('match:ended', () => this.refreshStart());
+    ctx.events.on('match:started', () => this.refreshStart());
 
     const onVisibility = () => {
       // A backgrounded tab is a player who has left, which on a desktop is
@@ -366,14 +368,21 @@ export class TouchControlsSystem implements System {
     }
     this.root?.classList.toggle('is-live', engaged);
     this.releaseEverything();
+    this.refreshStart();
+  }
 
+  /**
+   * The start prompt is up whenever nobody is at the controls, except after a
+   * round. Then the results card is the way back in, through its Play again
+   * button: the prompt covers the whole screen, the fire thumb's next tap would
+   * land on it, and the card would be gone before anyone had read it.
+   */
+  private refreshStart(): void {
     const gated = this.portraitQuery?.matches ?? false;
-    this.startLayer?.classList.toggle('is-visible', !engaged && !gated);
-    if (!engaged && this.startLabel) {
-      // The same tap means "begin" and "again", and the card should say which.
-      this.startLabel.textContent =
-        this.match.phase === 'ended' ? 'tap to play again' : 'tap to play';
-    }
+    this.startLayer?.classList.toggle(
+      'is-visible',
+      !this.engaged && !gated && this.match.phase !== 'ended',
+    );
   }
 
   /**
@@ -401,11 +410,8 @@ export class TouchControlsSystem implements System {
   private applyOrientation(): void {
     const portrait = this.portraitQuery?.matches ?? false;
     this.rotateGate?.classList.toggle('is-visible', portrait);
-    if (!portrait) {
-      this.startLayer?.classList.toggle('is-visible', !this.engaged);
-      return;
-    }
-    this.startLayer?.classList.remove('is-visible');
+    this.refreshStart();
+    if (!portrait) return;
     // Held, not merely hidden: a round running behind a card nobody can see is
     // a round being lost.
     if (this.engaged) this.ctx?.input.releaseLock();

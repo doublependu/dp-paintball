@@ -175,6 +175,16 @@ const net = p3p2
     })
   : null;
 
+const results = new ResultsSystem(
+  container,
+  charactersSystem,
+  match,
+  game.render,
+  useTestCourse ? null : paintScreen,
+  useTestCourse ? null : poster,
+);
+results.shared = () => net?.active ?? false;
+
 // Registration order is execution order, and it matters:
 //   player writes renderPosition -> camera reads it and writes avatarOpacity
 //   -> avatar reads both.
@@ -217,16 +227,7 @@ game
   .add(poster)
   // Last: it draws over the finished frame, and it takes the characters out of
   // the world, which everything above expects to still be there while playing.
-  .add(
-    new ResultsSystem(
-      container,
-      charactersSystem,
-      match,
-      game.render,
-      useTestCourse ? null : paintScreen,
-      useTestCourse ? null : poster,
-    ),
-  );
+  .add(results);
 
 interface ImpactRecord {
   x: number;

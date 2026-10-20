@@ -77,6 +77,28 @@ function check(name, pass, detail) {
 const stepSim = (seconds) => page.evaluate((s) => window.__paintball.stepSim(s), seconds);
 const playerAmmo = () => page.evaluate(() => window.__paintball.match.ammo.get('player'));
 
+/** Seconds before Play again can be pressed: `match.againArmSeconds`. */
+const ARM_SECONDS = 2;
+
+/** The middle of the Play again button, or null when the card has none. */
+async function againButton() {
+  const box = await page.locator('[data-results-again]').boundingBox().catch(() => null);
+  return box && { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+/**
+ * Lets Play again arm, and presses it. The only way to the next round.
+ *
+ * It arms on frame time, which in manual mode only `stepSim` hands out.
+ */
+async function playAgain() {
+  await stepSim(ARM_SECONDS);
+  await page.waitForFunction(
+    () => document.querySelector('[data-results-again]')?.disabled === false, null,
+    { timeout: (ARM_SECONDS + 5) * 1000 });
+  await page.click('[data-results-again]');
+}
+
 /**
  * Parks the player somewhere quiet before measuring.
  *
@@ -514,6 +536,60 @@ check('the awards are handed out',
 check('the clock stops at 0:00', ended.clock === '0:00', `shows "${ended.clock}"`);
 check('the cursor is handed back so the board can be read', ended.locked === false);
 
+// --- The results can't be skipped ------------------------------------------
+// A player busy shooting at the whistle is still clicking when the card comes
+// up, and every one of those clicks used to mean "play again": the card was up
+// for a fifth of a second. Now only Play again starts the next round, and it
+// can't be pressed for the first few seconds.
+//
+// The round ended half a second into the `stepSim(1.5)` above, so the card has
+// had one second of frames. Arming counts frame time, and in manual mode no
+// frame time passes between steps, so the clicks below all land inside that
+// first second however long SwiftShader takes over them.
+const roundOver = () => page.evaluate(() => ({
+  phase: window.__paintball.match.phase,
+  card: document.querySelector('.results').classList.contains('is-visible'),
+  locked: window.__paintball.game.input.isLocked,
+}));
+const stillOver = (s) => s.phase === 'ended' && s.card && !s.locked;
+const overDetail = (s) => `phase=${s.phase} card=${s.card} locked=${s.locked}`;
+const againDisabled = () => page.evaluate(() =>
+  document.querySelector('[data-results-again]')?.disabled ?? null);
+
+const again = await page.evaluate(() => {
+  const button = document.querySelector('[data-results-again]');
+  return button && { disabled: button.disabled, text: button.textContent.trim() };
+});
+check('the card has a Play again button, not yet armed', again?.disabled === true,
+      again ? `"${again.text}", disabled=${again.disabled}` : 'no button');
+
+const button = await againButton();
+if (button) await page.mouse.click(button.x, button.y);
+await page.waitForTimeout(150);
+const early = await roundOver();
+check('Play again does nothing before it arms', Boolean(button) && stillOver(early),
+      button ? overDetail(early) : 'no button');
+
+for (let i = 0; i < 6; i++) {
+  await page.mouse.click(512, 288);
+  await page.waitForTimeout(150);
+}
+const clicked = await roundOver();
+check('clicking the park through the whistle does not skip the results', stillOver(clicked),
+      overDetail(clicked));
+
+await stepSim(ARM_SECONDS - 1.2);
+const almost = await againDisabled();
+await stepSim(0.35);
+const armed = await againDisabled();
+check(`Play again arms ${ARM_SECONDS}s after the whistle`, almost === true && armed === false,
+      `disabled at ${ARM_SECONDS - 0.2}s: ${almost}, at ${ARM_SECONDS + 0.15}s: ${armed}`);
+
+await page.mouse.click(512, 288);
+await page.waitForTimeout(400);
+const late = await roundOver();
+check('clicking the park after it arms still starts nothing', stillOver(late), overDetail(late));
+
 // --- Nothing counts after the whistle ------------------------------------
 const frozen = await page.evaluate(() => {
   const { characters, game, match, state } = window.__paintball;
@@ -544,11 +620,11 @@ const ammoAfterIdle = await playerAmmo();
 check('the trigger does nothing once the round is over',
       ammoAfterIdle === ammoBeforeIdle, `${ammoBeforeIdle} -> ${ammoAfterIdle}`);
 
-// --- Clicking starts another round ---------------------------------------
+// --- Play again starts another round --------------------------------------
 // Read with no simulation stepped in between, on purpose: the reset happens
 // synchronously in the lock handler, and half a second of live play is half a
 // second in which a bot can tag the player and put paint straight back on.
-await page.mouse.click(512, 288);
+await playAgain();
 await page.waitForTimeout(400);
 const restarted = await page.evaluate(() => ({
   phase: window.__paintball.match.phase,
@@ -561,7 +637,7 @@ const restarted = await page.evaluate(() => ({
   inWorld: window.__paintball.characters.allCharacters
     .filter((c) => c.rig.root.parent === window.__paintball.game.render.scene).length,
 }));
-check('clicking after the whistle starts a fresh round',
+check('Play again starts a fresh round',
       restarted.phase === 'playing' && restarted.timeLeft > 290,
       `phase=${restarted.phase} clock=${restarted.timeLeft.toFixed(0)}s`);
 check('a fresh round refills, rescores and puts out new crates',
@@ -596,6 +672,10 @@ await page.evaluate(() => {
   // paint back in the park mid-assertion.
   loot.crates.length = 0;
 });
+// With the trigger held through the whistle: the press began under the lock,
+// and the release that follows it must not count as a click on the park.
+await page.mouse.move(512, 288);
+await page.mouse.down();
 await stepSim(1.0);
 const ranDry = await page.evaluate(() => ({
   phase: window.__paintball.match.phase,
@@ -606,8 +686,18 @@ check('running out of paint ends the round early',
       ranDry.phase === 'ended' && ranDry.endedBy === 'ammo',
       `phase=${ranDry.phase} by=${ranDry.endedBy} with ${ranDry.timeLeft.toFixed(0)}s left`);
 
+await page.waitForTimeout(250);
+await page.mouse.up();
+await page.waitForTimeout(400);
+const letGo = await page.evaluate(() => ({
+  phase: window.__paintball.match.phase,
+  locked: window.__paintball.game.input.isLocked,
+}));
+check('a trigger held through the whistle and let go after it starts nothing',
+      letGo.phase === 'ended' && !letGo.locked, `phase=${letGo.phase} locked=${letGo.locked}`);
+
 // A crate still out there means the paint is not gone, only put down.
-await page.mouse.click(512, 288);
+await playAgain();
 await page.waitForTimeout(400);
 await stepSim(0.5);
 const withCrateOut = await page.evaluate(() => {

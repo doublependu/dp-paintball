@@ -215,13 +215,15 @@ const locked = (page) => page.evaluate(() => document.pointerLockElement !== nul
 /**
  * Into the game with a click, as a player would: the pointer is the game's. A
  * browser refuses a lock for a moment after one is let go, so it is asked again
- * until it takes.
+ * until it takes. After a round, the click is on Play again, which waits for it
+ * to arm.
  */
 async function play(page) {
   const deadline = Date.now() + 10_000;
   while (!(await locked(page))) {
     if (Date.now() > deadline) throw new Error('the pointer never locked');
     if (await page.locator('.pause.is-visible').isVisible()) await page.click('[data-pause-resume]');
+    else if (await page.locator('.results.is-visible').isVisible()) await page.click('[data-results-again]');
     else await page.locator('canvas').first().click();
     await sleep(400);
   }
@@ -555,7 +557,7 @@ await test('the bots go for a guest, and their balls are judged on the guest’s
   return `handed on in ${(handover / 1000).toFixed(1)}s`;
 });
 
-await test('the round is the room’s: it ends for everybody, a guest’s click starts the next, and the park’s paint stays', async () => {
+await test('the round is the room’s: it ends for everybody, a guest’s Play again starts the next, and the park’s paint stays', async () => {
   const { pages } = await park('Rounds', ['Ada', 'Grace']);
   const [ada, grace] = pages;
   const board = (page) => page.evaluate(() => window.__paintball.paintScreen.splatCount);
@@ -589,7 +591,21 @@ await test('the round is the room’s: it ends for everybody, a guest’s click 
   const over = (await print(grace)).over;
   must(over === 'time', `Grace's round ended for "${over}"`);
 
-  // Grace clicks to play again: a new round for both, with clean scores and a clean board front.
+  // A click on the park is not Play again: a guest still shooting at the whistle
+  // must not skip everybody's results.
+  for (let i = 0; i < 4; i++) {
+    await grace.mouse.click(VIEWPORT.width / 2, VIEWPORT.height / 2);
+    await sleep(150);
+  }
+  await sleep(1000);
+  for (const page of pages) {
+    must((await phase(page)) === 'ended' && (await print(page)).round === round,
+         'a click on the park started the next round');
+  }
+  const label = (await grace.locator('[data-results-again]').textContent()).trim();
+  must(label === 'Next round, for everyone', `Play again reads "${label}" in a room`);
+
+  // Grace presses it: a new round for both, with clean scores and a clean board front.
   await play(grace);
   for (const page of pages) {
     await poll('the next round starts', async () => (await print(page)).round, (r) => r === round + 1);

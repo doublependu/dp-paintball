@@ -176,6 +176,14 @@ export const match = {
   warnAtSeconds: 60,
   /** The clock turns urgent below this. */
   urgentAtSeconds: 30,
+  /**
+   * Seconds after the whistle before Play again can be pressed.
+   *
+   * A player busy shooting is still clicking when the round ends, and the
+   * reflex clicks land 0.1–0.4s after the whistle. Two seconds outlasts the
+   * streak and leaves time to take in the line-up, without feeling like a wait.
+   */
+  againArmSeconds: 2,
   /** Paintballs everyone starts with. */
   startingAmmo: 200,
   /** Paint in one crate. */

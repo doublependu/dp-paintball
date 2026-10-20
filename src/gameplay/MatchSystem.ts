@@ -59,7 +59,9 @@ export class MatchSystem implements System {
     ctx.events.on('input:lockChanged', ({ locked }) => {
       if (locked) {
         // Getting the pointer back means one of two things, and which one it
-        // means is the phase we were in when we lost it.
+        // means is the phase we were in when we lost it. After a round, the
+        // only way to get it back is the results card's Play again: the card
+        // takes every other click, and the phone's start prompt stays down.
         if (isPaused(this.match)) this.resume(ctx);
         else if (!isPlaying(this.match)) {
           if (this.net?.active) this.net.again();
@@ -153,8 +155,8 @@ export class MatchSystem implements System {
     this.match.held = false;
     this.match.endedBy = reason;
     this.match.timeLeft = 0;
-    // Hand the cursor back so the player can read the board — and so the click
-    // that re-locks it is available as "play again".
+    // Hand the cursor back so the player can read the board and press Play
+    // again, which is what takes it back.
     ctx.input.releaseLock();
     ctx.events.emit('match:ended', { reason });
   }

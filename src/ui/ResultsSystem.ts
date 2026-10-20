@@ -1,5 +1,6 @@
 import type { CharactersSystem } from '../character/CharactersSystem';
 import { displayName } from '../character/Names';
+import { match as matchConfig } from '../core/Config';
 import type { GameContext, System } from '../core/System';
 import type { MatchState } from '../gameplay/MatchState';
 import type { RenderSystem } from '../render/Renderer';
@@ -26,6 +27,16 @@ export class ResultsSystem implements System {
 
   private stage?: ResultsStage;
   private panel?: ResultsPanel;
+  /** Whether the page is in a room, where Play again starts everybody's round. */
+  shared: () => boolean = () => false;
+  /**
+   * Seconds of frames the card has been up, up to `againArmSeconds`.
+   *
+   * Frame time rather than a timer: in play it is the same thing, and the
+   * headless suites drive frames with `stepSim`, so they can test the arming
+   * exactly however slowly SwiftShader paints.
+   */
+  private shownFor = 0;
 
   constructor(
     private readonly container: HTMLElement,
@@ -49,6 +60,10 @@ export class ResultsSystem implements System {
 
     this.stage = new ResultsStage();
     this.panel = new ResultsPanel(this.container);
+    // The controls coming back after a round is what `MatchSystem` reads as
+    // "play again" (in a room, as asking the host for the next round). The
+    // button's click is the gesture a pointer lock needs.
+    this.panel.setAgainHandler(() => ctx.input.requestLock());
 
     ctx.events.on('match:ended', ({ reason }) => this.show(reason));
     ctx.events.on('match:started', () => this.hide());
@@ -64,6 +79,11 @@ export class ResultsSystem implements System {
     // is ready. Reading it once catches the card mid-arrival.
     if (this.panel) stage.setPanelShare(this.panel.heightFraction);
     stage.update(dt);
+
+    if (this.shownFor < matchConfig.againArmSeconds) {
+      this.shownFor += dt;
+      this.panel?.setArming(this.shownFor / matchConfig.againArmSeconds);
+    }
   }
 
   private show(reason: 'time' | 'ammo'): void {
@@ -76,6 +96,8 @@ export class ResultsSystem implements System {
     this.render.setOverlay(stage);
 
     const splats = new Map(characters.map((c) => [c.id, c.paint.splatCount]));
+    this.shownFor = 0;
+    panel.setShared(this.shared());
     panel.show(
       reason === 'ammo' ? 'Out of paint!' : 'Time!',
       characters.map(toRow),

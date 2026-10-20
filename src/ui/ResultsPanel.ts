@@ -31,6 +31,11 @@ export interface Award {
  * resolution, laid out by CSS, and free of draw calls. It sits along the bottom
  * so the line-up on the stage behind it stays visible — `ResultsStage` frames
  * the figures above the share of the screen this takes.
+ *
+ * Its layer covers the whole screen while it is up, and takes every click, so
+ * that Play again is the only way to the next round. Clicking anywhere used to
+ * be one, and a player still shooting at the whistle skipped the card in a
+ * fifth of a second.
  */
 export class ResultsPanel {
   private readonly root: HTMLDivElement;
@@ -38,14 +43,26 @@ export class ResultsPanel {
   private file: File | null = null;
   /** Object URL behind the save button. Revoked when the card goes away. */
   private downloadUrl: string | null = null;
+  private onAgain: (() => void) | null = null;
 
   constructor(container: HTMLElement) {
+    // On a phone, in the header, between the title and the badge: the footer of
+    // a landscape card is already at the bottom of the screen, and its right end
+    // is under the fire button. On a computer, the footer, well below where the
+    // cursor comes back.
+    const touch = isTouchDevice();
+    const again = `
+      <button class="results__again" type="button" data-results-again disabled>
+        <span class="results__again-label" data-results-again-label>Play again</span>
+      </button>
+    `;
     this.root = document.createElement('div');
     this.root.className = 'results';
     this.root.innerHTML = `
       <div class="results__card">
         <div class="results__header">
           <div class="results__title" data-results-title></div>
+          ${touch ? again : ''}
           <a
             class="fork-badge"
             href="${REPO_URL}"
@@ -71,7 +88,7 @@ export class ResultsPanel {
             </div>
           </div>
         </div>
-        <div class="results__again">${isTouchDevice() ? 'tap' : 'click'} to play again</div>
+        ${touch ? '' : `<div class="results__footer">${again}</div>`}
       </div>
     `;
     container.append(this.root);
@@ -81,12 +98,39 @@ export class ResultsPanel {
     this.share.addEventListener('click', (event) => {
       const button = (event.target as HTMLElement | null)?.closest('[data-share-action]');
       if (!(button instanceof HTMLElement)) return;
-      // Belt and braces. The canvas is what carries the click-to-play-again
-      // listener and it is not an ancestor of this, so nothing should reach it
-      // — but a stray restart here would throw away the picture being shared.
-      event.stopPropagation();
       this.onShareAction(button.dataset.shareAction ?? '');
     });
+
+    // A click, not the pointerdown the start prompt uses: like any button, it
+    // takes a press and a release on it, and nothing else on the card starts a
+    // round.
+    this.againButton.addEventListener('click', () => {
+      if (!this.againButton.disabled) this.onAgain?.();
+    });
+  }
+
+  /** What Play again does. `ResultsSystem` asks for the controls back. */
+  setAgainHandler(handler: () => void): void {
+    this.onAgain = handler;
+  }
+
+  /** In a room, Play again starts the next round for everybody, and says so. */
+  setShared(shared: boolean): void {
+    this.root.querySelector('[data-results-again-label]')!.textContent = shared
+      ? 'Next round, for everyone'
+      : 'Play again';
+  }
+
+  /**
+   * How far Play again is through arming, 0 to 1. It can be pressed at 1.
+   *
+   * Not focused when it arms, on purpose: a focused button is pressed by Space,
+   * which is jump, and a player still jumping would skip the card with it.
+   */
+  setArming(fraction: number): void {
+    const button = this.againButton;
+    button.style.setProperty('--arm', String(Math.min(1, Math.max(0, fraction))));
+    button.disabled = fraction < 1;
   }
 
   /**
@@ -181,6 +225,7 @@ export class ResultsPanel {
       .join('');
 
     this.showMural(souvenir);
+    this.setArming(0);
     this.root.classList.add('is-visible');
   }
 
@@ -349,6 +394,10 @@ export class ResultsPanel {
 
   private get share(): HTMLElement {
     return this.root.querySelector('[data-results-share]')!;
+  }
+
+  private get againButton(): HTMLButtonElement {
+    return this.root.querySelector('[data-results-again]')!;
   }
 
   dispose(): void {

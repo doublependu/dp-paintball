@@ -412,8 +412,13 @@ check('the poster is prepared before it is asked for', ready.ok === true, ready.
 // to round, which is the choice `MatchSystem.restart` has always documented.
 //
 // The card's own image must survive too. It is a data URL taken at the whistle
-// rather than a live view of the canvas, so the wipe that happens on the click
-// that dismisses the card must not blank the picture being shared.
+// rather than a live view of the canvas, so the wipe that happens on the Play
+// again that dismisses the card must not blank the picture being shared.
+//
+// Play again has to arm first. It arms on frame time, which in manual mode only
+// `stepSim` hands out, and stepping lets the last balls in the air land, so
+// it's done before the counts below are taken.
+await waitSim(2.1);
 await page.evaluate(() => {
   const { game, paintScreen, state } = window.__paintball;
   const V = state.position.constructor;
@@ -435,7 +440,7 @@ const beforeRestart = await page.evaluate(() => ({
   world: window.__paintball.paint.splatCount,
   cardSrc: document.querySelector('[data-results-image]')?.getAttribute('src') ?? '',
 }));
-await page.mouse.click(512, 288);
+await page.click('[data-results-again]');
 await page.waitForTimeout(500);
 const afterRestart = await page.evaluate(() => ({
   front: window.__paintball.paintScreen.splatCount,

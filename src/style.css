@@ -608,9 +608,10 @@ body {
 }
 
 /*
- * The badge is the shared `.fork-badge` from index.html — see the note below
- * the results card. Here it is the second thing on the screen after the resume
- * button, so it gets a size to match.
+ * The badge is the shared `.fork-badge`, styled in the inlined block in
+ * index.html so it paints on the loading card before this stylesheet is
+ * fetched. Here it is the second thing on the screen after the resume button,
+ * so it gets a size to match.
  */
 .fork-badge--hero {
   margin-top: 2px;
@@ -630,25 +631,27 @@ body {
  * characters is rendered behind it and a centred panel would sit across their
  * legs. `ResultsStage.PANEL_SHARE` is the other half of this arrangement: it
  * frames the figures above whatever share of the height this takes.
+ *
+ * The layer itself covers the whole screen and, while the card is up, takes
+ * every click, so none reaches the canvas: a click on the park after a round
+ * used to start the next one, and a player still shooting at the whistle
+ * skipped the card in a fifth of a second. Play again is the way back.
  */
 .results {
   position: absolute;
-  inset: auto 0 0 0;
+  inset: 0;
   display: flex;
+  align-items: flex-end;
   justify-content: center;
   padding: 0 20px 22px;
   opacity: 0;
   transform: translateY(14px);
   pointer-events: none;
   /*
-   * Hidden outright between rounds, not merely transparent.
-   *
-   * The repo link inside it takes clicks — it has to, since the card itself
-   * lets them through to the canvas — and a transparent element still answers
-   * a hit test. Left visible, an invisible "Fork me on GitHub" sits across the
-   * lower middle of the park for the whole round, swallowing the occasional
-   * shot. The visibility switch is delayed by the length of the fade so the
-   * card still animates out rather than blinking away.
+   * Hidden outright between rounds, not merely transparent: a transparent
+   * element still answers a hit test, and its links would sit across the park
+   * for the whole round. The visibility switch is delayed by the length of the
+   * fade so the card still animates out rather than blinking away.
    */
   visibility: hidden;
   transition: opacity 0.22s ease, transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1),
@@ -659,12 +662,17 @@ body {
   opacity: 1;
   transform: translateY(0);
   visibility: visible;
+  pointer-events: auto;
   transition-delay: 0s;
 }
 
 .results__card {
   /* Widened from 760 when the mural moved in beside the scores. */
   width: min(940px, 100%);
+  /* Never taller than the screen: a card that ran off the top would take a
+     phone's Play again with it, and that is the only way to the next round. */
+  max-height: 100%;
+  overflow-y: auto;
   padding: 16px 22px 14px;
   border-radius: 18px;
   border: 3px solid #2a2438;
@@ -685,17 +693,6 @@ body {
   font-size: 22px;
   font-weight: 800;
   letter-spacing: -0.02em;
-}
-
-/*
- * The badge shares `.fork-badge` with the loading card, which is styled in the
- * inlined block in index.html so it paints before this stylesheet is fetched.
- * Only the bits that differ inside the results card live here — chiefly the
- * pointer-events, since `.results` lets clicks through to the canvas so that
- * clicking anywhere starts the next round. The link is the one exception.
- */
-.results .fork-badge {
-  pointer-events: auto;
 }
 
 /*
@@ -741,16 +738,7 @@ body {
   margin-top: 8px;
 }
 
-/*
- * The buttons take clicks; the card around them does not.
- *
- * Same arrangement as `.fork-badge` above and for the same reason: `.results`
- * is `pointer-events: none` so that a click anywhere starts the next round, and
- * anything that wants a click of its own has to opt back in. A share button
- * that also restarted the round would throw away the picture it just shared.
- */
 .results__share-button {
-  pointer-events: auto;
   /* One of these is an `<a>`: see `renderShareRow`. */
   display: inline-block;
   text-decoration: none;
@@ -888,14 +876,74 @@ body {
   flex: 0 0 auto;
 }
 
-.results__again {
+.results__footer {
+  display: flex;
+  justify-content: center;
   margin-top: 10px;
-  text-align: center;
-  font-size: 12px;
-  font-weight: 700;
+}
+
+/*
+ * Play again: the pause card's Back to it, filling up.
+ *
+ * It arms a couple of seconds after the whistle (`match.againArmSeconds`).
+ * Until then it is pale, and the cyan fills it from the left as `--arm` goes
+ * from 0 to 1, so the wait reads as a wait rather than as a broken button.
+ * `ResultsSystem` sets `--arm` every frame; no transition, so the fill is
+ * exactly as far along as the arming is.
+ */
+.results__again {
+  --arm: 0;
+  position: relative;
+  overflow: hidden;
+  width: min(300px, 100%);
+  padding: 8px 24px;
+  border: 3px solid #2a2438;
+  border-radius: 999px;
+  background: #e2f6f8;
+  color: #2a2438;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.14em;
-  color: rgba(42, 36, 56, 0.6);
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  box-shadow: 0 5px 0 rgba(42, 36, 56, 0.3);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.results__again::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #00d4e8;
+  transform: scaleX(var(--arm));
+  transform-origin: left;
+}
+
+.results__again-label {
+  position: relative;
+}
+
+.results__again:disabled {
+  cursor: default;
+}
+
+.results__again:disabled .results__again-label {
+  opacity: 0.6;
+}
+
+.results__again:not(:disabled):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 7px 0 rgba(42, 36, 56, 0.3);
+}
+
+.results__again:not(:disabled):hover::before {
+  background: #4ce4f2;
+}
+
+.results__again:not(:disabled):active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 rgba(42, 36, 56, 0.3);
 }
 
 /* ---------------------------------------------------------------------------
@@ -913,9 +961,8 @@ body {
 
    The layers, bottom to top: HUD 25, lens splash 30, these controls 35, the
    start prompt 36, the results card 38 (lifted from its desktop stacking so
-   its repo link and share buttons still take a tap — they sit above the
-   tap-to-play-again layer, which is why sharing does not start a round), the
-   pause card 40, the rotate gate 60.
+   it sits over the controls; after a round it is the whole interface, and the
+   start prompt stays down), the pause card 40, the rotate gate 60.
    --------------------------------------------------------------------------- */
 
 .touch,
@@ -1320,13 +1367,11 @@ body {
 .is-touch .hud__score-row { padding: 3px 0; font-size: 12px; }
 
 .is-touch .results {
-  padding: 0 12px calc(10px + env(safe-area-inset-bottom));
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
 }
 
-/* Above the start prompt, so the one link on the card is still reachable while
-   a tap anywhere else on the screen starts the next round. Only while the card
-   is up: lifted unconditionally, it would put its link over the fire button for
-   the whole round. */
+/* Over the controls while the card is up. Only then: lifted unconditionally,
+   its fading layer would sit over the fire button as the next round starts. */
 .is-touch .results.is-visible {
   z-index: 38;
 }
@@ -1337,14 +1382,24 @@ body {
 .is-touch .results__awards { gap: 5px; margin-bottom: 7px; }
 .is-touch .results__award { padding: 3px 8px; font-size: 10px; }
 .is-touch .results__row { padding: 2px 0; font-size: 12px; }
-.is-touch .results__again { margin-top: 6px; font-size: 10px; }
+/* In the header on a phone (see `ResultsPanel`): sized to the fork badge
+   beside it, so the header row is no taller than it was. */
+.is-touch .results__again {
+  width: auto;
+  padding: 7px 18px;
+  font-size: 0.74rem;
+  box-shadow: 0 3px 0 rgba(42, 36, 56, 0.3);
+}
 /*
  * A phone held in landscape has height to spare in no direction at all, so the
  * mural takes a third of the width and the share row gets thumb-sized targets
  * rather than the desktop's chips.
  */
-.is-touch .results__main { gap: 10px; }
-.is-touch .results__mural { flex-basis: 26%; }
+/* Beside the scores at any width, overriding the narrow-screen stacking: a phone
+   only plays in landscape, and stacked, the card stood 694px tall on a 667×375
+   screen. */
+.is-touch .results__main { flex-direction: row; gap: 10px; }
+.is-touch .results__mural { flex: 0 0 26%; width: auto; }
 /*
  * One row, never two. A landscape phone is under 400px tall and the card is
  * already most of it; a wrapped second row of buttons costs another 40px and
@@ -1358,9 +1413,9 @@ body {
   white-space: nowrap;
 }
 /*
- * Opaque on touch, where the tap-to-play-again layer sits directly behind the
- * card rather than off at the edges of a desktop screen. At 0.95 its wording
- * ghosts straight through the score table.
+ * Opaque on touch. It was made so for the tap-to-play-again layer that used to
+ * sit behind the card, whose wording ghosted through the table at 0.95; the
+ * card covers nearly all of a landscape screen, so it stays solid.
  */
 .is-touch .results__card { background: #fcfaf5; }
 .is-touch .fork-badge { padding: 7px 14px; font-size: 0.72rem; }

@@ -356,6 +356,79 @@ await page
 const backToLandscape = await state();
 check('turning back clears the gate', !backToLandscape.gateVisible);
 
+// --- The end of a round --------------------------------------------------------
+//
+// The results card covers most of a landscape screen, the fire button included.
+// The start prompt used to come up under it, so the fire thumb's next tap after
+// the whistle started the next round before anyone had read the card.
+await tap(LANDSCAPE.width / 2, LANDSCAPE.height / 2, 20);
+const fireSpot = await centerOf('[data-button="fire"]');
+await tap(fireSpot.x, fireSpot.y, 21);
+await page.evaluate(() => {
+  window.__paintball.match.timeLeft = 0.05;
+  window.__paintball.stepSim(0.2);
+});
+const resultsCard = () => page.evaluate(() => ({
+  card: document.querySelector('.results').classList.contains('is-visible'),
+  again: document.querySelector('[data-results-again]')?.disabled ?? null,
+}));
+const atWhistle = { ...(await state()), ...(await resultsCard()) };
+check('the whistle puts the card up and leaves the start prompt down',
+      atWhistle.phase === 'ended' && atWhistle.card && !atWhistle.startVisible && !atWhistle.live,
+      `phase=${atWhistle.phase} card=${atWhistle.card} start=${atWhistle.startVisible}`);
+
+for (let i = 0; i < 3; i++) await tap(fireSpot.x, fireSpot.y, 22 + i);
+const afterFireTaps = { ...(await state()), ...(await resultsCard()) };
+check('the fire thumb tapping on after the whistle starts nothing',
+      afterFireTaps.phase === 'ended' && afterFireTaps.card && !afterFireTaps.engaged,
+      `phase=${afterFireTaps.phase} engaged=${afterFireTaps.engaged}`);
+
+// Clear of every touch button, shadow included, and on the screen.
+const againFit = await page.evaluate(() => {
+  const again = document.querySelector('[data-results-again]')?.getBoundingClientRect();
+  if (!again) return { missing: true };
+  const hits = [...document.querySelectorAll('.touch__btn')]
+    .filter((b) => {
+      const r = b.getBoundingClientRect();
+      return r.width > 0 && again.left < r.right && again.right > r.left &&
+        again.top < r.bottom + 4 && again.bottom > r.top;
+    })
+    .map((b) => b.className);
+  const card = document.querySelector('.results__card').getBoundingClientRect();
+  return { hits, cardTop: card.top, cardBottom: card.bottom, height: innerHeight };
+});
+check('Play again clears every touch button', !againFit.missing && againFit.hits.length === 0,
+      againFit.missing ? 'no button' : againFit.hits.join(', ') || 'clear');
+check('the results card fits a landscape phone',
+      !againFit.missing && againFit.cardTop >= 0 && againFit.cardBottom <= againFit.height,
+      `card ${Math.round(againFit.cardTop)}–${Math.round(againFit.cardBottom)} of ${againFit.height}`);
+
+const againSpot = await centerOf('[data-results-again]');
+await tap(againSpot.x, againSpot.y, 25);
+const tooSoon = await state();
+check('Play again does nothing before it arms', tooSoon.phase === 'ended' && !tooSoon.engaged,
+      `phase=${tooSoon.phase} armed=${(await resultsCard()).again === false}`);
+
+// Arming counts frame time, which here only `stepSim` hands out.
+await page.evaluate(() => window.__paintball.stepSim(2.1));
+await tap(againSpot.x, againSpot.y, 26);
+const again = { ...(await state()), ...(await resultsCard()) };
+check('once armed, Play again starts the round and hands the controls back',
+      again.phase === 'playing' && again.engaged && again.live && !again.card,
+      `phase=${again.phase} engaged=${again.engaged} live=${again.live} card=${again.card}`);
+
+// In a room the next round can start from a friend's Play again, while this
+// player is still on the card: the start prompt has to come back for them.
+await page.evaluate(() => {
+  window.__paintball.match.timeLeft = 0.05;
+  window.__paintball.stepSim(0.2);
+});
+await page.evaluate(() => window.__paintball.matchSystem.restart());
+const fromElsewhere = await state();
+check('a round started from elsewhere brings the start prompt back',
+      fromElsewhere.phase === 'playing' && fromElsewhere.startVisible && !fromElsewhere.engaged,
+      `phase=${fromElsewhere.phase} start=${fromElsewhere.startVisible}`);
+
 // --- The render budget -------------------------------------------------------
 
 // The emulated phone reports a device pixel ratio of 2 and would render at it
