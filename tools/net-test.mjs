@@ -197,10 +197,21 @@ let pageErrors = [];
 /** What the page knows of the room and the park, as plain numbers. */
 const print = (page) => page.evaluate(() => window.__paintball.net.fingerprint());
 
-/** A player with a browser profile of their own, in the park, before the first click. */
-async function arrive(at = url) {
+/**
+ * A player with a browser profile of their own, in the park, before the first click.
+ * `delay`: every message between the page and the server is held back that many ms,
+ * each way, as on a slow connection. On one machine there is next to none.
+ */
+async function arrive(at = url, { delay = 0 } = {}) {
   const context = await browser.newContext({ viewport: VIEWPORT });
   contexts.push(context);
+  if (delay > 0) {
+    await context.routeWebSocket(() => true, (ws) => {
+      const server = ws.connectToServer();
+      ws.onMessage((message) => setTimeout(() => server.send(message), delay));
+      server.onMessage((message) => setTimeout(() => ws.send(message), delay));
+    });
+  }
   const page = await context.newPage();
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await page.goto(at);
@@ -270,21 +281,24 @@ async function open(page, roomUrl, name) {
 }
 
 /** Somebody who opens the link: asked over the park, and then in a place of their own. */
-async function join(invite, name) {
-  const page = await arrive(invite);
+async function join(invite, name, options) {
+  const page = await arrive(invite, options);
   await page.getByLabel('Your name').fill(name);
   await page.getByRole('button', { name: 'Join', exact: true }).click();
   await poll(`${name} takes a place`, async () => (await print(page)).seat, (s) => s > 0, 30_000);
   return page;
 }
 
-/** A room, opened by the first of `names` and joined by the others, every one of them playing. */
-async function park(roomName, names) {
+/**
+ * A room, opened by the first of `names` and joined by the others, every one of them
+ * playing. `options` go to every page's `arrive`.
+ */
+async function park(roomName, names, options) {
   const roomUrl = await createRoom(roomName);
-  const first = await arrive();
+  const first = await arrive(url, options);
   const invite = await open(first, roomUrl, names[0]);
   const pages = [first];
-  for (const name of names.slice(1)) pages.push(await join(invite, name));
+  for (const name of names.slice(1)) pages.push(await join(invite, name, options));
   for (const page of pages) await play(page);
   for (const page of pages) {
     await poll('every page sees the friends', async () =>
@@ -393,6 +407,104 @@ const hunted = async (host, place) => (await print(host)).places.some((p) => p.a
 
 const decals = (pages) => Promise.all(pages.map((page) => page.evaluate(() => window.__paintball.paint.splatCount)));
 
+/**
+ * Puts this page's player somewhere with 30m of open air ahead and none overhead, and
+ * returns where to aim to send a ball down it; null if the park has no such place.
+ */
+const lane = (page) =>
+  page.evaluate(() => {
+    const p = window.__paintball;
+    const physics = p.game.context.physics;
+    const V = p.state.position.constructor;
+    const clear = (from, to) => {
+      const way = to.clone().sub(from);
+      return !physics.raycast(from, way.clone().normalize(), way.length());
+    };
+    for (let x = -40; x <= 40; x += 4) {
+      for (let z = -40; z <= 40; z += 4) {
+        for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+          const y = p.layout.heightAt(x, z);
+          const chest = new V(x, y + 1.3, z);
+          const aim = chest.clone().add(new V(-Math.sin(yaw) * 30, 3, -Math.cos(yaw) * 30));
+          if (!clear(chest, aim) || !clear(new V(x, y + 0.3, z), new V(x, y + 3.3, z))) continue;
+          p.player.teleport(p.state.position.clone().set(x, 0.2 + y, z));
+          p.state.yaw = yaw;
+          return { x, z, aim: aim.toArray() };
+        }
+      }
+    }
+    return null;
+  });
+
+/**
+ * From now on, this page notes each ball it flies for the figure in `place`: where it
+ * was fired, and where this page first drew it, or null if it never did. `balls` reads
+ * them.
+ *
+ * Reaches into the ballistics' pool: the ball a remote `shot:fired` is about is the one
+ * the pool handed out just before it, and where it is drawn is only known inside
+ * `update`, which has the frame's interpolation.
+ */
+const watchBalls = (page, place) =>
+  page.evaluate((place) => {
+    const p = window.__paintball;
+    const ballistics = p.ballistics;
+    const id = p.net.idOf(place);
+    const seen = (window.__balls = []);
+    let last = null;
+    const acquire = ballistics.acquire.bind(ballistics);
+    ballistics.acquire = () => (last = acquire());
+    p.game.events.on('shot:fired', ({ shooterId, origin, remote }) => {
+      if (!remote || shooterId !== id) return;
+      const ball = { origin: origin.toArray(), drawn: null, over: false };
+      seen.push(ball);
+      // A ball that landed as it was fired is over before it was ever drawn.
+      if (last?.active) last.watched = ball;
+      else ball.over = true;
+      last = null;
+    });
+    const update = ballistics.update.bind(ballistics);
+    ballistics.update = (dt, alpha, ctx) => {
+      update(dt, alpha, ctx);
+      for (const projectile of ballistics.pool) {
+        const ball = projectile.watched;
+        if (!ball) continue;
+        if (!projectile.active) {
+          ball.over = true;
+          projectile.watched = undefined;
+        } else if (!ball.drawn) {
+          ball.drawn = projectile.renderFrom.clone().lerp(projectile.renderTo, alpha).toArray();
+        }
+      }
+    };
+  }, place);
+
+const balls = (page) => page.evaluate(() => window.__balls);
+
+/**
+ * Sends one shot from this page's player as `Net.fired` writes it, dated `age` ms ago:
+ * from the chest, towards `at`. Nothing is fired on this page.
+ */
+const sendShot = (page, at, age) =>
+  page.evaluate(([at, age]) => {
+    const p = window.__paintball;
+    const room = p.net.room;
+    const me = p.state.position;
+    const origin = [me.x, me.y + 1.3, me.z];
+    const way = at.map((v, i) => v - origin[i]);
+    const length = Math.hypot(...way);
+    const bytes = new Uint8Array(25);
+    const view = new DataView(bytes.buffer);
+    view.setUint8(0, 2);
+    view.setFloat64(1, room.now() - age);
+    view.setUint8(9, 1);
+    view.setUint8(10, p.net.seat);
+    view.setUint16(11, 0);
+    origin.forEach((v, i) => view.setInt16(13 + i * 2, Math.round(v * 100)));
+    way.forEach((v, i) => view.setInt16(19 + i * 2, Math.round((v / length) * 32767)));
+    return room.send('sh', bytes);
+  }, [at, age]);
+
 // --- The cases ----------------------------------------------------------------
 
 const results = [];
@@ -488,6 +600,42 @@ await test('a guest’s ball that reaches the host counts on both pages, and so 
   const counts = await poll('both pages paint the same decals', () => decals(pages),
     ([x, y]) => Math.abs(x - y) <= 2);
   return `${counts[0]} and ${counts[1]} decals`;
+});
+
+await test('over a slow connection, a friend’s ball leaves their marker on the other page; a shot that comes half a second late is not flown', async () => {
+  // 50ms each way between each page and the server: a shot is a tenth of a second old
+  // when it reaches the other page, and at 63 m/s a ball flies 6m in that time.
+  const { pages } = await park('A slow connection', ['Ada', 'Grace'], { delay: 50 });
+  const [ada, grace] = pages;
+  const spot = await lane(ada);
+  must(spot, 'no clear lane in the park for Ada to shoot down');
+  await poll('Grace sees Ada where she stands', async () => {
+    const at = (await print(grace)).places[0];
+    return Math.hypot(at.x - spot.x, at.z - spot.z);
+  }, (d) => d < 0.3);
+
+  // Ten balls down the lane. Grace's page draws each from Ada's marker, as Ada's own
+  // page does: a ball flies about a metre a frame, so its first frame is a metre or two out.
+  await watchBalls(grace, 0);
+  for (let i = 0; i < 10; i++) {
+    await shoot(ada, spot.aim);
+    await sleep(300);
+  }
+  const seen = await poll('Grace’s page flies Ada’s ten balls', () => balls(grace),
+    (all) => all.length === 10 && all.every((b) => b.drawn || b.over));
+  const out = seen.map((b) => (b.drawn ? Math.hypot(...b.drawn.map((v, i) => v - b.origin[i])) : Infinity));
+  const never = out.filter((d) => d === Infinity).length;
+  must(never === 0, `${never} of Ada’s balls were never drawn on Grace’s page`);
+  must(Math.max(...out) < 3.5,
+       `Grace’s page first drew Ada’s balls ${out.map((d) => d.toFixed(1)).join(', ')}m from where they were fired`);
+
+  // A shot that comes over half a second late is not flown: what it did comes in the log.
+  await sendShot(ada, spot.aim, 2000);
+  await sleep(1500);
+  must((await balls(grace)).length === 10, 'Grace’s page flew a shot fired two seconds ago');
+  await sendShot(ada, spot.aim, 0);
+  await poll('Grace’s page flies a shot that comes in time', async () => (await balls(grace)).length, (n) => n === 11);
+  return `first drawn ${Math.min(...out).toFixed(1)}–${Math.max(...out).toFixed(1)}m out`;
 });
 
 await test('whoever comes later gets the park’s paint and the scores, from the room’s log', async () => {

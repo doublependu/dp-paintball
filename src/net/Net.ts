@@ -101,8 +101,12 @@ const REPORT_MS = 100;
 const SHOTS_MS = 50;
 const PAINT_MS = 250;
 const PRESENCE_MS = 50;
-/** A shot older than this is not caught up: it is drawn from where it would be now, at most. */
-const MAX_LAG = 0.5;
+/**
+ * A shot older than this when it comes is not flown at all: from the marker, that late, it
+ * would land long after its paint, and a bot's ball could tag a friend seconds after it
+ * was fired. What it did comes in the log all the same.
+ */
+const MAX_AGE_MS = 500;
 /** The park's paint the log keeps, newest last: about what `PaintSystem` keeps itself. */
 const MAX_SPLATS = 2000;
 /** And the least it keeps, on a server whose log for a room is small. */
@@ -728,6 +732,7 @@ export class Net implements System, CharactersNet, MatchNet, LootNet {
     const room = this.room;
     if (!(data instanceof Uint8Array) || !room) return;
     const { characters, ballistics, events } = this.parts;
+    const now = room.now();
     try {
       const r = new Reader(data);
       if (r.u8() !== 2) return;
@@ -738,12 +743,16 @@ export class Net implements System, CharactersNet, MatchNet, LootNet {
         const origin = new Vector3(r.pos(), r.pos(), r.pos());
         const direction = new Vector3(r.unit(), r.unit(), r.unit()).normalize();
         const id = this.idOf(p);
-        if (!id || id === 'player') continue;
+        if (!id || id === 'player' || now - at > MAX_AGE_MS) continue;
         const bot = characters.allBots.find((b) => b.id === id);
         if (!bot || !bot.present) continue;
-        const lag = Math.min(MAX_LAG, Math.max(0, (room.now() - at) / 1000));
+        // From where it was fired, as it comes, and not caught up by its age. This page
+        // draws the shooter a tenth of a second or more in the past: a ball flown ahead to
+        // where it is on the page that fired it first showed metres from their marker, or,
+        // landed already, never. It lands here later by its age, which is about when what
+        // it did comes in the log.
         const color = bot.character.color;
-        ballistics.fire(origin, direction, id, color, bot.collider, lag);
+        ballistics.fire(origin, direction, id, color, bot.collider);
         bot.character.animator.triggerShot();
         events.emit('shot:fired', { shooterId: id, color, origin, direction, remote: true });
       }

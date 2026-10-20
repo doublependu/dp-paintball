@@ -87,7 +87,6 @@ export class BallisticsSystem implements System {
   judge?: (shooterId: string, targetId: string | undefined) => boolean;
 
   private pool: Projectile[] = [];
-  private ctx?: GameContext;
   private mesh?: InstancedMesh;
   private nextIndex = 0;
 
@@ -111,7 +110,6 @@ export class BallisticsSystem implements System {
   private static readonly UNIT_SCALE = new Vector3(1, 1, 1);
 
   init(ctx: GameContext): void {
-    this.ctx = ctx;
     for (let i = 0; i < config.maxActive; i++) {
       this.pool.push({
         active: false,
@@ -137,19 +135,13 @@ export class BallisticsSystem implements System {
     ctx.scene.add(this.mesh);
   }
 
-  /**
-   * Launches a paintball. Recycles the oldest slot if the pool is exhausted.
-   *
-   * `lag` is for a shot fired on another page in the room, that many seconds ago: the
-   * ball is flown that far at once, so that it is where it is on the page that fired it.
-   */
+  /** Launches a paintball. Recycles the oldest slot if the pool is exhausted. */
   fire(
     origin: Vector3,
     direction: Vector3,
     shooterId: string,
     color: number,
     exclude?: RapierNS.Collider,
-    lag = 0,
   ): void {
     const projectile = this.acquire();
     projectile.active = true;
@@ -162,11 +154,6 @@ export class BallisticsSystem implements System {
     projectile.color = color;
     projectile.shooterId = shooterId;
     projectile.exclude = exclude;
-
-    const ctx = this.ctx;
-    if (!ctx || lag < FIXED_DT / 2) return;
-    for (let caught = 0; caught < lag && projectile.active; caught += FIXED_DT) this.step(projectile, FIXED_DT, ctx);
-    projectile.renderFrom.copy(projectile.position);
   }
 
   fixedUpdate(dt: number, ctx: GameContext): void {
