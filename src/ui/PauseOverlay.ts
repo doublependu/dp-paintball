@@ -4,8 +4,8 @@ const REPO_URL = 'https://github.com/doublependu/dp-paintball';
 /** More games, as on the loading card. */
 const MAIZE_URL = 'https://maize.live';
 /**
- * Where a player finds out what a room URL is and how to get one: the p3p2
- * panel takes one, and says nothing about where it comes from.
+ * Where a player finds out how to get a p3p2 server, whose rooms' invite links
+ * are the way in. The panel says so too, but only once it's open.
  */
 const P3P2_URL = 'https://p3p2.me';
 

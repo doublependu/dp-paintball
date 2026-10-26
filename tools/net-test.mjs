@@ -13,7 +13,7 @@
  *
  * The server, in order of preference:
  *   - P3P2_DIR=<a p3p2 checkout>: that checkout's server, run with Node;
- *   - Docker, with the published image (P3P2_IMAGE, default p3p2/p3p2:0.1.1);
+ *   - Docker, with the published image (P3P2_IMAGE, default p3p2/p3p2:0.2.0);
  *   - neither: the suite is skipped, and says so.
  * Each case gets a server of its own, in memory. p3p2's limits are per
  * address and every page here is on one, so cases sharing a server would eat
@@ -35,7 +35,7 @@ if (!EXECUTABLE) throw new Error('No system Chrome found. Set CHROME_PATH.');
 const PORT = Number(process.env.P3P2_TEST_PORT ?? 18190);
 const SERVER = `http://127.0.0.1:${PORT}`;
 const PASSWORD = 'net-test owner password';
-const IMAGE = process.env.P3P2_IMAGE ?? 'p3p2/p3p2:0.1.1';
+const IMAGE = process.env.P3P2_IMAGE ?? 'p3p2/p3p2:0.2.0';
 const CONTAINER = `dp-paintball-net-test-${PORT}`;
 // Smaller than the other suites' 1024×576: up to three pages render at once
 // here, and nothing in these cases reads the picture.
@@ -247,44 +247,55 @@ async function pause(page) {
   await page.locator('.pause.is-visible').waitFor({ timeout: 5000 });
 }
 
-/** The owner's side: logs in to the server's portal and creates a room for the game. */
+/** The owner's side: logs in to the server's portal, creates a room for the game, and returns its invite link. */
 async function createRoom(name) {
   const context = await browser.newContext();
   contexts.push(context);
   const portal = await context.newPage();
-  await portal.goto(`${SERVER}/`);
+  // Not the server's address: once a room is on its front page, that is the front page.
+  await portal.goto(`${SERVER}/login`);
   await portal.getByLabel('Password').fill(PASSWORD);
   await portal.getByRole('button', { name: 'Log in' }).click();
   await portal.getByLabel('Game URL').fill(url);
   await portal.getByLabel('Room name').fill(name);
   await portal.getByRole('button', { name: 'Create room' }).click();
   await portal.getByRole('heading', { name }).waitFor();
-  return portal.getByLabel('Room URL').inputValue();
+  const link = portal.getByLabel('Invite link', { exact: true });
+  // A server before 0.2 makes no invite with the room: the owner creates it.
+  if (!(await link.isVisible())) await portal.getByRole('button', { name: 'Create invite' }).click();
+  return link.inputValue();
 }
 
-/** Opens a room from FRIENDS on the pause card, and returns the invite link. */
-async function open(page, roomUrl, name) {
-  await pause(page);
-  await page.click('[data-pause-friends]');
-  await page.getByLabel('Your name').fill(name);
-  await page.getByLabel('Room URL').fill(roomUrl);
-  await poll('the panel accepts the room URL',
-    () => page.getByRole('status').first().textContent(), (t) => t?.includes('✓'));
-  await page.getByRole('button', { name: 'Create a multiplayer game room for my friends' }).click();
-  const link = page.getByLabel('Invite link', { exact: true });
-  await link.waitFor();
-  const invite = await link.inputValue();
-  await page.locator('p3p2-panel').getByRole('button', { name: 'Close' }).click();
-  await poll('the host is in the room',
-    () => page.evaluate(() => window.__paintball.net.room?.status ?? null), (s) => s === 'open');
-  return invite;
-}
-
-/** Somebody who opens the link: asked over the park, and then in a place of their own. */
-async function join(invite, name, options) {
+/** Somebody who opens the link: asked over the park, and says yes. */
+async function answer(invite, name, options) {
   const page = await arrive(invite, options);
   await page.getByLabel('Your name').fill(name);
   await page.getByRole('button', { name: 'Join', exact: true }).click();
+  return page;
+}
+
+/**
+ * The first one in, by the link like everybody: the host. FRIENDS on the pause
+ * card then has the same link to pass on.
+ */
+async function open(invite, name, options) {
+  const page = await answer(invite, name, options);
+  await poll('the host is in the room',
+    () => page.evaluate(() => window.__paintball.net.room?.status ?? null), (s) => s === 'open');
+  await pause(page);
+  await page.click('[data-pause-friends]');
+  const link = page.getByLabel('Invite link', { exact: true });
+  await link.waitFor();
+  const room = (u) => new URL(u).searchParams.get('room');
+  const passOn = await link.inputValue();
+  must(room(passOn) === room(invite), `FRIENDS passes on ${passOn}, not the room's invite`);
+  await page.locator('p3p2-panel').getByRole('button', { name: 'Close' }).click();
+  return page;
+}
+
+/** Somebody after the first: in a place of their own. */
+async function join(invite, name, options) {
+  const page = await answer(invite, name, options);
   await poll(`${name} takes a place`, async () => (await print(page)).seat, (s) => s > 0, 30_000);
   return page;
 }
@@ -294,9 +305,8 @@ async function join(invite, name, options) {
  * playing. `options` go to every page's `arrive`.
  */
 async function park(roomName, names, options) {
-  const roomUrl = await createRoom(roomName);
-  const first = await arrive(url, options);
-  const invite = await open(first, roomUrl, names[0]);
+  const invite = await createRoom(roomName);
+  const first = await open(invite, names[0], options);
   const pages = [first];
   for (const name of names.slice(1)) pages.push(await join(invite, name, options));
   for (const page of pages) await play(page);
