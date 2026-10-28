@@ -26,6 +26,12 @@ interface ButtonSpec {
  * the thumb. Same size, and smaller than the single button they replace, since
  * neither is now the only trigger on screen.
  *
+ * **Upright, the left one is put away** (by the stylesheet). A phone held that
+ * way is cradled at the bottom by both hands, and no finger reaches the top
+ * corner. The right trigger becomes a look pad instead — see `onPointerDown` —
+ * which gives one thumb both firing and aiming, the thing the left trigger is
+ * for.
+ *
  * **Aim is a toggle.** Held, it would cost a thumb the layout does not have.
  *
  * **Jump stays.** It was cut once, on the argument that four extra buttons were
@@ -53,8 +59,8 @@ const BUTTONS: readonly ButtonSpec[] = [
  * offer below the card is what covers that case.
  */
 const START_HINT = isIos()
-  ? 'landscape &nbsp;·&nbsp; two thumbs'
-  : 'landscape &nbsp;·&nbsp; fullscreen';
+  ? 'either way up &nbsp;·&nbsp; two thumbs'
+  : 'either way up &nbsp;·&nbsp; fullscreen';
 
 /**
  * iOS's Share mark, inline so the instruction can point at the actual button
@@ -67,7 +73,13 @@ const SHARE_GLYPH =
   `</svg>`;
 
 /**
- * The phone build: two thumbs, landscape, fullscreen.
+ * The phone build: two thumbs, fullscreen, either way up.
+ *
+ * Sideways and upright are one set of controls laid out twice, by the
+ * stylesheet's orientation queries. The only behaviour that differs is fire
+ * doubling as a look pad upright, and the only thing that cares which way up
+ * the phone *is* is the orientation lock, which holds whichever way the round
+ * started.
  *
  * Everything here writes into `Input` and nothing else — the stick becomes a
  * move vector, a drag becomes look delta, the buttons become the same logical
@@ -86,7 +98,6 @@ export class TouchControlsSystem implements System {
   private ctx?: GameContext;
   private root?: HTMLDivElement;
   private startLayer?: HTMLDivElement;
-  private rotateGate?: HTMLDivElement;
   private stick?: HTMLDivElement;
   private knob?: HTMLElement;
 
@@ -104,6 +115,11 @@ export class TouchControlsSystem implements System {
   /** Pointer driving the camera, and where it was last seen. */
   private lookPointer: number | null = null;
   private lookLast = { x: 0, y: 0 };
+  /**
+   * Whether the look pointer has started turning the camera. A drag on the look
+   * zone does at once; a thumb on the fire button only past `fireLookSlop`.
+   */
+  private lookArmed = false;
   /** Every pointer currently holding a button down, and which one. */
   private buttonPointers = new Map<number, ButtonSpec>();
   /** Button elements by key — not by action, since `fire` has two of them. */
@@ -133,7 +149,6 @@ export class TouchControlsSystem implements System {
 
     // Nothing is engaged at boot: the first tap is what buys fullscreen.
     this.setEngaged(false);
-    this.applyOrientation();
   }
 
   // -- Construction ---------------------------------------------------------
@@ -176,16 +191,6 @@ export class TouchControlsSystem implements System {
     this.container.append(start);
     this.startLayer = start;
     this.installPanel = start.querySelector('[data-install]')!;
-
-    const gate = document.createElement('div');
-    gate.className = 'rotate-gate';
-    gate.innerHTML = `
-      <div class="rotate-gate__phone" aria-hidden="true"></div>
-      <div class="rotate-gate__title">Turn your phone sideways</div>
-      <div class="rotate-gate__note">the park is wider than it is tall</div>
-    `;
-    this.container.append(gate);
-    this.rotateGate = gate;
   }
 
   private listen(ctx: GameContext): void {
@@ -229,8 +234,10 @@ export class TouchControlsSystem implements System {
     };
     document.addEventListener('visibilitychange', onVisibility);
 
+    // The stylesheet's own question, so the layout and this file never disagree
+    // about which way up the phone is.
     const portrait = window.matchMedia('(orientation: portrait)');
-    const onOrientation = () => this.applyOrientation();
+    const onOrientation = () => this.onOrientationChange();
     portrait.addEventListener('change', onOrientation);
     this.portraitQuery = portrait;
 
@@ -327,7 +334,6 @@ export class TouchControlsSystem implements System {
    * happens whether or not the screen cooperates.
    */
   private engage(): void {
-    if (this.portraitQuery?.matches) return;
     void this.enterImmersive();
     this.ctx?.input.requestLock();
   }
@@ -345,18 +351,44 @@ export class TouchControlsSystem implements System {
         else await element.webkitRequestFullscreen?.();
       }
     } catch {
-      // Refused, or unsupported. The rotate gate is the fallback and is
-      // already doing its job.
+      // Refused, or unsupported. The game plays in a browser tab all the same.
     }
 
+    // Again now that the screen is full: the lock `setEngaged` asked for a
+    // moment ago was refused, because it ran before fullscreen had resolved.
+    if (this.engaged) this.lockOrientation();
+  }
+
+  /**
+   * Holds the screen the way up it is now, for as long as the round is played.
+   *
+   * Whichever way that is: a lock to landscape, which this used to be, swings a
+   * phone held upright onto its side on the first tap. Held, because a phone
+   * tilted in two hands mid-fight turns the page otherwise, and the controls
+   * move out from under both thumbs.
+   *
+   * Only Android honours it, and only in fullscreen; everywhere else turning
+   * the phone pauses the round instead (`onOrientationChange`).
+   */
+  private lockOrientation(): void {
+    const orientation = screen.orientation as ScreenOrientation & {
+      lock?: (orientation: string) => Promise<void>;
+    };
+    const way = this.portraitQuery?.matches ? 'portrait' : 'landscape';
     try {
-      const orientation = screen.orientation as ScreenOrientation & {
-        lock?: (orientation: string) => Promise<void>;
-      };
-      await orientation?.lock?.('landscape');
+      // Refused outside fullscreen, which is most of the time; that is fine.
+      orientation?.lock?.(way).catch(() => {});
     } catch {
-      // Only Android honours this, and only from fullscreen. Everywhere else
-      // the gate asks the player to turn the phone themselves.
+      // Older engines throw rather than reject.
+    }
+  }
+
+  /** Lets the screen turn again, between rounds and while paused. */
+  private unlockOrientation(): void {
+    try {
+      screen.orientation?.unlock?.();
+    } catch {
+      // Unsupported, or nothing was locked.
     }
   }
 
@@ -366,6 +398,8 @@ export class TouchControlsSystem implements System {
       this.hasPlayed = true;
       this.renderInstallOffer();
     }
+    if (engaged) this.lockOrientation();
+    else this.unlockOrientation();
     this.root?.classList.toggle('is-live', engaged);
     this.releaseEverything();
     this.refreshStart();
@@ -378,10 +412,9 @@ export class TouchControlsSystem implements System {
    * land on it, and the card would be gone before anyone had read it.
    */
   private refreshStart(): void {
-    const gated = this.portraitQuery?.matches ?? false;
     this.startLayer?.classList.toggle(
       'is-visible',
-      !this.engaged && !gated && this.match.phase !== 'ended',
+      !this.engaged && this.match.phase !== 'ended',
     );
   }
 
@@ -396,6 +429,7 @@ export class TouchControlsSystem implements System {
     const input = this.ctx?.input;
     this.movePointer = null;
     this.lookPointer = null;
+    this.lookArmed = false;
     this.buttonPointers.clear();
     this.downButtons.clear();
     this.toggledButtons.clear();
@@ -407,13 +441,17 @@ export class TouchControlsSystem implements System {
     this.stick?.classList.remove('is-visible');
   }
 
-  private applyOrientation(): void {
-    const portrait = this.portraitQuery?.matches ?? false;
-    this.rotateGate?.classList.toggle('is-visible', portrait);
-    this.refreshStart();
-    if (!portrait) return;
-    // Held, not merely hidden: a round running behind a card nobody can see is
-    // a round being lost.
+  /**
+   * The phone turned mid-round, which means the lock did not take: iOS, or
+   * Android outside fullscreen.
+   *
+   * Paused, not played on. The layout has just moved out from under both
+   * thumbs, whatever they were holding is somewhere else now, and a phone being
+   * turned is not being played. Letting go of the controls is what the pause
+   * button does, so the round holds, every held control is dropped, and the
+   * pause card comes up the new way round.
+   */
+  private onOrientationChange(): void {
     if (this.engaged) this.ctx?.input.releaseLock();
   }
 
@@ -437,6 +475,15 @@ export class TouchControlsSystem implements System {
       event.preventDefault();
       this.pressButton(spec);
       if (spec.mode === 'hold') this.buttonPointers.set(event.pointerId, spec);
+      // Upright, the right trigger is also a look pad: there is no finger for
+      // a left trigger, so the thumb that fires has to be able to aim too. Not
+      // armed until it has travelled `fireLookSlop`, or a thumb rocking on the
+      // button nudges the aim. A thumb already looking keeps the camera.
+      if (spec.key === 'fire' && this.portraitQuery?.matches && this.lookPointer === null) {
+        this.lookPointer = event.pointerId;
+        this.lookLast = { x: event.clientX, y: event.clientY };
+        this.lookArmed = false;
+      }
       return;
     }
 
@@ -453,6 +500,7 @@ export class TouchControlsSystem implements System {
       event.preventDefault();
       this.lookPointer = event.pointerId;
       this.lookLast = { x: event.clientX, y: event.clientY };
+      this.lookArmed = true;
     }
   }
 
@@ -464,6 +512,14 @@ export class TouchControlsSystem implements System {
     }
     if (event.pointerId === this.lookPointer) {
       event.preventDefault();
+      if (!this.lookArmed) {
+        const travelled = Math.hypot(event.clientX - this.lookLast.x, event.clientY - this.lookLast.y);
+        if (travelled < touchConfig.fireLookSlop) return;
+        // Counted from where the thumb landed, slop and all: it is distance
+        // the thumb really moved, and dropping it would make every drag that
+        // starts on the button turn a few degrees short.
+        this.lookArmed = true;
+      }
       this.ctx?.input.addTouchLook(
         event.clientX - this.lookLast.x,
         event.clientY - this.lookLast.y,
@@ -484,12 +540,16 @@ export class TouchControlsSystem implements System {
       // reported: the browser coalesces moves onto animation frames, and a
       // flick that ends between two of them would otherwise lose its tail —
       // the part of the gesture with the most speed in it.
-      this.ctx?.input.addTouchLook(
-        event.clientX - this.lookLast.x,
-        event.clientY - this.lookLast.y,
-      );
+      // A flick off the fire button can lift before any move was reported, so
+      // the slop is judged here too rather than only in `onPointerMove`.
+      const dx = event.clientX - this.lookLast.x;
+      const dy = event.clientY - this.lookLast.y;
+      if (this.lookArmed || Math.hypot(dx, dy) >= touchConfig.fireLookSlop) {
+        this.ctx?.input.addTouchLook(dx, dy);
+      }
       this.lookPointer = null;
-      return;
+      this.lookArmed = false;
+      // Not returning: upright, this pointer may also be holding fire.
     }
     const spec = this.buttonPointers.get(event.pointerId);
     if (!spec) return;
@@ -572,7 +632,6 @@ export class TouchControlsSystem implements System {
     this.releaseEverything();
     this.root?.remove();
     this.startLayer?.remove();
-    this.rotateGate?.remove();
     document.documentElement.classList.remove('is-touch');
   }
 }

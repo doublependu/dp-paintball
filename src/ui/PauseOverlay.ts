@@ -45,12 +45,20 @@ const KEYS: ReadonlyArray<[string, string]> = [
  * already asks for one; crouch and wave have none because playtesting found
  * them in the way; and the scoreboard is this card, which is why it is not on
  * it.
+ *
+ * Two lines differ by grip. Sideways, look is the right side of the screen and
+ * there is a trigger for each hand; upright, look is everywhere the stick is
+ * not, and the one trigger is also how you aim while firing. Both are rendered,
+ * marked with their grip, and the stylesheet shows whichever fits the screen —
+ * the card can be up while the phone turns.
  */
-const TOUCH_KEYS: ReadonlyArray<[string, string]> = [
+const TOUCH_KEYS: ReadonlyArray<[string, string, ('sideways' | 'upright')?]> = [
   ['left thumb', 'move'],
   ['push far', 'sprint'],
-  ['drag right', 'look'],
-  ['fire', 'either hand'],
+  ['drag right', 'look', 'sideways'],
+  ['drag', 'look', 'upright'],
+  ['fire', 'either hand', 'sideways'],
+  ['fire', 'hold, drag to aim', 'upright'],
   ['jump', 'jump'],
   ['aim', 'tap on, tap off'],
   ['❚❚', 'pause'],
@@ -131,8 +139,9 @@ export class PauseOverlay {
 
         <div class="pause__keys">
           ${(isTouchDevice() ? TOUCH_KEYS : KEYS).map(
-            ([key, action]) =>
-              `<div class="pause__key"><kbd>${key}</kbd><span>${action}</span></div>`,
+            ([key, action, grip]) =>
+              `<div class="pause__key${grip ? ` pause__key--${grip}` : ''}">` +
+              `<kbd>${key}</kbd><span>${action}</span></div>`,
           ).join('')}
         </div>
 

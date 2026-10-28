@@ -51,6 +51,22 @@ export const camera = {
   /** Wider at a sprint. Cheap, and it sells speed better than any particle. */
   fovSprint: 68,
   fovLambda: 8,
+  /**
+   * The narrowest the view may be across, in degrees.
+   *
+   * The three FOVs above are vertical, which is right for every screen wider
+   * than it is tall and badly wrong for a phone held upright: 62° tall at 9:19.5
+   * is 31° across, a slit with the player's back filling half of it. Below this
+   * width the vertical angle opens until it fits — see `fitFov` in CameraRig.
+   * Anything wider than about 4:5 is never touched.
+   */
+  minHorizontalFov: 50,
+  /**
+   * How far the vertical angle may open to hold `minHorizontalFov`. Past this
+   * the edges of the frame stretch more than the extra width is worth, so the
+   * narrowest phones settle a degree or two under 50° across instead.
+   */
+  maxVerticalFov: 90,
   near: 0.1,
   /**
    * Far plane.
@@ -102,6 +118,13 @@ export const touch = {
   stickDeadzone: 0.16,
   /** Past this fraction of full deflection, the stick also asks for a sprint. */
   sprintThreshold: 0.85,
+  /**
+   * How far a thumb on the fire button travels, in CSS pixels, before it also
+   * turns the camera — upright only, where fire doubles as a look pad. A thumb
+   * holding a button rocks on it by two or three pixels, and at `lookScale`
+   * each one is about half a degree of aim.
+   */
+  fireLookSlop: 6,
   /**
    * Pixel-ratio cap on a touch device.
    *

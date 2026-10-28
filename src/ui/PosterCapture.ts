@@ -23,6 +23,13 @@ const YAW_OFFSET = (16 * Math.PI) / 180;
 const EYE_DROP = 0.6;
 /** Narrower than the game's 62, to fill the frame with the board from 8.4m. */
 const POSTER_FOV = 52;
+/**
+ * The narrowest screen the poster is still cropped from. A 16:9 strip of a 4:3
+ * frame keeps three quarters of its height, which loses sky and grass; of a
+ * phone held upright it keeps a quarter, which is a close-up of the board and
+ * nothing else. Below this the poster is drawn at its own size instead.
+ */
+const CROP_MIN_ASPECT = 4 / 3;
 
 /**
  * Anything that can hand over a picture of the round.
@@ -132,8 +139,14 @@ export class PosterCapture implements System {
       camera.fov = POSTER_FOV;
       camera.updateProjectionMatrix();
 
-      this.render.render(ctx.elapsed);
-      this.captured = this.copyOut();
+      const shoot = () => {
+        this.render.render(ctx.elapsed);
+        this.captured = this.copyOut();
+      };
+      // A frame of the poster's own shape when the screen's would crop the
+      // picture away; `copyOut` then has nothing left to crop.
+      if (camera.aspect < CROP_MIN_ASPECT) this.render.drawAt(POSTER_WIDTH, POSTER_HEIGHT, shoot);
+      else shoot();
     } finally {
       camera.position.copy(this.savedPosition);
       camera.quaternion.copy(savedQuaternion);
@@ -145,10 +158,11 @@ export class PosterCapture implements System {
   /**
    * Crops the freshly drawn frame to 16:9 and keeps it.
    *
-   * Cropped rather than rendered at the poster's own aspect, because the frame
-   * came from the game's canvas and resizing that to take a screenshot would
-   * mean a resize, a reflow and a pipeline rebuild in the middle of the whistle.
-   * A centre crop of a 16:10 or 4:3 window loses only sky and grass.
+   * Cropped rather than rendered at the poster's own aspect where the screen
+   * allows it, because that costs nothing, and a pipeline rebuild in the middle
+   * of the whistle does. A centre crop of a 16:10 or 4:3 window loses only sky
+   * and grass. Narrower than that (`CROP_MIN_ASPECT`) the frame was drawn at
+   * 16:9 to begin with, and this crops nothing.
    *
    * Returns false when the frame came back blank, which is what a context that
    * has already discarded its drawing buffer looks like. The caller falls back

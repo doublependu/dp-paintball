@@ -44,6 +44,9 @@ export class CameraRig implements System {
   init(ctx: GameContext): void {
     this.state.yaw = 0;
     this.state.pitch = -0.12;
+    // Fitted here too, so a page opened upright starts at its own width rather
+    // than easing out from a slit.
+    this.currentFov = fitFov(cameraConfig.fov, ctx.camera.aspect);
     ctx.camera.fov = this.currentFov;
     ctx.camera.updateProjectionMatrix();
   }
@@ -129,11 +132,17 @@ export class CameraRig implements System {
       .addScaledVector(this.backDir, this.currentArm);
 
     // --- Field of view ----------------------------------------------------
-    const targetFov = state.aiming
-      ? cameraConfig.fovAimed
-      : state.sprinting
-        ? cameraConfig.fovSprint
-        : cameraConfig.fov;
+    // Fitted to the screen's shape every frame rather than on resize: it is two
+    // tangents, and turning a phone then eases the view to its new width
+    // through the same damping as everything else here.
+    const targetFov = fitFov(
+      state.aiming
+        ? cameraConfig.fovAimed
+        : state.sprinting
+          ? cameraConfig.fovSprint
+          : cameraConfig.fov,
+      camera.aspect,
+    );
     if (Math.abs(this.currentFov - targetFov) > 0.01) {
       this.currentFov = damp(this.currentFov, targetFov, cameraConfig.fovLambda, dt);
       camera.fov = this.currentFov;
@@ -194,3 +203,24 @@ export class CameraRig implements System {
 
 const UP = new Vector3(0, 1, 0);
 const IDENTITY_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
+
+/** tan(half the base FOV), the yardstick `fitFov` scales every FOV against. */
+const BASE_TAN = Math.tan((cameraConfig.fov * DEG2RAD) / 2);
+const MIN_ACROSS_TAN = Math.tan((cameraConfig.minHorizontalFov * DEG2RAD) / 2);
+const MAX_SCALE = Math.tan((cameraConfig.maxVerticalFov * DEG2RAD) / 2) / BASE_TAN;
+
+/**
+ * A vertical FOV, opened up for a screen too narrow to see across at it.
+ *
+ * The base FOV decides how much it opens: just enough that the base view is
+ * `minHorizontalFov` across, and never past `maxVerticalFov` tall. Aim and
+ * sprint are scaled by the same factor in tangent space, so aiming still zooms
+ * by the same ratio and sprinting still widens by the same ratio, whatever the
+ * screen. On any screen wider than about 4:5 the factor is 1 and this returns
+ * `fov` unchanged.
+ */
+export function fitFov(fov: number, aspect: number): number {
+  const scale = clamp(MIN_ACROSS_TAN / (aspect * BASE_TAN), 1, MAX_SCALE);
+  if (scale === 1) return fov;
+  return (2 * Math.atan(Math.tan((fov * DEG2RAD) / 2) * scale)) / DEG2RAD;
+}

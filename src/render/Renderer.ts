@@ -217,6 +217,33 @@ export class RenderSystem {
     this.applyResolution();
   }
 
+  /**
+   * Draws a frame into a buffer of exactly `width`×`height` pixels, then puts
+   * the canvas back the way it was.
+   *
+   * For a picture whose shape the screen cannot give it: the end-of-round
+   * poster is 16:9, and a phone held upright is the wrong way round for any
+   * crop of its own frame. `draw` renders and reads the buffer back in the same
+   * task — it is only valid until control returns to the browser — and the
+   * buffer is restored before this returns. The CSS size never changes, so
+   * nothing reflows; the cost is reallocating the composer's targets twice.
+   */
+  drawAt(width: number, height: number, draw: () => void): void {
+    const savedAspect = this.camera.aspect;
+    try {
+      this.renderer.setPixelRatio(1);
+      this.renderer.setSize(width, height, false);
+      this.pipeline?.setSize(width, height, 1);
+      this.camera.aspect = width / height;
+      this.camera.updateProjectionMatrix();
+      draw();
+    } finally {
+      this.camera.aspect = savedAspect;
+      this.camera.updateProjectionMatrix();
+      this.applyResolution();
+    }
+  }
+
   /** What the adaptive loop has settled on, 0..1 of the cap. For the perf HUD. */
   get resolutionScale(): number {
     return this.ratioScale;
