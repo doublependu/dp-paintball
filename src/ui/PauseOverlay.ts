@@ -46,11 +46,11 @@ const KEYS: ReadonlyArray<[string, string]> = [
  * them in the way; and the scoreboard is this card, which is why it is not on
  * it.
  *
- * Two lines differ by grip. Sideways, look is the right side of the screen and
- * there is a trigger for each hand; upright, look is everywhere the stick is
- * not, and the one trigger is also how you aim while firing. Both are rendered,
- * marked with their grip, and the stylesheet shows whichever fits the screen —
- * the card can be up while the phone turns.
+ * Two lines differ by grip. Sideways, look is the right side of the screen;
+ * upright, look is everywhere the stick is not, and the right trigger is also
+ * how you aim while firing. There is a trigger for each hand either way. Both
+ * are rendered, marked with their grip, and the stylesheet shows whichever fits
+ * the screen — the card can be up while the phone turns.
  */
 const TOUCH_KEYS: ReadonlyArray<[string, string, ('sideways' | 'upright')?]> = [
   ['left thumb', 'move'],
@@ -58,7 +58,7 @@ const TOUCH_KEYS: ReadonlyArray<[string, string, ('sideways' | 'upright')?]> = [
   ['drag right', 'look', 'sideways'],
   ['drag', 'look', 'upright'],
   ['fire', 'either hand', 'sideways'],
-  ['fire', 'hold, drag to aim', 'upright'],
+  ['fire', 'either hand, right one drags to aim', 'upright'],
   ['jump', 'jump'],
   ['aim', 'tap on, tap off'],
   ['❚❚', 'pause'],

@@ -26,11 +26,11 @@ interface ButtonSpec {
  * the thumb. Same size, and smaller than the single button they replace, since
  * neither is now the only trigger on screen.
  *
- * **Upright, the left one is put away** (by the stylesheet). A phone held that
- * way is cradled at the bottom by both hands, and no finger reaches the top
- * corner. The right trigger becomes a look pad instead — see `onPointerDown` —
- * which gives one thumb both firing and aiming, the thing the left trigger is
- * for.
+ * **Upright, both stay,** the left one in the same top corner. The right one
+ * is also a look pad there — see `onPointerDown` — so one thumb can fire and
+ * aim at once while the other keeps the stick. The left one is not: a thumb
+ * up there is one that has let go of the stick to fire, and the right thumb
+ * may still be turning the camera.
  *
  * **Aim is a toggle.** Held, it would cost a thumb the layout does not have.
  *
@@ -61,6 +61,9 @@ const BUTTONS: readonly ButtonSpec[] = [
 const START_HINT = isIos()
   ? 'either way up &nbsp;·&nbsp; two thumbs'
   : 'either way up &nbsp;·&nbsp; fullscreen';
+
+/** Two taps closer together than this are a double tap to Safari, which zooms. */
+const DOUBLE_TAP_MS = 350;
 
 /**
  * iOS's Share mark, inline so the instruction can point at the actual button
@@ -255,6 +258,19 @@ export class TouchControlsSystem implements System {
     // Safari's pinch-zoom, which is not a standard event and is the other way
     // a two-thumb game gets away from the player.
     document.addEventListener('gesturestart', suppress);
+    // And Safari's double-tap zoom, which ignores the viewport tag's
+    // user-scalable=no. touch-action is meant to stop it (style.css), but the
+    // only cure once it happens is a pinch, and the game blocks those, so a
+    // second tap that soon after the last is not allowed to zoom anything.
+    // What it costs is that tap's click. The controls and the pause card work
+    // on pointerdown and never see it; Play again and the share row lose only
+    // a tap that follows another that fast.
+    let lastTouchEnd = -Infinity;
+    const noDoubleTap = (event: TouchEvent) => {
+      if (event.timeStamp - lastTouchEnd < DOUBLE_TAP_MS) event.preventDefault();
+      lastTouchEnd = event.timeStamp;
+    };
+    if (isIos()) document.addEventListener('touchend', noDoubleTap, { passive: false });
 
     this.stopWatchingInstall = onInstallOfferChange(() => this.renderInstallOffer());
     this.renderInstallOffer();
@@ -263,6 +279,7 @@ export class TouchControlsSystem implements System {
       () => document.removeEventListener('selectstart', suppress),
       () => document.removeEventListener('dragstart', suppress),
       () => document.removeEventListener('gesturestart', suppress),
+      () => document.removeEventListener('touchend', noDoubleTap),
       () => start.removeEventListener('pointerdown', onStart),
       () => root.removeEventListener('pointerdown', onDown),
       () => window.removeEventListener('pointermove', onMove),
@@ -475,10 +492,10 @@ export class TouchControlsSystem implements System {
       event.preventDefault();
       this.pressButton(spec);
       if (spec.mode === 'hold') this.buttonPointers.set(event.pointerId, spec);
-      // Upright, the right trigger is also a look pad: there is no finger for
-      // a left trigger, so the thumb that fires has to be able to aim too. Not
-      // armed until it has travelled `fireLookSlop`, or a thumb rocking on the
-      // button nudges the aim. A thumb already looking keeps the camera.
+      // Upright, the right trigger is also a look pad: both thumbs are at the
+      // bottom of the phone, and the one that fires has to be able to aim too.
+      // Not armed until it has travelled `fireLookSlop`, or a thumb rocking on
+      // the button nudges the aim. A thumb already looking keeps the camera.
       if (spec.key === 'fire' && this.portraitQuery?.matches && this.lookPointer === null) {
         this.lookPointer = event.pointerId;
         this.lookLast = { x: event.clientX, y: event.clientY };

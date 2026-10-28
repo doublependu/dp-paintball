@@ -9,8 +9,9 @@
  *
  * What it is actually guarding: that touch feeds the same `Input` the keyboard
  * does, that a tap in the look area never fires the marker, that the game plays
- * either way up, and that turning the phone mid-round holds the round rather
- * than letting it run under a layout that just moved beneath the thumbs.
+ * either way up, that turning the phone mid-round holds the round rather than
+ * letting it run under a layout that just moved beneath the thumbs, and that
+ * no screen a thumb can reach lets a double tap zoom the page.
  *
  * Usage: node tools/touch-test.mjs [url]
  */
@@ -193,6 +194,37 @@ const layoutClashes = () => page.evaluate(() => {
   return { clashes, count: boxes.length };
 });
 
+/**
+ * Every spot on the screen where a double tap could zoom the page, named by
+ * what is under it.
+ *
+ * Safari's rule, which is the stricter one. Touch-action counts up the tree
+ * from the element tapped, but starts over at an element that scrolls, so
+ * `none` on the body says nothing about a card with a scrollbar. A spot zooms
+ * if every element from the one under it up to there is `auto`. Chrome carries
+ * `none`'s zoom half through scrollers, and is held by the viewport tag anyway.
+ */
+const zoomableSpots = () => page.evaluate(() => {
+  const zooms = (element) => {
+    for (let node = element; node; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.touchAction !== 'auto') return false;
+      if (/auto|scroll/.test(`${style.overflowX} ${style.overflowY}`)) return true;
+    }
+    return true;
+  };
+  const found = new Set();
+  for (let y = 4; y < innerHeight; y += 16) {
+    for (let x = 4; x < innerWidth; x += 16) {
+      const element = document.elementFromPoint(x, y);
+      if (element && zooms(element)) {
+        found.add(element.getAttribute('class') || element.tagName.toLowerCase());
+      }
+    }
+  }
+  return [...found];
+});
+
 /** Whether the left trigger is on screen at all. */
 const leftTriggerShown = () => page.evaluate(() =>
   getComputedStyle(document.querySelector('.touch__btn--fire-left')).display !== 'none');
@@ -282,6 +314,11 @@ const atBoot = await state();
 check('touch layer is built on a touch device', Boolean(await page.$('.touch')));
 check('controls start hidden', !atBoot.live && atBoot.startVisible,
       `live=${atBoot.live} start=${atBoot.startVisible}`);
+// A zoomed page has no way back: every surface in the game blocks the pinch
+// that would undo it. Checked on each screen a phone shows, starting here.
+const zoomAtStart = await zoomableSpots();
+check('a double tap zooms nothing on the start prompt', zoomAtStart.length === 0,
+      zoomAtStart.join(', ') || 'none');
 
 // --- Tap to play -------------------------------------------------------------
 
@@ -298,6 +335,8 @@ const sidewaysLayout = await layoutClashes();
 check('sideways, no control sits on another or on the HUD, and all are on screen',
       sidewaysLayout.clashes.length === 0,
       sidewaysLayout.clashes.join(', ') || `${sidewaysLayout.count} clear`);
+const zoomInPlay = await zoomableSpots();
+check('a double tap zooms nothing in play', zoomInPlay.length === 0, zoomInPlay.join(', ') || 'none');
 
 // --- The version, in the one gap a phone has --------------------------------
 //
@@ -469,6 +508,9 @@ const cardFit = await pauseFit();
 check('the pause card fits a landscape phone without scrolling',
       cardFit.overflow <= 1 && cardFit.linksBottom <= cardFit.height,
       `${cardFit.overflow}px over, links end at ${Math.round(cardFit.linksBottom)} of ${cardFit.height}`);
+const zoomOnPause = await zoomableSpots();
+check('a double tap zooms nothing on the pause card', zoomOnPause.length === 0,
+      zoomOnPause.join(', ') || 'none');
 
 // On the card, but not on its repo link — which is the one thing here that
 // deliberately does not resume.
@@ -504,6 +546,10 @@ const sidewaysPoster = await posterThumb();
 // The share row is appended once the poster is encoded, and the card grows by
 // it — which moves Play again. Everything below measures the finished card.
 await page.waitForSelector('[data-share-action="save"]', { timeout: 15_000 }).catch(() => {});
+// The card is where the fire thumb lands, still tapping, as the round ends.
+const zoomOnResults = await zoomableSpots();
+check('a double tap zooms nothing on the results card', zoomOnResults.length === 0,
+      zoomOnResults.join(', ') || 'none');
 
 for (let i = 0; i < 3; i++) await tap(fireSpot.x, fireSpot.y, 22 + i);
 const afterFireTaps = { ...(await state()), ...(await resultsCard()) };
@@ -590,11 +636,38 @@ await waitSim(1.0);
 check('upright, aim still narrows the view', aimedView.fov < uprightView.fov - 5,
       `${uprightView.fov.toFixed(1)}° -> ${aimedView.fov.toFixed(1)}°`);
 
-const uprightLayout = await layoutClashes();
-check('upright, no control sits on another or on the HUD, and all are on screen',
-      uprightLayout.clashes.length === 0,
-      uprightLayout.clashes.join(', ') || `${uprightLayout.count} clear`);
-check('upright, the left trigger is put away', !(await leftTriggerShown()));
+// At every upright size: the narrower the phone, the nearer the centred
+// counters come to the left trigger in its corner.
+for (const size of PORTRAIT_SIZES) {
+  await resize(size);
+  const layout = await layoutClashes();
+  check(`upright at ${size.width}×${size.height}, no control sits on another or on the HUD, ` +
+          'and all are on screen',
+        layout.clashes.length === 0, layout.clashes.join(', ') || `${layout.count} clear`);
+}
+await resize(PORTRAIT);
+check('upright, there is a trigger for each hand', await leftTriggerShown());
+
+// The left trigger fires as it does sideways, and is not a look pad: the other
+// thumb can still turn the camera while it is held.
+const leftFire = await centerOf('.touch__btn--fire-left');
+const beforeLeft = await state();
+await touchDown(43, leftFire.x, leftFire.y);
+await waitSim(0.4);
+const holdingLeft = await state();
+await touchDown(44, 300, 400);
+await touchMove(44, 220, 400);
+await page.waitForTimeout(60);
+await touchMove(44, 140, 400);
+await page.waitForTimeout(60);
+await touchUp(44);
+await waitSim(0.1);
+const lookedWhileLeft = await state();
+await touchUp(43);
+const turnWhileLeft = lookedWhileLeft.yaw - holdingLeft.yaw;
+check('upright, the left trigger fires while the other thumb turns the camera',
+      holdingLeft.ammo < beforeLeft.ammo && turnWhileLeft > 0.9 && turnWhileLeft < 3.0,
+      `${beforeLeft.ammo} -> ${holdingLeft.ammo}, ${turnWhileLeft.toFixed(2)} rad`);
 
 // The stick, low on the left where the thumb rests.
 const uprightBefore = await state();
@@ -672,8 +745,8 @@ const uprightLegend = await page.evaluate(() =>
     .filter((key) => getComputedStyle(key).display !== 'none')
     .map((key) => key.textContent.trim()));
 check('upright, the pause card describes the upright grip',
-      uprightLegend.some((key) => key.includes('drag to aim')) &&
-        !uprightLegend.some((key) => key.includes('either hand')),
+      uprightLegend.some((key) => key.includes('drags to aim')) &&
+        !uprightLegend.some((key) => key.startsWith('drag right')),
       uprightLegend.join(' | '));
 for (const size of PORTRAIT_SIZES) {
   await resize(size);
@@ -719,7 +792,7 @@ await tap(sidewaysTitle.x, sidewaysTitle.y, 40);
 await waitSim(1.0);
 const resumedSideways = await state();
 const backSideways = await view();
-check('resumed sideways: the left trigger is back and the view is 62° again',
+check('resumed sideways: the controls are back and the view is 62° again',
       resumedSideways.engaged && (await leftTriggerShown()) && Math.abs(backSideways.fov - 62) < 0.05,
       `engaged=${resumedSideways.engaged} fov=${backSideways.fov.toFixed(2)}`);
 
@@ -753,6 +826,9 @@ const posterDifference = uprightPoster && sidewaysPoster
 check('upright, the poster is the same picture of the park as sideways',
       posterDifference < POSTER_TOLERANCE,
       `mean difference ${posterDifference.toFixed(1)} of 255`);
+const zoomOnUprightResults = await zoomableSpots();
+check('upright, a double tap zooms nothing on the results card', zoomOnUprightResults.length === 0,
+      zoomOnUprightResults.join(', ') || 'none');
 
 for (const size of PORTRAIT_SIZES) {
   await resize(size);

@@ -49,6 +49,9 @@
         background: #cfe9f2;
         font-family: ui-rounded, "Segoe UI Rounded", "Hiragino Maru Gothic ProN",
           system-ui, -apple-system, sans-serif;
+        /* No double-tap zoom on the loading card. Safari zooms despite the
+           viewport tag, and the touch layer's own rules arrive later. */
+        touch-action: manipulation;
       }
       #loader {
         position: fixed;

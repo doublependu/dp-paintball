@@ -1290,6 +1290,18 @@ body {
   overscroll-behavior: none;
 }
 
+/*
+ * The two cards that scroll, which the rule above does not reach on an iPhone.
+ * Safari starts touch-action over at an element that scrolls, so these were
+ * `auto` again, and a double tap on one — a fire thumb still going at the
+ * whistle — zoomed the page. Nothing in the game can pinch it back, because
+ * every other surface is `none`. Vertical scrolling is all these need.
+ */
+.is-touch .pause__card,
+.is-touch .results__card {
+  touch-action: pan-y;
+}
+
 .is-touch .game-canvas { cursor: default; }
 
 .is-touch .hud__clock {
@@ -1422,10 +1434,11 @@ body {
 /* ---------------------------------------------------------------------------
    Upright.
 
-   Both hands cradle the bottom of the phone, so both thumbs are down there and
-   no finger reaches the top. The right-hand cluster is placed from the bottom
-   right corner and already lands under the right thumb; what changes is
-   everything that assumed a finger at the top, or a short screen.
+   Both hands cradle the bottom of the phone, so both thumbs are down there. The
+   right-hand cluster is placed from the bottom right corner and already lands
+   under the right thumb, and the left trigger keeps its top corner; what
+   changes is where the stick and the counters go, and the cards, which meet a
+   tall screen instead of a short one.
 
    The same media query `TouchControls` asks, so the layout and the one
    behaviour that differs upright (fire as a look pad) never disagree.
@@ -1439,17 +1452,14 @@ body {
   .touch__zone--move { top: auto; width: 50%; height: 55%; z-index: 1; }
   .touch__btn { z-index: 2; }
 
-  /* Its finger is round the back of the phone. The right trigger stands in for
-     it as a look pad — see TouchControls.onPointerDown. */
-  .touch__btn--fire-left { display: none; }
-
-  /* Under the clock and the pause button rather than in the bottom corner,
-     which is where the left thumb plants the stick and where AIM ended up on
-     top of them. */
+  /* Under the clock rather than in the bottom corner, which is where the left
+     thumb plants the stick and where AIM ended up on top of them. Low enough
+     to clear the left trigger, whose shadow ends 100px down, since on a
+     360-wide phone the row reaches in over it. */
   .is-touch .hud__counters {
     left: 50%;
     bottom: auto;
-    top: calc(76px + env(safe-area-inset-top));
+    top: calc(106px + env(safe-area-inset-top));
     transform: translateX(-50%);
     /* Its own width, not the half-screen a centred box shrinks to, or every
        label breaks onto two lines. */
